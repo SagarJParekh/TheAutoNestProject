@@ -5,7 +5,10 @@ import { PlaneControls } from './PlaneControls';
 export function ClipPanel() {
   const enabled = useStore((s) => s.clipEnabled);
   const clip = useStore((s) => s.clip);
-  const parts = useStore((s) => s.parts);
+  const all = useStore((s) => s.parts);
+  const selection = useStore((s) => s.selection);
+  // position the plane relative to the selection when there is one
+  const parts = selection.length ? all.filter((p) => selection.includes(p.id)) : all;
   return (
     <Section title="Section clip">
       <Check checked={enabled} onChange={(clipEnabled) => setState({ clipEnabled })}>

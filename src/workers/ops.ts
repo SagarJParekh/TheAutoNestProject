@@ -58,13 +58,12 @@ export const ops = {
     return { result: r, transfer: [r.buffer as ArrayBuffer] };
   },
 
-  async analyze(args: { mesh: MeshData }, progress: Progress): Promise<Result<G.AnalysisReport & { loops: G.BoundaryLoop[] }>> {
+  async analyze(args: { mesh: MeshData }, progress: Progress): Promise<Result<G.AnalysisReport>> {
     progress(0.1, 'Analysing mesh');
     const report = G.analyzeMesh(args.mesh);
-    const loops = report.openEdges ? G.findBoundaryLoops(args.mesh) : [];
     const h = report.highlights;
     return {
-      result: { ...report, loops },
+      result: report,
       transfer: [h.openEdges, h.nonManifoldEdges, h.flippedTriangles, h.degenerateTriangles, h.duplicateTriangles].map(
         (a) => a.buffer as ArrayBuffer,
       ),
@@ -84,16 +83,19 @@ export const ops = {
 
   async cut(args: CutArgs, progress: Progress): Promise<Result<{ above: MeshData; below: MeshData; method: string }>> {
     progress(0.1, 'Cutting');
-    let r: { above: MeshData; below: MeshData } | null = null;
-    let method = 'exact (manifold)';
-    try {
-      r = await G.splitByPlaneManifold(args.mesh, args.plane);
-    } catch {
-      r = null;
-    }
-    if (!r) {
-      method = 'planar split + cap';
-      r = G.cutMesh(args.mesh, args.plane, true);
+    // Fast planar split with capping first; if a watertight input does not give
+    // two watertight halves (e.g. tricky cap loops), fall back to exact manifold-3d.
+    const closed = G.isWatertight(args.mesh);
+    progress(0.3, 'Splitting');
+    let r: { above: MeshData; below: MeshData } = G.cutMesh(args.mesh, args.plane, true);
+    let method = closed ? 'planar split + cap (watertight)' : 'planar split + cap (input not watertight)';
+    if (closed && !(G.isWatertight(r.above) && G.isWatertight(r.below))) {
+      progress(0.6, 'Exact boolean split');
+      const m = await G.splitByPlaneManifold(args.mesh, args.plane).catch(() => null);
+      if (m) {
+        r = m;
+        method = 'exact (manifold-3d)';
+      }
     }
     return { result: { ...r, method }, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
   },

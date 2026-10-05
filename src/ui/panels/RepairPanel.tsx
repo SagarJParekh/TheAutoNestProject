@@ -13,7 +13,7 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
 
   useEffect(() => {
     // analyse automatically for reasonably sized parts
-    if (part && !report && part.mesh.indices.length / 3 < 1_500_000) analyzePart(part.id);
+    if (part && !report && part.mesh.indices.length / 3 < 3_000_000) analyzePart(part.id);
   }, [part, report]);
 
   const setRepair = (patch: Partial<ToolSettings['repair']>) =>

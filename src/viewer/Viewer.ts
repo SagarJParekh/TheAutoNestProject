@@ -374,8 +374,9 @@ export class Viewer {
     material.transparent = xray;
     material.opacity = ghost ? 0.12 : mode === 'xray' ? 0.28 : 1;
     material.depthWrite = !xray;
-    material.clippingPlanes = this.clipPlane ? [this.clipPlane] : null;
-    material.needsUpdate = true;
+    // clipping plane count / transparency are picked up by the renderer without a program rebuild
+    const planes = this.clipPlane ? [this.clipPlane] : null;
+    if ((material.clippingPlanes?.[0] ?? null) !== (planes?.[0] ?? null)) material.clippingPlanes = planes;
 
     // feature edges
     const wantEdges = (mode === 'edges' || mode === 'xray') && !ghost && part.visible;

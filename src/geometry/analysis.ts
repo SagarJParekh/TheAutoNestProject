@@ -1,7 +1,7 @@
 import { MeshData, computeBounds, triangleCount, Bounds } from './mesh';
 import { buildTopology, findShells, heFrom, propagateOrientation, Topology } from './topology';
 import { meshArea, meshVolume } from './measure';
-import { findBoundaryLoops } from './holes';
+import { findBoundaryLoops, BoundaryLoop } from './holes';
 
 export interface AnalysisReport {
   triangles: number;
@@ -18,6 +18,8 @@ export interface AnalysisReport {
   duplicateTriangles: number;
   shells: number;
   watertight: boolean;
+  /** boundary loops (holes) in fill order */
+  loops: BoundaryLoop[];
   /** viewport highlight data */
   highlights: AnalysisHighlights;
 }
@@ -175,6 +177,7 @@ export function analyzeMesh(mesh: MeshData): AnalysisReport {
     duplicateTriangles: duplicate.length,
     shells: shellCount,
     watertight: open === 0 && nonManifold === 0 && flipped.length === 0 && triangleCount(mesh) > 0,
+    loops,
     highlights: {
       openEdges: edgeSegments(mesh, topo, (c) => c === 1),
       nonManifoldEdges: edgeSegments(mesh, topo, (c) => c > 2),

@@ -13,7 +13,13 @@ export function useShortcuts(openFile: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // only text entry swallows shortcuts; checkboxes, sliders and buttons do not
+      if (t && t.tagName === 'INPUT') {
+        const type = (t as HTMLInputElement).type;
+        if (!['checkbox', 'radio', 'range', 'color', 'button'].includes(type)) return;
+        if (type === 'range' && e.key.startsWith('Arrow')) return;
+      }
+      if (t && (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       const s = getState();
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();

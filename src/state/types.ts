@@ -1,4 +1,4 @@
-import type { MeshData, Vec3, AnalysisReport, BoundaryLoop, RepairSummary, PerforationParams, PerforationPlan } from '../geometry';
+import type { MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan } from '../geometry';
 
 export interface Transform {
   /** mm */
@@ -81,7 +81,7 @@ export interface FaceSelection {
 
 export interface AnalysisEntry {
   mesh: MeshData;
-  report: AnalysisReport & { loops: BoundaryLoop[] };
+  report: AnalysisReport;
 }
 
 export interface DrainHolePick {

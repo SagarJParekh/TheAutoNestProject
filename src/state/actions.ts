@@ -261,7 +261,10 @@ export function setTool(tool: ToolId) {
     const target = selectedParts().filter((p) => !p.locked);
     if (target.length) extra.cutPlane = centeredPlane(s.cutPlane, target.slice(0, 1));
   }
-  if (tool === 'clip' && !s.clipEnabled) extra.clip = centeredPlane(s.clip, s.parts);
+  if (tool === 'clip' && !s.clipEnabled) {
+    const sel = selectedParts();
+    extra.clip = centeredPlane(s.clip, sel.length ? sel : s.parts);
+  }
   setState({
     tool,
     preview: null,
@@ -345,9 +348,19 @@ export async function previewRepair() {
   const part = editable()[0];
   if (!part) return notify('warning', 'Select an unlocked part to repair');
   const st = getState().settings.repair;
+  const a = getState().analysis[part.id];
+  const rep = a && a.mesh === part.mesh ? a.report : null;
+  const before = rep
+    ? {
+        triangles: rep.triangles, vertices: rep.vertices, openEdges: rep.openEdges, nonManifoldEdges: rep.nonManifoldEdges,
+        holes: rep.holes, flippedTriangles: rep.flippedTriangles, degenerateTriangles: rep.degenerateTriangles,
+        duplicateTriangles: rep.duplicateTriangles, shells: rep.shells, watertight: rep.watertight,
+      }
+    : undefined;
   const r = await runJob(`Repairing ${part.name}`, 'repair', {
     mesh: part.mesh,
     options: {
+      before,
       removeSmallShells: st.removeSmallShells,
       smallShellRatio: st.smallShellRatio,
       weldTolerance: st.weldTolerance > 0 ? st.weldTolerance : undefined,

@@ -21,49 +21,59 @@ export interface Topology {
 }
 
 export function buildTopology(mesh: MeshData): Topology {
+  // Bucket half-edges by their lower vertex (CSR layout), then group equal
+  // upper vertices inside each small bucket. Much faster than hashing.
   const idx = mesh.indices;
   const nHE = idx.length;
-  let cap = 1;
-  while (cap < nHE * 1.5) cap <<= 1;
-  const mask = cap - 1;
-  const table = new Int32Array(cap).fill(-1);
-  const maxEdges = nHE;
-  const edgeV0 = new Uint32Array(maxEdges);
-  const edgeV1 = new Uint32Array(maxEdges);
-  const edgeFaceCount = new Uint32Array(maxEdges);
-  const edgeHE0 = new Int32Array(maxEdges).fill(-1);
-  const edgeHE1 = new Int32Array(maxEdges).fill(-1);
-  const halfEdgeEdge = new Uint32Array(nHE);
-  let edgeCount = 0;
-
+  const nv = vertexCount(mesh);
+  const start = new Uint32Array(nv + 1);
   for (let h = 0; h < nHE; h++) {
     const t = (h / 3) | 0;
-    const k = h - t * 3;
     const a = idx[h];
-    const b = idx[t * 3 + ((k + 1) % 3)];
-    const v0 = a < b ? a : b;
-    const v1 = a < b ? b : a;
-    let slot = (Math.imul(v0, 0x9e3779b1) ^ Math.imul(v1, 0x85ebca77)) & mask;
-    let e = -1;
-    for (;;) {
-      const s = table[slot];
-      if (s === -1) break;
-      if (edgeV0[s] === v0 && edgeV1[s] === v1) {
-        e = s;
-        break;
+    const b = idx[h - t * 3 === 2 ? t * 3 : h + 1];
+    start[(a < b ? a : b) + 1]++;
+  }
+  for (let v = 0; v < nv; v++) start[v + 1] += start[v];
+  const fill = start.slice(0, nv);
+  const bucketHi = new Uint32Array(nHE);
+  const bucketHE = new Uint32Array(nHE);
+  for (let h = 0; h < nHE; h++) {
+    const t = (h / 3) | 0;
+    const a = idx[h];
+    const b = idx[h - t * 3 === 2 ? t * 3 : h + 1];
+    const lo = a < b ? a : b;
+    const k = fill[lo]++;
+    bucketHi[k] = a < b ? b : a;
+    bucketHE[k] = h;
+  }
+  const edgeV0 = new Uint32Array(nHE);
+  const edgeV1 = new Uint32Array(nHE);
+  const edgeFaceCount = new Uint32Array(nHE);
+  const edgeHE0 = new Int32Array(nHE).fill(-1);
+  const edgeHE1 = new Int32Array(nHE).fill(-1);
+  const halfEdgeEdge = new Uint32Array(nHE);
+  const done = new Uint8Array(nHE);
+  let edgeCount = 0;
+  for (let v = 0; v < nv; v++) {
+    const s0 = start[v], s1 = start[v + 1];
+    for (let i = s0; i < s1; i++) {
+      if (done[i]) continue;
+      const hi = bucketHi[i];
+      const e = edgeCount++;
+      edgeV0[e] = v;
+      edgeV1[e] = hi;
+      let c = 0;
+      for (let j = i; j < s1; j++) {
+        if (done[j] || bucketHi[j] !== hi) continue;
+        done[j] = 1;
+        const h = bucketHE[j];
+        if (c === 0) edgeHE0[e] = h;
+        else if (c === 1) edgeHE1[e] = h;
+        c++;
+        halfEdgeEdge[h] = e;
       }
-      slot = (slot + 1) & mask;
+      edgeFaceCount[e] = c;
     }
-    if (e === -1) {
-      e = edgeCount++;
-      edgeV0[e] = v0;
-      edgeV1[e] = v1;
-      table[slot] = e;
-    }
-    const c = edgeFaceCount[e]++;
-    if (c === 0) edgeHE0[e] = h;
-    else if (c === 1) edgeHE1[e] = h;
-    halfEdgeEdge[h] = e;
   }
   return {
     edgeCount,

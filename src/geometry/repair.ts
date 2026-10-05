@@ -14,6 +14,8 @@ export interface RepairOptions {
   /** remove floating shells smaller than `smallShellRatio` of the largest shell's volume */
   removeSmallShells?: boolean;
   smallShellRatio?: number;
+  /** counts from an analysis already run on this mesh (skips re-analysis) */
+  before?: RepairCounts;
 }
 
 export interface RepairCounts {
@@ -124,7 +126,7 @@ export function autoRepair(
     ...options,
   };
   onProgress(0, 'Analysing');
-  const before = repairCounts(input);
+  const before = opts.before ?? repairCounts(input);
   let mesh = input;
 
   onProgress(0.15, 'Welding vertices');

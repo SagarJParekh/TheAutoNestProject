@@ -6,7 +6,8 @@ import { matrixOf } from '../../state/math';
 import { meshEntry } from '../../state/meshCache';
 import type { Part } from '../../state/types';
 
-const f = (v: number, d = 2) => v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+const f = (v: number, d = 2) =>
+  (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 
 export function InfoPanel({ parts }: { parts: Part[] }) {
   useStore((s) => s.meshInfoVersion);
