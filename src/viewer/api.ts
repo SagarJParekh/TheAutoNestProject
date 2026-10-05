@@ -3,6 +3,7 @@ import type { ViewName } from '../state/types';
 /** Imperative handle to the viewer, set by the canvas component. */
 export interface ViewerApi {
   fitView: (selectionOnly?: boolean) => void;
+  viewer?: import('./Viewer').Viewer;
   setView: (v: ViewName) => void;
 }
 

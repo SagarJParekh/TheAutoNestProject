@@ -6,7 +6,9 @@ import {
 import { viewerApi } from '../viewer/api';
 import type { DisplayMode, ToolId } from '../state/types';
 
-const TOOL_KEYS: Record<string, ToolId> = { t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude' };
+const TOOL_KEYS: Record<string, ToolId> = {
+  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure',
+};
 const MODES: DisplayMode[] = ['shaded', 'edges', 'wireframe', 'xray'];
 
 export function useShortcuts(openFile: () => void) {
@@ -38,6 +40,9 @@ export function useShortcuts(openFile: () => void) {
       switch (true) {
         case e.key === 'Escape':
           if (s.showExport || s.showShortcuts) setState({ showExport: false, showShortcuts: false });
+          else if (s.zoomWindow) setState({ zoomWindow: false });
+          else if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length))
+            setState({ measurePending: { entities: [], points: [] } });
           else if (s.pickMode) setState({ pickMode: null });
           else if (s.preview) cancelPreview();
           else if (s.faceSelection) setState({ faceSelection: null });
@@ -75,6 +80,9 @@ export function useShortcuts(openFile: () => void) {
           break;
         case k === 'b':
           dropToBed();
+          break;
+        case k === 'z':
+          setState({ zoomWindow: !s.zoomWindow });
           break;
         case k === 'o':
           setState({ orthographic: !s.orthographic });

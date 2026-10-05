@@ -2,6 +2,7 @@ import { Icon } from '../icons';
 import { Check, Hint, NumberField, Row, Section, VecRow } from '../controls';
 import { getState, setState, updateParts, useStore } from '../../state/store';
 import { centerOnOrigin, dropToBed, mirrorParts } from '../../state/actions';
+import { arrangeOnBed, arrayParts, mirrorCopies } from '../../state/featureActions';
 import { localBounds } from '../../state/math';
 import type { Part, Transform } from '../../state/types';
 import type { Vec3 } from '../../geometry';
@@ -10,6 +11,8 @@ import { Vector3 } from 'three';
 
 export function TransformPanel({ parts }: { parts: Part[] }) {
   const pickMode = useStore((s) => s.pickMode);
+  const arr = useStore((s) => s.settings.arrange);
+  const setArr = (patch: Partial<typeof arr>) => setState({ settings: { ...getState().settings, arrange: { ...getState().settings.arrange, ...patch } } });
   const [uniform, setUniform] = useState(true);
   const editable = parts.filter((p) => !p.locked);
   const single = parts.length === 1 ? parts[0] : null;
@@ -112,10 +115,18 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
         <>
           <Row label="Mirror">
             {[0, 1, 2].map((a) => (
-              <button key={a} className="btn" disabled={disabled} onClick={() => mirrorParts(a as 0 | 1 | 2)}>
+              <button
+                key={a}
+                className="btn"
+                disabled={arr.mirrorCopy ? parts.length === 0 : disabled}
+                onClick={() => (arr.mirrorCopy ? mirrorCopies(a as 0 | 1 | 2) : mirrorParts(a as 0 | 1 | 2))}
+              >
                 {'XYZ'[a]}
               </button>
             ))}
+            <Check checked={arr.mirrorCopy} onChange={(mirrorCopy) => setArr({ mirrorCopy })}>
+              Keep original (copy)
+            </Check>
           </Row>
           <div className="btn-grid">
             <button className="btn" disabled={disabled} onClick={() => dropToBed()} title="Drop to bed (B)">
@@ -136,6 +147,23 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           {parts.some((p) => p.locked) && <Hint>Locked parts are not changed.</Hint>}
         </>
       )}
+      <h4>Array &amp; arrange (2D)</h4>
+      <Row label="Columns × rows">
+        <NumberField value={arr.cols} min={1} max={50} step={1} precision={0} onChange={(cols) => setArr({ cols: Math.round(cols) })} />
+        <NumberField value={arr.rows} min={1} max={50} step={1} precision={0} onChange={(rows) => setArr({ rows: Math.round(rows) })} />
+      </Row>
+      <Row label="Gap">
+        <NumberField value={arr.gap} min={0} step={1} suffix="mm" onChange={(gap) => setArr({ gap })} />
+      </Row>
+      <button className="btn wide" disabled={parts.length !== 1 || !!parts[0]?.locked} onClick={arrayParts} title="Copies of the selected part in a grid on the bed">
+        Create {arr.cols}×{arr.rows} array
+      </button>
+      <Row label="Bed width">
+        <NumberField value={arr.bedWidth} min={10} step={10} suffix="mm" onChange={(bedWidth) => setArr({ bedWidth })} />
+      </Row>
+      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) in rows on the bed, without overlaps">
+        Arrange on bed
+      </button>
     </Section>
   );
 }

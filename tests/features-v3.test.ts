@@ -181,6 +181,18 @@ describe('texturing', () => {
     expect(isWatertight(out)).toBe(true);
     expect(meshVolume(out)).toBeLessThan(1000);
   });
+  it('wraps a pattern seamlessly around a cylinder', () => {
+    const cyl = cylinderMesh([0, 0, 0], [0, 0, 1], 10, 20, 64);
+    const welded = weldVertices(cyl.positions, cyl.indices, 1e-5).mesh;
+    const side = growSmoothRegion(welded, 0, 25);
+    const out = textureMesh(welded, side, { pattern: 'ribs', period: 2, depth: 0.3, angle: 90, projection: 'cylindrical' });
+    expect(isWatertight(out)).toBe(true);
+    // ribs along the axis: radii vary between ~10 and ~10.3, top/bottom rims stay at 10
+    let maxR = 0;
+    for (let i = 0; i < out.positions.length; i += 3) maxR = Math.max(maxR, Math.hypot(out.positions[i], out.positions[i + 1]));
+    expect(maxR).toBeGreaterThan(10.2);
+    expect(maxR).toBeLessThan(10.35);
+  });
   it('uses an image heightmap', () => {
     const data = new Float32Array(16).map((_, i) => (i % 2 ? 1 : 0));
     const out = textureMesh(gridCube(10, 1), null, {

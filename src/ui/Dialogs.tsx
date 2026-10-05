@@ -96,6 +96,8 @@ export const SHORTCUTS: [string, string][] = [
   ['B', 'Drop to bed'],
   ['Shift+C', 'Centre on origin'],
   ['T C X R H P E', 'Transform, Clip, Cut, Repair, Hollow, Perforate, Extrude'],
+  ['L K D', 'Label, Texture, Measure'],
+  ['Z', 'Zoom to area (drag a rectangle)'],
   ['1 2 3 4', 'Top, front, right, iso view'],
   ['Home / Shift+F', 'Fit all / fit selection'],
   ['O', 'Perspective / orthographic'],

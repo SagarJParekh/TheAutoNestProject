@@ -3,7 +3,13 @@ import manifoldWasm from 'manifold-3d/manifold.wasm?url';
 import occtWasm from 'occt-import-js/dist/occt-import-js.wasm?url';
 import rhinoWasm from 'rhino3dm/rhino3dm.wasm?url';
 import { configureManifold } from '../geometry/manifold';
-import { ops, OpName } from './ops';
+import sansUrl from 'dejavu-fonts-ttf/ttf/DejaVuSans.ttf?url';
+import sansBoldUrl from 'dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf?url';
+import monoUrl from 'dejavu-fonts-ttf/ttf/DejaVuSansMono-Bold.ttf?url';
+import serifUrl from 'dejavu-fonts-ttf/ttf/DejaVuSerif-Bold.ttf?url';
+import { ops, OpName, fontUrls } from './ops';
+
+Object.assign(fontUrls, { sans: sansUrl, 'sans-bold': sansBoldUrl, mono: monoUrl, serif: serifUrl });
 
 configureManifold({ wasmUrl: manifoldWasm });
 

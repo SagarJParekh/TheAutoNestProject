@@ -31,5 +31,9 @@ export const Icon = {
   help: P(<><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01" /></>),
   close: P(<path d="M6 6l12 12M18 6 6 18" />),
   grid: P(<><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /></>),
+  label: P(<><path d="M4 7V4h16v3M12 4v16M9 20h6" /></>),
+  texture: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9l6-6M3 15 15 3M3 21 21 3M9 21l12-12M15 21l6-6" /></>),
+  measure: P(<><path d="M3 17 17 3l4 4L7 21z" /><path d="M7 13l2 2M10 10l2 2M13 7l2 2" /></>),
+  zoomArea: P(<><rect x="3" y="3" width="12" height="12" rx="1" strokeDasharray="3 2" /><circle cx="16" cy="16" r="3.5" /><path d="m19 19 2.5 2.5" /></>),
   cube: P(<><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="M3 7l9 5 9-5M12 12v10" /></>),
 };

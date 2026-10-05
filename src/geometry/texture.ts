@@ -8,6 +8,7 @@ import { MeshData, Vec3, FloatBuffer, IndexBuffer, triangleCount, ProgressFn, no
 import { buildTopology } from './topology';
 import { planeBasis } from './triangulate';
 import { regionNormal } from './select';
+import { smallestEigenvector, fitCircle2D } from './measure3d';
 
 export type TexturePattern = 'knurl' | 'ribs' | 'waffle' | 'dots' | 'hex' | 'noise' | 'image';
 
@@ -28,8 +29,11 @@ export interface TextureParams {
   angle: number;
   /** target edge length after refinement; default period / 6 */
   resolution?: number;
-  /** planar projection along the region normal, or per-face triplanar (better on curved / whole parts) */
-  projection: 'planar' | 'triplanar';
+  /**
+   * planar: along the region normal; cylindrical: wrapped around the axis of a
+   * round region (seamless); triplanar: per-face axis projection (whole parts)
+   */
+  projection: 'planar' | 'cylindrical' | 'triplanar';
   heightmap?: Heightmap;
   /** invert the height pattern */
   invert?: boolean;
@@ -65,8 +69,7 @@ export function patternHeight(p: TextureParams, s: number, t: number): number {
       break;
     case 'knurl': {
       // crossed triangular grooves at ±45° -> raised diamonds
-      const a = (x + y) / Math.SQRT2, b = (x - y) / Math.SQRT2;
-      h = Math.min(tri(a), tri(b));
+      h = Math.min(tri(x + y), tri(x - y));
       break;
     }
     case 'waffle': {
@@ -272,6 +275,34 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
   const U: Vec3 = [basis.u[0] * ca + basis.v[0] * sa, basis.u[1] * ca + basis.v[1] * sa, basis.u[2] * ca + basis.v[2] * sa];
   const V: Vec3 = [-basis.u[0] * sa + basis.v[0] * ca, -basis.u[1] * sa + basis.v[1] * ca, -basis.u[2] * sa + basis.v[2] * ca];
   const rot = (s: number, t: number): [number, number] => [s * ca - t * sa, s * sa + t * ca];
+  // cylindrical frame: axis from the region normals, radius from a circle fit
+  let cyl: { axis: Vec3; u: Vec3; v: Vec3; cx: number; cy: number; turns: number } | null = null;
+  if (params.projection === 'cylindrical') {
+    const cov = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const used = new Set<number>();
+    for (const t of regionIds) {
+      const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+      const ux = p[b * 3] - p[a * 3], uy = p[b * 3 + 1] - p[a * 3 + 1], uz = p[b * 3 + 2] - p[a * 3 + 2];
+      const vx = p[c * 3] - p[a * 3], vy = p[c * 3 + 1] - p[a * 3 + 1], vz = p[c * 3 + 2] - p[a * 3 + 2];
+      const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+      const w = Math.hypot(n[0], n[1], n[2]);
+      if (!w) continue;
+      for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) cov[r][q] += (n[r] * n[q]) / w;
+      used.add(a).add(b).add(c);
+    }
+    const axis = smallestEigenvector(cov);
+    const helper: Vec3 = Math.abs(axis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    let u: Vec3 = [axis[1] * helper[2] - axis[2] * helper[1], axis[2] * helper[0] - axis[0] * helper[2], axis[0] * helper[1] - axis[1] * helper[0]];
+    const ul = Math.hypot(u[0], u[1], u[2]);
+    u = [u[0] / ul, u[1] / ul, u[2] / ul];
+    const v: Vec3 = [axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0]];
+    const pts: number[] = [];
+    for (const i of used) pts.push(p[i * 3] * u[0] + p[i * 3 + 1] * u[1] + p[i * 3 + 2] * u[2], p[i * 3] * v[0] + p[i * 3 + 1] * v[1] + p[i * 3 + 2] * v[2]);
+    const f = fitCircle2D(pts);
+    // a whole number of periods around the circumference makes the wrap seamless
+    const turns = Math.max(1, Math.round((2 * Math.PI * f.r) / Math.max(1e-3, params.period)));
+    cyl = { axis, u, v, cx: f.x, cy: f.y, turns };
+  }
   const out = new Float32Array(p);
   for (let v = 0; v < nv; v++) {
     if (!inR[v] || outR[v]) continue; // border vertices stay put
@@ -281,7 +312,13 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
     nx /= l; ny /= l; nz /= l;
     const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2];
     let s: number, t: number;
-    if (params.projection === 'planar') {
+    if (cyl) {
+      const pu = x * cyl.u[0] + y * cyl.u[1] + z * cyl.u[2] - cyl.cx;
+      const pv = x * cyl.v[0] + y * cyl.v[1] + z * cyl.v[2] - cyl.cy;
+      const theta = Math.atan2(pv, pu);
+      // arc coordinate scaled so one turn = `turns` periods
+      [s, t] = rot((theta / (2 * Math.PI)) * cyl.turns * params.period, x * cyl.axis[0] + y * cyl.axis[1] + z * cyl.axis[2]);
+    } else if (params.projection === 'planar') {
       const dx = x - centroid[0], dy = y - centroid[1], dz = z - centroid[2];
       s = dx * U[0] + dy * U[1] + dz * U[2];
       t = dx * V[0] + dy * V[1] + dz * V[2];

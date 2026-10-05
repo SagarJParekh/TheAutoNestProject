@@ -8,6 +8,9 @@ import { HollowPanel } from './panels/HollowPanel';
 import { PerforatePanel } from './panels/PerforatePanel';
 import { ExtrudePanel } from './panels/ExtrudePanel';
 import { PreviewBar } from './panels/PreviewBar';
+import { MeasurePanel } from './panels/MeasurePanel';
+import { LabelPanel } from './panels/LabelPanel';
+import { TexturePanel } from './panels/TexturePanel';
 
 const TITLES = {
   transform: 'Transform',
@@ -17,6 +20,9 @@ const TITLES = {
   hollow: 'Hollow',
   perforate: 'Perforate',
   extrude: 'Extrude',
+  measure: 'Measure',
+  label: 'Label',
+  texture: 'Texture',
 };
 
 export function PropertiesPanel() {
@@ -39,6 +45,9 @@ export function PropertiesPanel() {
         {tool === 'hollow' && <HollowPanel parts={parts} />}
         {tool === 'perforate' && <PerforatePanel />}
         {tool === 'extrude' && <ExtrudePanel />}
+        {tool === 'measure' && <MeasurePanel />}
+        {tool === 'label' && <LabelPanel />}
+        {tool === 'texture' && <TexturePanel />}
         {parts.length > 0 && <InfoPanel parts={parts} />}
       </div>
     </aside>

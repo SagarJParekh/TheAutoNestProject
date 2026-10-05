@@ -43,7 +43,9 @@ export function startPick(slot: PickSlot) {
 export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number) {
   const p = partById(partId);
   if (!p) return;
-  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle: 2 }, { silent: p.mesh.indices.length < 600000 });
+  const tex = getState().settings.texture;
+  const grow = slot === 'texture' ? { angle: tex.angleTolerance, smooth: tex.smooth } : { angle: 2, smooth: false };
+  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, ...grow }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
   const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };
   setState((s) => ({ facePicks: { ...s.facePicks, [slot]: pick }, pickMode: null, preview: null }));

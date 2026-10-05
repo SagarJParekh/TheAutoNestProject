@@ -11,6 +11,24 @@ import { importFile, PreparedBody } from '../loaders/pipeline';
 import { exportMeshes, exportZip, ExportFormat, ExportItem } from '../exporters';
 
 export type Progress = (fraction: number, message?: string) => void;
+
+/** Built-in fonts: id -> URL (set by the worker entry; Node tests read files directly). */
+export const fontUrls: Record<string, string> = {};
+const fontData = new Map<string, Promise<ArrayBuffer>>();
+async function builtinFont(id: string): Promise<ArrayBuffer> {
+  let p = fontData.get(id);
+  if (!p) {
+    const url = fontUrls[id];
+    if (!url) throw new Error(`Unknown font ${id}`);
+    p = fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`Could not load font ${id}`);
+      return r.arrayBuffer();
+    });
+    fontData.set(id, p);
+    p.catch(() => fontData.delete(id));
+  }
+  return p;
+}
 type Result<T> = { result: T; transfer?: Transferable[] };
 
 const meshBuffers = (m: MeshData): Transferable[] => [m.positions.buffer as ArrayBuffer, m.indices.buffer as ArrayBuffer];
@@ -100,8 +118,8 @@ export const ops = {
     return { result: { ...r, method }, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
   },
 
-  async grow(args: { mesh: MeshData; seed: number; angle: number }): Promise<Result<{ tris: Uint32Array; normal: Vec3; centroid: Vec3; area: number }>> {
-    const tris = G.growCoplanarRegion(args.mesh, args.seed, args.angle);
+  async grow(args: { mesh: MeshData; seed: number; angle: number; smooth?: boolean }): Promise<Result<{ tris: Uint32Array; normal: Vec3; centroid: Vec3; area: number }>> {
+    const tris = args.smooth ? G.growSmoothRegion(args.mesh, args.seed, args.angle) : G.growCoplanarRegion(args.mesh, args.seed, args.angle);
     const { normal, centroid, area } = G.regionNormal(args.mesh, tris);
     return { result: { tris, normal, centroid, area }, transfer: [tris.buffer as ArrayBuffer] };
   },
@@ -137,7 +155,7 @@ export const ops = {
     const plan = G.planPerforation(args.mesh, args.tris, args.params);
     if (plan.centers.length === 0) throw new Error('No holes fit in the selected region with these settings.');
     progress(0.3, `Building ${plan.centers.length} cutters`);
-    const cutters = G.perforationCutters(args.mesh, plan, args.params.depth ?? 0);
+    const cutters = G.perforationCutters(args.mesh, plan, args.params.depth ?? 0, G.exitRatioOf(args.params));
     progress(0.5, 'Boolean subtraction');
     const mesh = await G.subtractMeshes(args.mesh, cutters);
     return { result: { mesh, holes: plan.centers.length }, transfer: meshBuffers(mesh) };
@@ -198,6 +216,38 @@ export const ops = {
     progress(0.2, 'Placing props');
     const r = G.planProps(args.source, args.tris, args.target, args.params, args.towards);
     return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async pointHoles(args: { mesh: MeshData; points: G.HolePoint[]; params: G.PerforationParams }, progress: Progress): Promise<Result<{ mesh: MeshData; holes: number }>> {
+    if (!args.points.length) throw new Error('Pick at least one hole location');
+    progress(0.2, 'Building cutters');
+    const cutters = G.pointHoleCutters(args.mesh, args.points, args.params);
+    progress(0.4, 'Boolean subtraction');
+    const mesh = await G.subtractMeshes(args.mesh, cutters);
+    return { result: { mesh, holes: args.points.length }, transfer: meshBuffers(mesh) };
+  },
+
+  async fitFeature(args: { mesh: MeshData; seed: number; kind: 'cylinder' | 'sphere'; angle?: number }): Promise<Result<{ c: Vec3; axis?: Vec3; r: number; rms: number }>> {
+    const region = G.growSmoothRegion(args.mesh, args.seed, args.angle ?? 20);
+    if (args.kind === 'sphere') return { result: G.fitSphereRegion(args.mesh, region) };
+    const f = G.fitCylinder(args.mesh, region);
+    return { result: { c: f.c, axis: f.axis, r: f.r, rms: f.rms } };
+  },
+
+  async label(
+    args: { mesh: MeshData; font: string | ArrayBuffer; params: G.LabelParams; point: Vec3; normal: Vec3 },
+    progress: Progress,
+  ): Promise<Result<{ mesh: MeshData; label: MeshData }>> {
+    progress(0.1, 'Loading font');
+    const font = typeof args.font === 'string' ? await builtinFont(args.font) : args.font;
+    progress(0.3, args.params.mode === 'emboss' ? 'Embossing' : 'Engraving');
+    const r = await G.applyLabel(args.mesh, font, args.params, args.point, args.normal);
+    return { result: r, transfer: [...meshBuffers(r.mesh), ...meshBuffers(r.label)] };
+  },
+
+  async texture(args: { mesh: MeshData; tris: Uint32Array | null; params: G.TextureParams }, progress: Progress): Promise<Result<MeshData>> {
+    const m = G.textureMesh(args.mesh, args.tris, args.params, progress);
+    return { result: m, transfer: meshBuffers(m) };
   },
 
   async export(args: { format: ExportFormat; items: ExportItem[]; zip: boolean }, progress: Progress): Promise<Result<Uint8Array>> {

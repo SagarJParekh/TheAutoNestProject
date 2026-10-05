@@ -4,6 +4,8 @@ import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, useStore } from '../state/store';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
+import { onPointPick } from '../state/featureActions';
+import { onMeasurePick } from '../state/measureActions';
 
 const SLOT_TEXT: Record<string, string> = {
   primary: 'Click a face to select it',
@@ -12,7 +14,20 @@ const SLOT_TEXT: Record<string, string> = {
   alignTarget: 'Click the face to align it to (on another part)',
   propsA: 'Click the face the props start from',
   propsB: 'Click the face or shell the props should reach',
+  texture: 'Click the face to texture',
 };
+
+const POINT_TEXT: Record<string, string> = {
+  label: 'Click where the label should go',
+  propStart: 'Click the point where the prop starts',
+  propEnd: 'Click the point where the prop ends',
+  perfPoint: 'Click to add hole locations (click Done when finished)',
+};
+
+function PointBanner() {
+  const slot = useStore((s) => s.pointSlot);
+  return <>{POINT_TEXT[slot]}</>;
+}
 
 function FaceBanner() {
   const slot = useStore((s) => s.pickSlot);
@@ -22,6 +37,8 @@ function FaceBanner() {
 export function ViewerCanvas() {
   const ref = useRef<HTMLDivElement>(null);
   const pickMode = useStore((s) => s.pickMode);
+  const zooming = useStore((s) => s.zoomWindow);
+  const measuring = useStore((s) => s.tool === 'measure');
 
   useEffect(() => {
     const el = ref.current!;
@@ -37,6 +54,14 @@ export function ViewerCanvas() {
             if (s.pickSlot === 'primary') pickFace(info.partId, info.faceIndex);
             else pickFaceFor(s.pickSlot, info.partId, info.faceIndex);
           }
+          return;
+        }
+        if (s.pickMode === 'point') {
+          if (info) onPointPick(info);
+          return;
+        }
+        if (s.tool === 'measure' && !s.pickMode) {
+          if (info) onMeasurePick(info);
           return;
         }
         if (s.pickMode === 'drain') {
@@ -58,9 +83,12 @@ export function ViewerCanvas() {
       onTransformEnd(id, t) {
         setTransform(id, t, 'Move / rotate');
       },
+      onZoomDone() {
+        setState({ zoomWindow: false });
+      },
     });
     viewer.edgeRequest = requestEdges;
-    viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v) };
+    viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v), viewer };
     viewer.sync(getState());
     const unsub = useStore.subscribe((s) => viewer.sync(s));
     (window as unknown as { __viewer: Viewer }).__viewer = viewer;
@@ -72,12 +100,19 @@ export function ViewerCanvas() {
   }, []);
 
   return (
-    <div className={`viewport ${pickMode ? 'picking' : ''}`} ref={ref}>
+    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''}`} ref={ref}>
+      {zooming && (
+        <div className="pick-banner">
+          Drag a rectangle to zoom into
+          <button onClick={() => setState({ zoomWindow: false })}>Cancel (Esc)</button>
+        </div>
+      )}
       {pickMode && (
         <div className="pick-banner">
           {pickMode === 'layflat' && 'Click a face to lay it flat on the bed'}
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
+          {pickMode === 'point' && <PointBanner />}
           <button onClick={() => setState({ pickMode: null })}>Done (Esc)</button>
         </div>
       )}

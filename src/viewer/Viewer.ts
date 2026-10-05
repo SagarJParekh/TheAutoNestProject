@@ -3,12 +3,13 @@ import {
   DirectionalLight, DoubleSide, FrontSide, BackSide, GridHelper, Group, HemisphereLight, IncrementWrapStencilOp,
   LineBasicMaterial, LineSegments, Matrix3, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, NotEqualStencilFunc,
   Object3D, OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Quaternion, Raycaster, ReplaceStencilOp, Scene,
-  Sphere, Vector2, Vector3, WebGLRenderer, AlwaysStencilFunc, Material,
+  Sphere, Vector2, Vector3, WebGLRenderer, AlwaysStencilFunc, Material, Line, Line3, Points, PointsMaterial, Sprite, SpriteMaterial,
+  CanvasTexture, SRGBColorSpace,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
-import type { MeshData } from '../geometry';
+import type { MeshData, Vec3 } from '../geometry';
 import { faceNormalSegments } from '../geometry/props';
 import type { AppState } from '../state/store';
 import type { Part, Transform, ViewName } from '../state/types';
@@ -30,11 +31,15 @@ export interface PickInfo {
   normal: [number, number, number];
   shift: boolean;
   ctrl: boolean;
+  clientX: number;
+  clientY: number;
 }
 
 export interface ViewerCallbacks {
   onPick: (info: PickInfo | null, ev: { shift: boolean; ctrl: boolean }) => void;
   onTransformEnd: (partId: string, t: Transform) => void;
+  /** called after a zoom-window drag finishes (or is cancelled) */
+  onZoomDone?: () => void;
 }
 
 interface PartObject {
@@ -76,6 +81,9 @@ export class Viewer {
   private partsGroup = new Group();
   private previewGroup = new Group();
   private overlayGroup = new Group();
+  private annotGroup = new Group();
+  private annotKey: unknown[] = [];
+  private zoomRect: { x: number; y: number; div: HTMLDivElement } | null = null;
   private capsGroup = new Group();
   private objects = new Map<string, PartObject>();
   private geometries = new WeakMap<MeshData, GeometryRecord>();
@@ -131,14 +139,19 @@ export class Viewer {
       if (!dragging) this.commitGizmo();
     });
 
-    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup);
+    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup);
     this.buildGrid(200);
 
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', (e) => {
       this.pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
+      if (this.state?.zoomWindow && e.button === 0) this.startZoomRect(e);
     });
-    el.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    el.addEventListener('pointermove', (e) => this.moveZoomRect(e));
+    el.addEventListener('pointerup', (e) => {
+      if (this.zoomRect) return this.endZoomRect(e);
+      this.onPointerUp(e);
+    });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
@@ -306,6 +319,7 @@ export class Viewer {
     this.syncGizmo(s);
     this.syncPreview(s);
     this.syncOverlays(s);
+    this.syncAnnotations(s);
     this.updateGridSize(s);
     this.requestRender();
   }
@@ -822,10 +836,10 @@ export class Viewer {
     if (this.draggingGizmo || (this.gizmo as unknown as { axis: string | null }).axis) return;
     const info = this.pick(e.clientX, e.clientY);
     const mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
-    this.cb.onPick(info ? { ...info, ...mods } : null, mods);
+    this.cb.onPick(info ? { ...info, ...mods, clientX: e.clientX, clientY: e.clientY } : null, mods);
   }
 
-  pick(clientX: number, clientY: number): Omit<PickInfo, 'shift' | 'ctrl'> | null {
+  pick(clientX: number, clientY: number): Omit<PickInfo, 'shift' | 'ctrl' | 'clientX' | 'clientY'> | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
@@ -845,9 +859,278 @@ export class Viewer {
     };
   }
 
+  // ------------------------------------------------------------------ queries used by tools
+
+  /** First surface hit along a ray (world space). Restrict to one part with `onlyPart`, skip one with `skipPart`. */
+  castRay(origin: Vec3, dir: Vec3, opts: { onlyPart?: string; skipPart?: string; minDistance?: number } = {}) {
+    const rc = new Raycaster(new Vector3(...origin), new Vector3(...dir).normalize());
+    (rc as unknown as { firstHitOnly: boolean }).firstHitOnly = false;
+    const meshes = [...this.objects.values()]
+      .filter((o) => o.part.visible && (!opts.onlyPart || o.part.id === opts.onlyPart) && o.part.id !== opts.skipPart)
+      .map((o) => o.mesh);
+    const hits = rc.intersectObjects(meshes, false).filter((h) => h.distance > (opts.minDistance ?? 1e-4));
+    const h = hits[0];
+    if (!h || !h.face) return null;
+    const n = h.face.normal.clone().applyMatrix3(new Matrix3().getNormalMatrix(h.object.matrixWorld)).normalize();
+    return { point: [h.point.x, h.point.y, h.point.z] as Vec3, normal: [n.x, n.y, n.z] as Vec3, partId: h.object.userData.partId as string, distance: h.distance };
+  }
+
+  toScreen(p: Vec3): [number, number] {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const v = new Vector3(...p).project(this.camera);
+    return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+  }
+
+  /** World-space vertices of a part triangle. */
+  triangleWorld(partId: string, tri: number): [Vec3, Vec3, Vec3] | null {
+    const o = this.objects.get(partId);
+    if (!o) return null;
+    const { positions, indices } = o.part.mesh;
+    const out = [0, 1, 2].map((k) => {
+      const v = indices[tri * 3 + k] * 3;
+      const w = new Vector3(positions[v], positions[v + 1], positions[v + 2]).applyMatrix4(o.group.matrixWorld);
+      return [w.x, w.y, w.z] as Vec3;
+    });
+    return out as [Vec3, Vec3, Vec3];
+  }
+
+  /** Nearest triangle vertex within `px` screen pixels of the click. */
+  snapVertex(partId: string, tri: number, clientX: number, clientY: number, px = 12): Vec3 | null {
+    const t = this.triangleWorld(partId, tri);
+    if (!t) return null;
+    let best: Vec3 | null = null, bd = px;
+    for (const v of t) {
+      const [x, y] = this.toScreen(v);
+      const d = Math.hypot(x - clientX, y - clientY);
+      if (d < bd) {
+        bd = d;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Nearest feature edge (from the edges computed for display) within `px`
+   * pixels of the click; falls back to the nearest edge of the clicked triangle.
+   */
+  snapEdge(partId: string, tri: number, point: Vec3, clientX: number, clientY: number, px = 14): [Vec3, Vec3] | null {
+    const o = this.objects.get(partId);
+    if (!o) return null;
+    const edges = meshEntry(o.part.mesh).edges;
+    if (edges && edges.length) {
+      const m = o.group.matrixWorld;
+      const a = new Vector3(), b = new Vector3();
+      let best: [Vec3, Vec3] | null = null, bd = px;
+      const rect = this.renderer.domElement.getBoundingClientRect();
+      for (let i = 0; i < edges.length; i += 6) {
+        a.set(edges[i], edges[i + 1], edges[i + 2]).applyMatrix4(m);
+        b.set(edges[i + 3], edges[i + 4], edges[i + 5]).applyMatrix4(m);
+        const pa = a.clone().project(this.camera), pb = b.clone().project(this.camera);
+        if (pa.z > 1 || pb.z > 1) continue;
+        const ax = rect.left + ((pa.x + 1) / 2) * rect.width, ay = rect.top + ((1 - pa.y) / 2) * rect.height;
+        const bx = rect.left + ((pb.x + 1) / 2) * rect.width, by = rect.top + ((1 - pb.y) / 2) * rect.height;
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, ((clientX - ax) * dx + (clientY - ay) * dy) / l2)) : 0;
+        const d = Math.hypot(ax + dx * t - clientX, ay + dy * t - clientY);
+        if (d < bd) {
+          bd = d;
+          best = [[a.x, a.y, a.z], [b.x, b.y, b.z]];
+        }
+      }
+      if (best) return best;
+    }
+    const t = this.triangleWorld(partId, tri);
+    if (!t) return null;
+    let best: [Vec3, Vec3] = [t[0], t[1]], bd = Infinity;
+    for (let k = 0; k < 3; k++) {
+      const a = new Vector3(...t[k]), b = new Vector3(...t[(k + 1) % 3]);
+      const d = new Line3(a, b).closestPointToPoint(new Vector3(...point), true, new Vector3()).distanceTo(new Vector3(...point));
+      if (d < bd) {
+        bd = d;
+        best = [t[k], t[(k + 1) % 3]];
+      }
+    }
+    return best;
+  }
+
+  /** Local point/normal of a part -> world. */
+  localToWorld(partId: string, p: Vec3, n?: Vec3): { point: Vec3; normal: Vec3 } | null {
+    const o = this.objects.get(partId);
+    if (!o) return null;
+    const w = new Vector3(...p).applyMatrix4(o.group.matrixWorld);
+    const nn = n ? new Vector3(...n).applyMatrix3(new Matrix3().getNormalMatrix(o.group.matrixWorld)).normalize() : new Vector3(0, 0, 1);
+    return { point: [w.x, w.y, w.z], normal: [nn.x, nn.y, nn.z] };
+  }
+
+  // ------------------------------------------------------------------ zoom window
+
+  private startZoomRect(e: PointerEvent) {
+    const div = document.createElement('div');
+    div.className = 'zoom-rect';
+    this.container.appendChild(div);
+    this.zoomRect = { x: e.clientX, y: e.clientY, div };
+    this.controls.enabled = false;
+    this.moveZoomRect(e);
+  }
+
+  private moveZoomRect(e: PointerEvent) {
+    const z = this.zoomRect;
+    if (!z) return;
+    const r = this.container.getBoundingClientRect();
+    const x0 = Math.min(z.x, e.clientX) - r.left, y0 = Math.min(z.y, e.clientY) - r.top;
+    Object.assign(z.div.style, { left: `${x0}px`, top: `${y0}px`, width: `${Math.abs(e.clientX - z.x)}px`, height: `${Math.abs(e.clientY - z.y)}px` });
+  }
+
+  private endZoomRect(e: PointerEvent) {
+    const z = this.zoomRect!;
+    z.div.remove();
+    this.zoomRect = null;
+    this.controls.enabled = true;
+    const w = Math.abs(e.clientX - z.x), h = Math.abs(e.clientY - z.y);
+    if (w > 6 && h > 6) this.zoomToRect((z.x + e.clientX) / 2, (z.y + e.clientY) / 2, w, h);
+    this.cb.onZoomDone?.();
+  }
+
+  /** Zoom so the given screen rectangle (centre + size in px) fills the view. */
+  zoomToRect(cx: number, cy: number, w: number, h: number) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const frac = Math.max(w / rect.width, h / rect.height);
+    const ndc = new Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const meshes = [...this.objects.values()].filter((o) => o.part.visible).map((o) => o.mesh);
+    (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = true;
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    const viewDir = new Vector3().subVectors(this.controls.target, this.camera.position).normalize();
+    // without a hit, use the point at the current target depth
+    const newTarget = hit
+      ? hit.point.clone()
+      : this.raycaster.ray.at(this.raycaster.ray.origin.distanceTo(this.controls.target), new Vector3());
+    if (this.camera === this.ortho) {
+      const shift = newTarget.clone().sub(this.controls.target);
+      this.ortho.position.add(shift);
+      this.controls.target.copy(newTarget);
+      this.ortho.zoom = Math.min(this.ortho.zoom / frac, 1e5);
+      this.ortho.updateProjectionMatrix();
+    } else {
+      const dist = this.camera.position.distanceTo(newTarget) * frac;
+      this.controls.target.copy(newTarget);
+      this.camera.position.copy(newTarget).addScaledVector(viewDir, -Math.max(dist, 0.5));
+      this.perspective.near = Math.max(0.01, dist / 1000);
+      this.perspective.updateProjectionMatrix();
+    }
+    this.controls.update();
+    this.requestRender();
+  }
+
+  // ------------------------------------------------------------------ annotations (measurements, picked points)
+
+  private syncAnnotations(s: AppState) {
+    const key = [s.tool, s.measurements, s.measurePending, s.pointPicks, s.perfPoints, s.parts, s.settings.perforate.mode, s.settings.props.mode];
+    if (key.length === this.annotKey.length && key.every((k, i) => k === this.annotKey[i])) return;
+    this.annotKey = key;
+    disposeChildren(this.annotGroup);
+    const pts: Vec3[] = [];
+    const segs: number[] = [];
+    const accent = 0xffd23f;
+    const ring = (c: Vec3, n: Vec3, r: number, color = accent) => {
+      const nn = new Vector3(...n).normalize();
+      const u = new Vector3().crossVectors(nn, Math.abs(nn.x) < 0.9 ? new Vector3(1, 0, 0) : new Vector3(0, 1, 0)).normalize();
+      const v = new Vector3().crossVectors(nn, u);
+      const arr: number[] = [];
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        const p = new Vector3(...c).addScaledVector(u, Math.cos(a) * r).addScaledVector(v, Math.sin(a) * r);
+        arr.push(p.x, p.y, p.z);
+      }
+      const line = new Line(new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(arr), 3)), new LineBasicMaterial({ color, depthTest: false, transparent: true }));
+      line.renderOrder = 1001;
+      this.annotGroup.add(line);
+    };
+    if (s.tool === 'measure') {
+      for (const m of s.measurements) {
+        pts.push(...m.draw.points);
+        for (const [a, b] of m.draw.segments) segs.push(...a, ...b);
+        for (const c of m.draw.circles) ring(c.c, c.n, c.r);
+        this.annotGroup.add(textSprite(m.draw.label.text, m.draw.label.pos));
+      }
+      for (const e of s.measurePending.entities) {
+        const en = e.entity;
+        if (en.kind === 'point') pts.push(en.p);
+        else if (en.kind === 'line') segs.push(...en.a, ...en.b);
+        else if (en.kind === 'plane') {
+          pts.push(en.p);
+          const size = 5;
+          segs.push(...en.p, en.p[0] + en.n[0] * size, en.p[1] + en.n[1] * size, en.p[2] + en.n[2] * size);
+        } else if (en.kind === 'circle') ring(en.c, en.n, en.r, 0x22d3ee);
+        else if (en.kind === 'sphere') ring(en.c, [0, 0, 1], en.r, 0x22d3ee);
+      }
+      pts.push(...s.measurePending.points);
+    }
+    const markers: { pick: { partId: string; point: Vec3; normal: Vec3 }; color: number }[] = [];
+    if (s.tool === 'label' && s.pointPicks.label) markers.push({ pick: s.pointPicks.label, color: accent });
+    if (s.tool === 'repair' && s.repairTab === 'props' && s.settings.props.mode === 'single') {
+      if (s.pointPicks.propStart) markers.push({ pick: s.pointPicks.propStart, color: accent });
+      if (s.pointPicks.propEnd) markers.push({ pick: s.pointPicks.propEnd, color: 0x22d3ee });
+    }
+    if (s.tool === 'perforate' && s.settings.perforate.mode === 'points') for (const p of s.perfPoints) markers.push({ pick: p, color: accent });
+    for (const mk of markers) {
+      const w = this.localToWorld(mk.pick.partId, mk.pick.point, mk.pick.normal);
+      if (!w) continue;
+      pts.push(w.point);
+      const o = this.objects.get(mk.pick.partId);
+      const len = Math.max(2, (o?.mesh.geometry.boundingSphere?.radius ?? 20) * 0.15);
+      segs.push(...w.point, w.point[0] + w.normal[0] * len, w.point[1] + w.normal[1] * len, w.point[2] + w.normal[2] * len);
+    }
+    if (pts.length) {
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(pts.flat()), 3));
+      const p = new Points(g, new PointsMaterial({ color: accent, size: 9, sizeAttenuation: false, depthTest: false, transparent: true }));
+      p.renderOrder = 1002;
+      this.annotGroup.add(p);
+    }
+    if (segs.length) {
+      const l = new LineSegments(
+        new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(segs), 3)),
+        new LineBasicMaterial({ color: accent, depthTest: false, transparent: true }),
+      );
+      l.renderOrder = 1001;
+      this.annotGroup.add(l);
+    }
+  }
+
   setCursor(c: string) {
     this.renderer.domElement.style.cursor = c;
   }
+}
+
+function textSprite(text: string, pos: Vec3): Sprite {
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d')!;
+  const font = '600 28px Inter, system-ui, sans-serif';
+  ctx.font = font;
+  const w = Math.ceil(ctx.measureText(text).width) + 24;
+  c.width = w;
+  c.height = 44;
+  ctx.font = font;
+  ctx.fillStyle = 'rgba(20,22,27,0.88)';
+  ctx.strokeStyle = '#ffd23f';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(1, 1, w - 2, 42, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ffd23f';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 12, 23);
+  const tex = new CanvasTexture(c);
+  tex.colorSpace = SRGBColorSpace;
+  const sp = new Sprite(new SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }));
+  const h = 0.045;
+  sp.scale.set((h * w) / 44, h, 1);
+  sp.position.set(...pos);
+  sp.renderOrder = 1003;
+  sp.raycast = () => {};
+  return sp;
 }
 
 function round(v: number) {

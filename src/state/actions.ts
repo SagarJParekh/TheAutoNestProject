@@ -261,6 +261,11 @@ export function setTool(tool: ToolId) {
     const target = selectedParts().filter((p) => !p.locked);
     if (target.length) extra.cutPlane = centeredPlane(s.cutPlane, target.slice(0, 1));
   }
+  if (tool === 'measure') {
+    // edge snapping uses the feature edges computed for display
+    for (const p of s.parts) requestEdges(p.mesh);
+    extra.measurePending = { entities: [], points: [] };
+  }
   if (tool === 'clip' && !s.clipEnabled) {
     const sel = selectedParts();
     extra.clip = centeredPlane(s.clip, sel.length ? sel : s.parts);

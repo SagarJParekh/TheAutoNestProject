@@ -4,7 +4,8 @@ import {
   booleanOperands, checkIntersections, clearPick, flipAllNormals, flipPickedFaces, mergeSelectedParts, previewAlign, previewBoolean,
   previewMakeSolid, previewProps, previewRemoveOverlaps, previewStitch, previewUnifyShells, splitShellsToParts, startPick, unifyNormals,
 } from '../../state/repairActions';
-import type { Part, PickSlot, ToolSettings } from '../../state/types';
+import type { Part, PickSlot, PointSlot, ToolSettings } from '../../state/types';
+import { clearPointPick, previewSingleProp, startPointPick, worldPoint } from '../../state/featureActions';
 
 type Key = keyof ToolSettings;
 function useSetting<K extends Key>(k: K) {
@@ -208,22 +209,67 @@ export function AlignTab() {
 
 // ------------------------------------------------------------------ Props tab
 
+function PointButton({ slot, label }: { slot: Exclude<PointSlot, 'perfPoint'>; label: string }) {
+  const armed = useStore((s) => s.pickMode === 'point' && s.pointSlot === slot);
+  const pick = useStore((s) => s.pointPicks[slot]);
+  useStore((s) => s.parts);
+  const w = worldPoint(pick);
+  return (
+    <div className="pick-row">
+      <button className={`btn ${armed ? 'primary' : ''}`} onClick={() => startPointPick(slot)}>
+        {armed ? 'Click a point…' : label}
+      </button>
+      <span className="muted small">{w ? `${w.part.name} · ${w.point.map((v) => v.toFixed(1)).join(', ')}` : pick ? 'part changed — pick again' : 'not picked'}</span>
+      {pick && (
+        <button className="mini" onClick={() => clearPointPick(slot)}>
+          Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function PropsTab() {
   const preview = useStore((s) => s.preview);
   const [props, setProps] = useSetting('props');
+  const single = props.mode === 'single';
   return (
-    <Section title="Props between faces / shells">
-      <PickButton slot="propsA" label="1. Start face" />
-      <PickButton slot="propsB" label="2. Target face / shell" />
+    <Section title={single ? 'Single prop' : 'Props between faces / shells'}>
+      <Row label="Mode">
+        <Segmented
+          value={props.mode}
+          onChange={(mode) => setProps({ mode })}
+          options={[
+            { value: 'single', label: 'Single (point)' },
+            { value: 'array', label: 'Array (faces)' },
+          ]}
+        />
+      </Row>
+      {single ? (
+        <>
+          <PointButton slot="propStart" label="1. Start point" />
+          <PointButton slot="propEnd" label="2. End point (optional)" />
+          <Hint>Without an end point the prop runs along the surface normal to the first surface it meets.</Hint>
+        </>
+      ) : (
+        <>
+          <PickButton slot="propsA" label="1. Start face" />
+          <PickButton slot="propsB" label="2. Target face / shell" />
+        </>
+      )}
       <Row label="Diameter">
         <NumberField value={props.diameter} min={0.2} step={0.5} suffix="mm" onChange={(diameter) => setProps({ diameter })} />
       </Row>
-      <Row label="Spacing">
-        <NumberField value={props.spacing} min={0.5} step={1} suffix="mm" title="Centre-to-centre distance" onChange={(spacing) => setProps({ spacing })} />
-      </Row>
-      <Row label="Border margin">
-        <NumberField value={props.margin} min={0} step={0.5} suffix="mm" onChange={(margin) => setProps({ margin })} />
-      </Row>
+      {!single && (
+        <>
+          <Row label="Spacing">
+            <NumberField value={props.spacing} min={0.5} step={1} suffix="mm" title="Centre-to-centre distance" onChange={(spacing) => setProps({ spacing })} />
+          </Row>
+          <Row label="Border margin">
+            <NumberField value={props.margin} min={0} step={0.5} suffix="mm" onChange={(margin) => setProps({ margin })} />
+          </Row>
+        </>
+      )}
       <Row label="Max length">
         <NumberField value={props.maxLength} min={0.5} step={5} suffix="mm" onChange={(maxLength) => setProps({ maxLength })} />
       </Row>
@@ -231,15 +277,17 @@ export function PropsTab() {
         <NumberField value={props.embed} min={0} step={0.1} suffix="mm" title="How far each prop sinks into the faces" onChange={(embed) => setProps({ embed })} />
       </Row>
       <Check checked={props.merge} onChange={(merge) => setProps({ merge })}>
-        Merge props and parts into one solid
+        Merge prop(s) and parts into one solid
       </Check>
-      <button className="btn primary wide" disabled={!!preview} onClick={previewProps}>
-        Preview props
+      <button className="btn primary wide" disabled={!!preview} onClick={single ? previewSingleProp : previewProps}>
+        {single ? 'Preview prop' : 'Preview props'}
       </button>
-      <Hint>
-        Props are laid out on a grid over the start face and run along its normal to the first surface hit. Pick both faces on the same part to
-        prop between two of its shells.
-      </Hint>
+      {!single && (
+        <Hint>
+          Props are laid out on a grid over the start face and run along its normal to the first surface hit. Pick both faces on the same part to
+          prop between two of its shells.
+        </Hint>
+      )}
     </Section>
   );
 }

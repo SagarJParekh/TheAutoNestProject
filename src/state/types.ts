@@ -1,5 +1,6 @@
 import type {
   MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
+  LabelParams, TextureParams, Heightmap, MEntity,
 } from '../geometry';
 
 export interface Transform {
@@ -22,7 +23,7 @@ export interface Part {
   source?: string;
 }
 
-export type ToolId = 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude';
+export type ToolId = 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture';
 export type DisplayMode = 'shaded' | 'edges' | 'wireframe' | 'xray';
 export type GizmoMode = 'translate' | 'rotate' | 'none';
 export type ViewName = 'top' | 'front' | 'side' | 'iso' | 'bottom' | 'back';
@@ -93,10 +94,47 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure';
 
 /** Which face slot a 'face' pick fills: the extrude/perforate selection or one of the repair picks. */
-export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip';
+export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip' | 'texture';
+
+/** A point picked on a part surface, stored in the part's local space so it follows the part. */
+export interface PointPick {
+  partId: string;
+  mesh: MeshData;
+  point: Vec3;
+  normal: Vec3;
+}
+
+export type PointSlot = 'label' | 'propStart' | 'propEnd' | 'perfPoint';
+
+export type MeasureMode = 'distance' | 'angle' | 'diameter' | 'thickness';
+export type MeasurePickAs = 'point' | 'edge' | 'surface' | 'circle' | 'circle3' | 'sphere';
+
+export interface MeasureDraw {
+  points: Vec3[];
+  segments: [Vec3, Vec3][];
+  circles: { c: Vec3; n: Vec3; r: number }[];
+  label: { pos: Vec3; text: string };
+}
+
+export interface Measurement {
+  id: number;
+  mode: MeasureMode;
+  title: string;
+  value: number;
+  unit: 'mm' | '°';
+  extras: { label: string; value: number; unit: 'mm' | '°' }[];
+  note?: string;
+  draw: MeasureDraw;
+}
+
+export interface MeasurePending {
+  entities: { entity: MEntity; label: string }[];
+  /** points collected for a 3-point circle / 3-point angle */
+  points: Vec3[];
+}
 
 export type RepairTab = 'fix' | 'combine' | 'align' | 'props';
 
@@ -108,7 +146,7 @@ export interface IntersectionEntry {
 export interface ToolSettings {
   repair: { removeSmallShells: boolean; smallShellRatio: number; weldTolerance: number; fillHoles: boolean; stitch: boolean };
   hollow: { thickness: number; quality: 'draft' | 'normal' | 'fine'; drainDiameter: number; drainHoles: DrainHolePick[] };
-  perforate: PerforationParams & { angleTolerance: number };
+  perforate: PerforationParams & { angleTolerance: number; mode: 'array' | 'points' };
   extrude: { distance: number; angleTolerance: number };
   cut: { gap: number };
   highlight: { open: boolean; nonManifold: boolean; flipped: boolean; holeIndex: number | null };
@@ -117,7 +155,11 @@ export interface ToolSettings {
   solid: { voxelSize: number };
   boolean: { op: BooleanOp };
   align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
-  props: PropParams & { merge: boolean };
+  props: PropParams & { merge: boolean; mode: 'single' | 'array' };
+  label: Omit<LabelParams, 'curveSegments'> & { font: string };
+  texture: Omit<TextureParams, 'heightmap'> & { scope: 'face' | 'part'; smooth: boolean; angleTolerance: number };
+  arrange: { bedWidth: number; gap: number; cols: number; rows: number; mirrorCopy: boolean };
+  measure: { mode: MeasureMode; pickAs: MeasurePickAs };
 }
 
-export type { RepairSummary, PerforationPlan, BooleanOp };
+export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

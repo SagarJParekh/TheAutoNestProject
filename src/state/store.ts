@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type {
   AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, IntersectionEntry, Job, Notice, Part, PickMode, PickSlot, PlaneSettings,
-  Preview, RepairTab, ToolId, ToolSettings, Transform,
+  Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap,
 } from './types';
 import type { MeshData } from '../geometry';
 
@@ -31,6 +31,14 @@ export interface AppState {
   facePicks: Partial<Record<Exclude<PickSlot, 'primary'>, FaceSelection>>;
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
+  pointSlot: PointSlot;
+  pointPicks: Partial<Record<Exclude<PointSlot, 'perfPoint'>, PointPick>>;
+  perfPoints: PointPick[];
+  measurements: Measurement[];
+  measurePending: MeasurePending;
+  customFont: { name: string; data: ArrayBuffer } | null;
+  heightmap: { name: string; map: Heightmap } | null;
+  zoomWindow: boolean;
   preview: Preview | null;
   analysis: Record<string, AnalysisEntry>;
   settings: ToolSettings;
@@ -64,12 +72,20 @@ export const useStore = create<AppState>(() => ({
   facePicks: {},
   repairTab: 'fix',
   intersections: {},
+  pointSlot: 'label',
+  pointPicks: {},
+  perfPoints: [],
+  measurements: [],
+  measurePending: { entities: [], points: [] },
+  customFont: null,
+  heightmap: null,
+  zoomWindow: false,
   preview: null,
   analysis: {},
   settings: {
     repair: { removeSmallShells: false, smallShellRatio: 0.01, weldTolerance: 0, fillHoles: true, stitch: true },
     hollow: { thickness: 2, quality: 'normal', drainDiameter: 4, drainHoles: [] },
-    perforate: { pattern: 'round', size: 4, spacing: 2, margin: 2, depth: 0, angle: 0, angleTolerance: 2 },
+    perforate: { pattern: 'round', size: 4, spacing: 2, margin: 2, depth: 0, angle: 0, angleTolerance: 2, mode: 'array', exitSize: 0 },
     extrude: { distance: 5, angleTolerance: 2 },
     cut: { gap: 0 },
     highlight: { open: true, nonManifold: true, flipped: true, holeIndex: null },
@@ -78,7 +94,14 @@ export const useStore = create<AppState>(() => ({
     solid: { voxelSize: 0 },
     boolean: { op: 'union' },
     align: { mode: 'mate', offset: 0, center: true },
-    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false },
+    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false, mode: 'single' },
+    label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold' },
+    texture: {
+      pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
+      scope: 'face', smooth: false, angleTolerance: 2,
+    },
+    arrange: { bedWidth: 220, gap: 5, cols: 2, rows: 2, mirrorCopy: false },
+    measure: { mode: 'distance', pickAs: 'point' },
   },
   jobs: [],
   notices: [],
