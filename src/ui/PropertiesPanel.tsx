@@ -12,6 +12,7 @@ import { PreviewBar } from './panels/PreviewBar';
 import { MeasurePanel } from './panels/MeasurePanel';
 import { LabelPanel } from './panels/LabelPanel';
 import { TexturePanel } from './panels/TexturePanel';
+import { AlignTab, PropsTab } from './panels/RepairTabs';
 
 const TITLES = {
   transform: 'Transform',
@@ -24,6 +25,8 @@ const TITLES = {
   measure: 'Measure',
   label: 'Label',
   texture: 'Texture',
+  align: 'Align',
+  props: 'Props',
 };
 
 export function PropertiesPanel() {
@@ -55,6 +58,8 @@ export function PropertiesPanel() {
         {tool === 'measure' && <MeasurePanel />}
         {tool === 'label' && <LabelPanel />}
         {tool === 'texture' && <TexturePanel />}
+        {tool === 'align' && <AlignTab />}
+        {tool === 'props' && <PropsTab />}
         {parts.length > 0 && <InfoPanel parts={parts} />}
       </div>
     </aside>

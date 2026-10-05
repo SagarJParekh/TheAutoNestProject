@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
-import { MeshData, compactMesh, subsetTriangles, flipMesh, computeBounds, ProgressFn, noProgress } from './mesh';
-import { findShells } from './topology';
+import { MeshData, compactMesh, subsetTriangles, flipMesh, computeBounds, mergeMeshes, ProgressFn, noProgress } from './mesh';
+import { buildTopology, findShells } from './topology';
 import { gridFor, makeBVH, squaredEDT } from './sdf';
 import { marchingTetrahedra } from './marching';
 import { meshVolume } from './measure';
@@ -162,4 +162,76 @@ export function makeSolid(mesh: MeshData, voxelSize = chooseSolidVoxel(mesh), on
   if (meshVolume(out) < 0) out = flipMesh(out);
   onProgress(1);
   return compactMesh(out);
+}
+
+export interface ShellInfo {
+  id: number;
+  triangles: number;
+  /** |signed volume| in mm³ */
+  volume: number;
+  area: number;
+  /** true if the shell has no open edges */
+  closed: boolean;
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
+/** Per-shell statistics plus the shell id of every triangle (shells sorted by size, largest = 0). */
+export function shellInfo(mesh: MeshData): { shells: ShellInfo[]; shellOfTri: Uint32Array } {
+  const { shellOfTri: raw, shellCount } = findShells(mesh);
+  const p = mesh.positions, idx = mesh.indices;
+  const nt = idx.length / 3;
+  const vol = new Float64Array(shellCount), area = new Float64Array(shellCount), tris = new Uint32Array(shellCount);
+  const mins = new Float64Array(shellCount * 3).fill(Infinity), maxs = new Float64Array(shellCount * 3).fill(-Infinity);
+  for (let t = 0; t < nt; t++) {
+    const s = raw[t];
+    tris[s]++;
+    const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+    vol[s] +=
+      (p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])) / 6;
+    const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+    const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+    area[s] += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+    for (const v of [a, b, c])
+      for (let k = 0; k < 3; k++) {
+        if (p[v + k] < mins[s * 3 + k]) mins[s * 3 + k] = p[v + k];
+        if (p[v + k] > maxs[s * 3 + k]) maxs[s * 3 + k] = p[v + k];
+      }
+  }
+  // shells with open edges
+  const open = new Uint8Array(shellCount);
+  const topo = buildTopology(mesh);
+  for (let e = 0; e < topo.edgeCount; e++) if (topo.edgeFaceCount[e] === 1) open[raw[(topo.edgeHE0[e] / 3) | 0]] = 1;
+  // largest first
+  const order = Array.from({ length: shellCount }, (_, i) => i).sort((x, y) => tris[y] - tris[x] || Math.abs(vol[y]) - Math.abs(vol[x]));
+  const rank = new Uint32Array(shellCount);
+  order.forEach((s, i) => (rank[s] = i));
+  const shellOfTri = new Uint32Array(nt);
+  for (let t = 0; t < nt; t++) shellOfTri[t] = rank[raw[t]];
+  const shells: ShellInfo[] = order.map((s, i) => ({
+    id: i,
+    triangles: tris[s],
+    volume: Math.abs(vol[s]),
+    area: area[s],
+    closed: !open[s],
+    min: [mins[s * 3], mins[s * 3 + 1], mins[s * 3 + 2]],
+    max: [maxs[s * 3], maxs[s * 3 + 1], maxs[s * 3 + 2]],
+  }));
+  return { shells, shellOfTri };
+}
+
+/** Keep only the triangles of the given shells (ids from shellInfo). */
+export function keepShells(mesh: MeshData, shellOfTri: Uint32Array, keep: Set<number>): MeshData {
+  return subsetTriangles(mesh, (t) => keep.has(shellOfTri[t]));
+}
+
+/**
+ * Boolean-union the chosen shells into one solid and keep the other shells
+ * unchanged. The chosen shells must be closed.
+ */
+export async function mergeShells(mesh: MeshData, shellOfTri: Uint32Array, ids: Set<number>): Promise<MeshData> {
+  const chosen = keepShells(mesh, shellOfTri, ids);
+  const rest = subsetTriangles(mesh, (t) => !ids.has(shellOfTri[t]));
+  const { mesh: merged } = await unifyShells(chosen);
+  return rest.indices.length ? mergeMeshes([merged, rest]) : merged;
 }

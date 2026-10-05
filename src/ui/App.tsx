@@ -5,6 +5,7 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { ViewerCanvas } from './ViewerCanvas';
 import { StatusBar, Notices } from './StatusBar';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
+import { CommandPalette } from './CommandPalette';
 import { useShortcuts } from './shortcuts';
 import { importFiles } from '../state/actions';
 
@@ -44,6 +45,7 @@ export function App() {
       <StatusBar />
       <ExportDialog />
       <ShortcutsDialog />
+      <CommandPalette />
       {dragging && (
         <div className="drop-overlay">
           <div>

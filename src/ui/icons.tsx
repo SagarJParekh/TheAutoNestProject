@@ -35,5 +35,8 @@ export const Icon = {
   texture: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9l6-6M3 15 15 3M3 21 21 3M9 21l12-12M15 21l6-6" /></>),
   measure: P(<><path d="M3 17 17 3l4 4L7 21z" /><path d="M7 13l2 2M10 10l2 2M13 7l2 2" /></>),
   zoomArea: P(<><rect x="3" y="3" width="12" height="12" rx="1" strokeDasharray="3 2" /><circle cx="16" cy="16" r="3.5" /><path d="m19 19 2.5 2.5" /></>),
+  align: P(<><path d="M4 3v18" /><rect x="7" y="6" width="12" height="4" rx="1" /><rect x="7" y="14" width="8" height="4" rx="1" /></>),
+  props: P(<><path d="M3 4h18M3 20h18" /><path d="M7 4v16M12 4v16M17 4v16" /></>),
+  search: P(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>),
   cube: P(<><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="M3 7l9 5 9-5M12 12v10" /></>),
 };

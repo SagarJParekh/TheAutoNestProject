@@ -36,10 +36,12 @@ export interface PickInfo {
 }
 
 export interface ViewerCallbacks {
-  onPick: (info: PickInfo | null, ev: { shift: boolean; ctrl: boolean }) => void;
+  onPick: (info: PickInfo | null, ev: { shift: boolean; ctrl: boolean; clientX: number; clientY: number }) => void;
   onTransformEnd: (partId: string, t: Transform) => void;
   /** called after a zoom-window drag finishes (or is cancelled) */
   onZoomDone?: () => void;
+  /** called with the lasso outline (client coordinates) when a lasso drag ends */
+  onLasso?: (points: [number, number][]) => void;
 }
 
 interface PartObject {
@@ -86,6 +88,7 @@ export class Viewer {
   private hoverPending = false;
   private annotKey: unknown[] = [];
   private zoomRect: { x: number; y: number; div: HTMLDivElement } | null = null;
+  private lasso: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement } | null = null;
   private capsGroup = new Group();
   private objects = new Map<string, PartObject>();
   private geometries = new WeakMap<MeshData, GeometryRecord>();
@@ -148,14 +151,17 @@ export class Viewer {
     el.addEventListener('pointerdown', (e) => {
       this.pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
       if (this.state?.zoomWindow && e.button === 0) this.startZoomRect(e);
+      else if (this.state?.lassoMode && e.button === 0) this.startLasso(e);
     });
     el.addEventListener('pointermove', (e) => {
       this.moveZoomRect(e);
+      this.moveLasso(e);
       this.scheduleHover(e.clientX, e.clientY, e.buttons !== 0);
     });
     el.addEventListener('pointerleave', () => this.clearHover());
     el.addEventListener('pointerup', (e) => {
       if (this.zoomRect) return this.endZoomRect(e);
+      if (this.lasso) return this.endLasso();
       this.onPointerUp(e);
     });
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -612,28 +618,71 @@ export class Viewer {
       const ix = inRepair && s.repairTab === 'fix' ? s.intersections[obj.part.id] : undefined;
       const inter = ix && ix.mesh === obj.part.mesh ? ix : null;
       const showNormals = inRepair && s.repairTab === 'fix' && s.settings.normals.show;
-      const picks = inRepair
-        ? (Object.entries(s.facePicks) as [string, NonNullable<AppState['facePicks'][keyof AppState['facePicks']]>][]).filter(
-            ([slot, p]) =>
-              p.partId === obj.part.id &&
-              p.mesh === obj.part.mesh &&
-              ((s.repairTab === 'fix' && slot === 'flip') ||
-                (s.repairTab === 'align' && slot.startsWith('align')) ||
-                (s.repairTab === 'props' && slot.startsWith('props'))),
-          )
-        : [];
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals}|${picks.map(([k, p]) => k + p.seed).join()}`;
+      const picks = (Object.entries(s.facePicks) as [string, NonNullable<AppState['facePicks'][keyof AppState['facePicks']]>][]).filter(
+        ([slot, p]) =>
+          p.partId === obj.part.id &&
+          p.mesh === obj.part.mesh &&
+          ((inRepair && s.repairTab === 'fix' && slot === 'flip') ||
+            (s.tool === 'align' && slot.startsWith('align')) ||
+            (s.tool === 'props' && slot.startsWith('props')) ||
+            (s.tool === 'texture' && slot === 'texture')),
+      );
+      const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
+      const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? te.tris.length + ':' + te.verts.join(',') : ''}`;
+      // isolate: ghost the whole part, the selected shells are drawn as an overlay
+      const ghostForShells = !!(sv && sv.isolate && sv.selected.length);
+      obj.material.transparent = obj.material.transparent || ghostForShells;
+      if (ghostForShells) {
+        obj.material.opacity = 0.1;
+        obj.material.depthWrite = false;
+      }
       if (
         obj.overlayKey === key &&
         obj.overlay.userData.analysis === analysis &&
         obj.overlay.userData.fs === fs &&
         obj.overlay.userData.inter === inter &&
-        obj.overlay.userData.mesh === obj.part.mesh
+        obj.overlay.userData.mesh === obj.part.mesh &&
+        obj.overlay.userData.te === te
       )
         continue;
       obj.overlayKey = key;
-      obj.overlay.userData = { analysis, fs, inter, mesh: obj.part.mesh };
+      obj.overlay.userData = { analysis, fs, inter, mesh: obj.part.mesh, te };
       disposeChildren(obj.overlay);
+      if (sv) {
+        const trisOf = (ids: Set<number>) => {
+          const out: number[] = [];
+          for (let t = 0; t < sv.shellOfTri.length; t++) if (ids.has(sv.shellOfTri[t])) out.push(t);
+          return Uint32Array.from(out);
+        };
+        if (sv.selected.length) {
+          const m = triMesh(obj.part.mesh, trisOf(new Set(sv.selected)), sv.isolate ? new Color(obj.part.color).getHex() : 0x22d3ee);
+          if (!sv.isolate) {
+            (m.material as MeshBasicMaterial).transparent = true;
+            (m.material as MeshBasicMaterial).opacity = 0.55;
+          }
+          obj.overlay.add(m);
+        }
+        if (sv.hover !== null && !sv.selected.includes(sv.hover)) {
+          const m = triMesh(obj.part.mesh, trisOf(new Set([sv.hover])), 0xffd23f);
+          (m.material as MeshBasicMaterial).transparent = true;
+          (m.material as MeshBasicMaterial).opacity = 0.6;
+          obj.overlay.add(m);
+        }
+      }
+      if (te) {
+        if (te.tris.length) obj.overlay.add(triMesh(obj.part.mesh, Uint32Array.from(te.tris), 0xff3bd4));
+        if (te.verts.length) {
+          const pos = te.verts.flatMap((v) => [obj.part.mesh.positions[v * 3], obj.part.mesh.positions[v * 3 + 1], obj.part.mesh.positions[v * 3 + 2]]);
+          const pts = new Points(
+            new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(pos), 3)),
+            new PointsMaterial({ color: 0xff3bd4, size: 12, sizeAttenuation: false, depthTest: false, transparent: true }),
+          );
+          pts.renderOrder = 1004;
+          obj.overlay.add(pts);
+          if (te.verts.length === 2) obj.overlay.add(lines(new Float32Array(pos), 0xff3bd4, true));
+        }
+      }
       if (inter) {
         if (inter.report.intersecting.length) obj.overlay.add(triMesh(obj.part.mesh, inter.report.intersecting, 0xff7a1a));
         if (inter.report.overlapping.length) obj.overlay.add(triMesh(obj.part.mesh, inter.report.overlapping, 0x22d3ee));
@@ -678,7 +727,7 @@ export class Viewer {
     // world overlays: cut plane, drain holes
     const key = JSON.stringify([
       s.tool,
-      s.tool === 'cut' ? s.cutPlane : null,
+      s.tool === 'cut' ? [s.cutPlane, s.settings.cutMode] : null,
       s.tool === 'hollow' ? s.settings.hollow.drainHoles : null,
       s.tool === 'hollow' ? s.settings.hollow.drainDiameter : null,
       s.tool === 'hollow' ? s.settings.hollow.thickness : null,
@@ -695,7 +744,7 @@ export class Viewer {
     }
     const g = new Group();
     g.userData.toolOverlay = true;
-    if (s.tool === 'cut' && !s.preview) {
+    if (s.tool === 'cut' && !s.preview && s.settings.cutMode !== 'lasso') {
       const target = s.selection.map((id) => this.objects.get(id)).find(Boolean);
       const sphere = target
         ? target.mesh.geometry.boundingSphere!.clone().applyMatrix4(target.group.matrixWorld)
@@ -841,8 +890,8 @@ export class Viewer {
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     if (this.draggingGizmo || (this.gizmo as unknown as { axis: string | null }).axis) return;
     const info = this.pick(e.clientX, e.clientY);
-    const mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
-    this.cb.onPick(info ? { ...info, ...mods, clientX: e.clientX, clientY: e.clientY } : null, mods);
+    const mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, clientX: e.clientX, clientY: e.clientY };
+    this.cb.onPick(info ? { ...info, ...mods } : null, mods);
   }
 
   pick(clientX: number, clientY: number): Omit<PickInfo, 'shift' | 'ctrl' | 'clientX' | 'clientY'> | null {
@@ -960,6 +1009,35 @@ export class Viewer {
     return best;
   }
 
+  /** Local index of the part vertex closest to the cursor on screen, within `px` pixels (or -1). */
+  nearestVertexScreen(partId: string, clientX: number, clientY: number, px = 16): number {
+    const o = this.objects.get(partId);
+    if (!o) return -1;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const m = new Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse).multiply(o.group.matrixWorld);
+    const e = m.elements;
+    const p = o.part.mesh.positions;
+    const tx = ((clientX - rect.left) / rect.width) * 2 - 1, ty = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const sx = rect.width / 2, sy = rect.height / 2;
+    let best = -1, bd = px * px, bz = Infinity;
+    for (let v = 0; v < p.length / 3; v++) {
+      const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2];
+      const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+      if (w <= 0) continue;
+      const nx = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
+      const ny = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
+      const nz = (e[2] * x + e[6] * y + e[10] * z + e[14]) / w;
+      const d = ((nx - tx) * sx) ** 2 + ((ny - ty) * sy) ** 2;
+      // prefer the nearer vertex when several are under the cursor
+      if (d < bd - 1 || (d <= bd + 1 && nz < bz)) {
+        bd = Math.min(bd, d);
+        bz = nz;
+        best = v;
+      }
+    }
+    return best;
+  }
+
   /** Local point/normal of a part -> world. */
   localToWorld(partId: string, p: Vec3, n?: Vec3): { point: Vec3; normal: Vec3 } | null {
     const o = this.objects.get(partId);
@@ -975,7 +1053,7 @@ export class Viewer {
   private pointPicking(): boolean {
     const s = this.state;
     if (!s || s.zoomWindow) return false;
-    if (s.pickMode === 'point') return true;
+    if (s.pickMode === 'point' || s.pickMode === 'vertex') return true;
     return s.tool === 'measure' && !s.pickMode && s.settings.measure.mode !== 'thickness';
   }
 
@@ -1095,6 +1173,69 @@ export class Viewer {
     this.requestRender();
   }
 
+  // ------------------------------------------------------------------ lasso
+
+  private startLasso(e: PointerEvent) {
+    const r = this.container.getBoundingClientRect();
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'lasso-svg');
+    svg.setAttribute('width', String(r.width));
+    svg.setAttribute('height', String(r.height));
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    svg.appendChild(line);
+    this.container.appendChild(svg);
+    this.lasso = { points: [[e.clientX, e.clientY]], svg, line };
+    this.controls.enabled = false;
+  }
+
+  private moveLasso(e: PointerEvent) {
+    const l = this.lasso;
+    if (!l) return;
+    const [px, py] = l.points[l.points.length - 1];
+    if (Math.hypot(e.clientX - px, e.clientY - py) < 3) return;
+    l.points.push([e.clientX, e.clientY]);
+    const r = this.container.getBoundingClientRect();
+    l.line.setAttribute('points', [...l.points, l.points[0]].map(([x, y]) => `${x - r.left},${y - r.top}`).join(' '));
+  }
+
+  private endLasso() {
+    const l = this.lasso!;
+    l.svg.remove();
+    this.lasso = null;
+    this.controls.enabled = true;
+    this.cb.onLasso?.(l.points);
+  }
+
+  /**
+   * Camera-space outline and depth range for a lasso around a part (see
+   * geometry/lasso). Perspective outlines are in tangent space (depth 1).
+   */
+  lassoCamera(points: [number, number][], partId: string) {
+    const o = this.objects.get(partId);
+    if (!o) return null;
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ortho = cam === this.ortho;
+    const outline = points.map(([cx, cy]) => {
+      const nx = ((cx - rect.left) / rect.width) * 2 - 1;
+      const ny = -((cy - rect.top) / rect.height) * 2 + 1;
+      if (ortho) {
+        const oc = this.ortho;
+        return [((oc.left + ((nx + 1) / 2) * (oc.right - oc.left)) / oc.zoom), ((oc.bottom + ((ny + 1) / 2) * (oc.top - oc.bottom)) / oc.zoom)] as [number, number];
+      }
+      const t = Math.tan((this.perspective.fov * D2R) / 2);
+      return [nx * t * this.perspective.aspect, ny * t] as [number, number];
+    });
+    const sphere = o.mesh.geometry.boundingSphere!.clone().applyMatrix4(o.group.matrixWorld);
+    const dir = new Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new Quaternion()));
+    const d = sphere.center.clone().sub(cam.getWorldPosition(new Vector3())).dot(dir);
+    const r = sphere.radius * 1.5 + 1;
+    const near = ortho ? d - r : Math.max(d * 0.02, d - r, 0.01);
+    const far = d + r;
+    return { outline, camera: { matrixWorld: cam.matrixWorld.elements.slice(), orthographic: ortho, near, far } };
+  }
+
   // ------------------------------------------------------------------ zoom window
 
   private startZoomRect(e: PointerEvent) {
@@ -1201,7 +1342,7 @@ export class Viewer {
     }
     const markers: { pick: { partId: string; point: Vec3; normal: Vec3 }; color: number }[] = [];
     if (s.tool === 'label' && s.pointPicks.label) markers.push({ pick: s.pointPicks.label, color: accent });
-    if (s.tool === 'repair' && s.repairTab === 'props' && s.settings.props.mode === 'single') {
+    if (s.tool === 'props' && s.settings.props.mode === 'single') {
       if (s.pointPicks.propStart) markers.push({ pick: s.pointPicks.propStart, color: accent });
       if (s.pointPicks.propEnd) markers.push({ pick: s.pointPicks.propEnd, color: 0x22d3ee });
     }

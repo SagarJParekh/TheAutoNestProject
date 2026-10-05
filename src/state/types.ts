@@ -25,7 +25,28 @@ export interface Part {
   importCenter?: Vec3;
 }
 
-export type ToolId = 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture';
+export type ToolId =
+  | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props';
+
+/** Shell browser state for one part (shell ids index `shells`). */
+export interface ShellView {
+  partId: string;
+  mesh: MeshData;
+  shells: import('../geometry').ShellInfo[];
+  shellOfTri: Uint32Array;
+  selected: number[];
+  hover: number | null;
+  /** show only the selected shells in the viewport */
+  isolate: boolean;
+}
+
+/** Manual triangle editing: selected triangles to delete, or vertices picked for a new triangle. */
+export interface TriEdit {
+  partId: string;
+  mesh: MeshData;
+  tris: number[];
+  verts: number[];
+}
 export type DisplayMode = 'shaded' | 'edges' | 'wireframe' | 'xray';
 export type GizmoMode = 'translate' | 'rotate' | 'none';
 export type ViewName = 'top' | 'front' | 'side' | 'iso' | 'bottom' | 'back';
@@ -38,6 +59,9 @@ export interface PlaneSettings {
   /** offset along the normal, mm (world) */
   offset: number;
   flip: boolean;
+  /** tilt of an axis plane about its two perpendicular world axes, degrees */
+  tiltA?: number;
+  tiltB?: number;
 }
 
 export interface Job {
@@ -96,7 +120,7 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex';
 
 /** Which face slot a 'face' pick fills: the extrude/perforate selection or one of the repair picks. */
 export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip' | 'texture';
@@ -138,7 +162,7 @@ export interface MeasurePending {
   points: Vec3[];
 }
 
-export type RepairTab = 'fix' | 'combine' | 'align' | 'props';
+export type RepairTab = 'fix' | 'shells' | 'combine' | 'edit';
 
 export interface IntersectionEntry {
   mesh: MeshData;
@@ -165,6 +189,9 @@ export interface ToolSettings {
   importQuality: 'draft' | 'normal' | 'fine' | 'ultra';
   align2: { location: 'center' | 'left' | 'right' | 'front' | 'back'; axis: 'x' | 'y' | 'both'; beside: boolean; distance: number };
   perforateExtra: { keepPlugs: boolean };
+  openEdges: { maxPerimeter: number };
+  triEdit: { mode: 'delete' | 'create'; smooth: boolean; angle: number };
+  cutMode: 'plane' | 'lasso';
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

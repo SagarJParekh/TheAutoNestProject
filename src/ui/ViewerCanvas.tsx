@@ -6,6 +6,7 @@ import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
 import { onMeasurePick } from '../state/measureActions';
+import { onLassoDone, onTrianglePick, onVertexPick } from '../state/editActions';
 
 const SLOT_TEXT: Record<string, string> = {
   primary: 'Click a face to select it',
@@ -38,6 +39,7 @@ export function ViewerCanvas() {
   const ref = useRef<HTMLDivElement>(null);
   const pickMode = useStore((s) => s.pickMode);
   const zooming = useStore((s) => s.zoomWindow);
+  const lassoing = useStore((s) => s.lassoMode);
   const measuring = useStore((s) => s.tool === 'measure');
 
   useEffect(() => {
@@ -54,6 +56,14 @@ export function ViewerCanvas() {
             if (s.pickSlot === 'primary') pickFace(info.partId, info.faceIndex);
             else pickFaceFor(s.pickSlot, info.partId, info.faceIndex);
           }
+          return;
+        }
+        if (s.pickMode === 'triangle') {
+          if (info) onTrianglePick(info);
+          return;
+        }
+        if (s.pickMode === 'vertex') {
+          onVertexPick(info, mods.clientX, mods.clientY);
           return;
         }
         if (s.pickMode === 'point') {
@@ -86,12 +96,16 @@ export function ViewerCanvas() {
       onZoomDone() {
         setState({ zoomWindow: false });
       },
+      onLasso(points) {
+        onLassoDone(points);
+      },
     });
     viewer.edgeRequest = requestEdges;
     viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v), viewer };
     viewer.sync(getState());
     const unsub = useStore.subscribe((s) => viewer.sync(s));
-    (window as unknown as { __viewer: Viewer }).__viewer = viewer;
+    (window as unknown as { __viewer: Viewer; __store: typeof useStore }).__viewer = viewer;
+    (window as unknown as { __store: typeof useStore }).__store = useStore;
     return () => {
       unsub();
       viewerApi.current = null;
@@ -100,7 +114,13 @@ export function ViewerCanvas() {
   }, []);
 
   return (
-    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''}`} ref={ref}>
+    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing ? 'lassoing' : ''}`} ref={ref}>
+      {lassoing && (
+        <div className="pick-banner">
+          Drag around the area to cut out
+          <button onClick={() => setState({ lassoMode: false })}>Cancel (Esc)</button>
+        </div>
+      )}
       {zooming && (
         <div className="pick-banner">
           Drag a rectangle to zoom into
@@ -113,6 +133,8 @@ export function ViewerCanvas() {
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
           {pickMode === 'point' && <PointBanner />}
+          {pickMode === 'triangle' && 'Click triangles to select or deselect them'}
+          {pickMode === 'vertex' && 'Click three corners to create a triangle'}
           <button onClick={() => setState({ pickMode: null })}>Done (Esc)</button>
         </div>
       )}

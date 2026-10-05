@@ -16,6 +16,8 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'extrude', label: 'Extrude', icon: Icon.extrude, key: 'E' },
   { id: 'label', label: 'Label', icon: Icon.label, key: 'L' },
   { id: 'texture', label: 'Texture', icon: Icon.texture, key: 'K' },
+  { id: 'align', label: 'Align', icon: Icon.align, key: 'A' },
+  { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
 ];
 
@@ -149,6 +151,9 @@ export function Toolbar() {
         </select>
         <button className={`tb icon ${grid ? 'active' : ''}`} title="Toggle grid (G)" onClick={() => setState({ showGrid: !grid })}>
           {Icon.grid}
+        </button>
+        <button className="tb icon" title="Search functions (Ctrl+K or /)" onClick={() => setState({ showSearch: true })}>
+          {Icon.search}
         </button>
         <button className="tb icon" title="Keyboard shortcuts (?)" onClick={() => setState({ showShortcuts: true })}>
           {Icon.help}

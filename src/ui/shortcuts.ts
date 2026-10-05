@@ -7,7 +7,7 @@ import { viewerApi } from '../viewer/api';
 import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOL_KEYS: Record<string, ToolId> = {
-  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure',
+  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure', a: 'align', s: 'props',
 };
 const MODES: DisplayMode[] = ['shaded', 'edges', 'wireframe', 'xray'];
 
@@ -32,6 +32,7 @@ export function useShortcuts(openFile: () => void) {
         else if (k === 'd') duplicateParts();
         else if (k === 'o') openFile();
         else if (k === 'e') setState({ showExport: true });
+        else if (k === 'k') setState({ showSearch: true });
         else return;
         e.preventDefault();
         return;
@@ -39,7 +40,8 @@ export function useShortcuts(openFile: () => void) {
       if (e.altKey) return;
       switch (true) {
         case e.key === 'Escape':
-          if (s.showExport || s.showShortcuts) setState({ showExport: false, showShortcuts: false });
+          if (s.showExport || s.showShortcuts || s.showSearch) setState({ showExport: false, showShortcuts: false, showSearch: false });
+          else if (s.lassoMode) setState({ lassoMode: false });
           else if (s.zoomWindow) setState({ zoomWindow: false });
           else if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length))
             setState({ measurePending: { entities: [], points: [] } });
@@ -53,6 +55,9 @@ export function useShortcuts(openFile: () => void) {
           break;
         case e.key === 'Delete' || e.key === 'Backspace':
           deleteParts();
+          break;
+        case e.key === '/':
+          setState({ showSearch: true });
           break;
         case e.key === '?':
           setState({ showShortcuts: !s.showShortcuts });

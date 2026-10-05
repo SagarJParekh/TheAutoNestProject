@@ -31,3 +31,5 @@ export * from './measure3d';
 export * from './label';
 export * from './texture';
 export * from './arrange';
+export * from './edit';
+export * from './lasso';

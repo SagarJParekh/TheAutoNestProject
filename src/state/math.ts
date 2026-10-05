@@ -75,7 +75,19 @@ export const IDENTITY_TRANSFORM = (position: Vec3 = [0, 0, 0]): Transform => ({
 });
 
 /** World normal from the plane settings. */
-export function planeNormal(s: { axis: string; azimuth: number; elevation: number; flip: boolean }): Vec3 {
+/** The two world axes an axis-aligned plane can be tilted about. */
+export const TILT_AXES: Record<string, [string, string]> = { x: ['Y', 'Z'], y: ['X', 'Z'], z: ['X', 'Y'] };
+
+function rotateAbout(v: Vec3, axis: string, deg: number): Vec3 {
+  if (!deg) return v;
+  const a = deg * D2R, c = Math.cos(a), s = Math.sin(a);
+  const [x, y, z] = v;
+  if (axis === 'X') return [x, y * c - z * s, y * s + z * c];
+  if (axis === 'Y') return [x * c + z * s, y, -x * s + z * c];
+  return [x * c - y * s, x * s + y * c, z];
+}
+
+export function planeNormal(s: { axis: string; azimuth: number; elevation: number; flip: boolean; tiltA?: number; tiltB?: number }): Vec3 {
   let n: Vec3;
   switch (s.axis) {
     case 'x': n = [1, 0, 0]; break;
@@ -86,11 +98,13 @@ export function planeNormal(s: { axis: string; azimuth: number; elevation: numbe
       n = [Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el)];
     }
   }
+  const tilt = TILT_AXES[s.axis];
+  if (tilt) n = rotateAbout(rotateAbout(n, tilt[0], s.tiltA ?? 0), tilt[1], s.tiltB ?? 0);
   return s.flip ? [-n[0], -n[1], -n[2]] : n;
 }
 
 /** Plane from settings. `offset` is measured along the un-flipped normal so flipping keeps the plane in place. */
-export function planeFromSettings(s: { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number }) {
+export function planeFromSettings(s: { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number; tiltA?: number; tiltB?: number }) {
   const n = planeNormal({ ...s, flip: false });
   return s.flip
     ? { normal: [-n[0], -n[1], -n[2]] as Vec3, constant: -s.offset }
@@ -121,7 +135,7 @@ export function approxSceneBounds(parts: Part[]): Box3 {
 }
 
 /** Plane settings moved so the plane passes through the centre of the given parts. */
-export function centeredPlane<T extends { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number }>(s: T, parts: Part[]): T {
+export function centeredPlane<T extends { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number; tiltA?: number; tiltB?: number }>(s: T, parts: Part[]): T {
   const b = approxSceneBounds(parts);
   if (b.isEmpty()) return s;
   const c = b.getCenter(new Vector3());

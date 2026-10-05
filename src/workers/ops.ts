@@ -287,6 +287,50 @@ export const ops = {
     return { result: m, transfer: meshBuffers(m) };
   },
 
+  async shellInfo(args: { mesh: MeshData }, progress: Progress): Promise<Result<{ shells: G.ShellInfo[]; shellOfTri: Uint32Array }>> {
+    progress(0.2, 'Finding shells');
+    const r = G.shellInfo(args.mesh);
+    return { result: r, transfer: [r.shellOfTri.buffer as ArrayBuffer] };
+  },
+
+  async editShells(
+    args: { mesh: MeshData; shellOfTri: Uint32Array; ids: number[]; action: 'keep' | 'delete' | 'merge' },
+    progress: Progress,
+  ): Promise<Result<MeshData>> {
+    const ids = new Set(args.ids);
+    progress(0.2, args.action === 'merge' ? 'Merging shells' : 'Updating shells');
+    let m: MeshData;
+    if (args.action === 'merge') m = await G.mergeShells(args.mesh, args.shellOfTri, ids);
+    else {
+      const keep = new Set<number>();
+      let n = 0;
+      for (let t = 0; t < args.shellOfTri.length; t++) if (args.shellOfTri[t] >= n) n = args.shellOfTri[t] + 1;
+      for (let i = 0; i < n; i++) if (args.action === 'keep' ? ids.has(i) : !ids.has(i)) keep.add(i);
+      m = G.keepShells(args.mesh, args.shellOfTri, keep);
+    }
+    return { result: m, transfer: meshBuffers(m) };
+  },
+
+  async fixOpenEdges(
+    args: { mesh: MeshData; method: G.OpenEdgeMethod; maxPerimeter?: number; tolerance?: number },
+    progress: Progress,
+  ): Promise<Result<G.OpenEdgeResult>> {
+    progress(0.2, 'Fixing open edges');
+    const r = G.fixOpenEdges(args.mesh, args.method, { maxPerimeter: args.maxPerimeter, tolerance: args.tolerance });
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async lassoCut(
+    args: { mesh: MeshData; outline: [number, number][]; camera: G.LassoCamera },
+    progress: Progress,
+  ): Promise<Result<{ inside: MeshData; outside: MeshData }>> {
+    progress(0.2, 'Building lasso cutter');
+    const cutter = await G.lassoCutter(args.outline, args.camera);
+    progress(0.5, 'Splitting');
+    const r = await G.lassoSplit(args.mesh, cutter);
+    return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
+  },
+
   async export(args: { format: ExportFormat; items: ExportItem[]; zip: boolean }, progress: Progress): Promise<Result<Uint8Array>> {
     progress(0.2, 'Writing file');
     const bytes = args.zip ? exportZip(args.format, args.items) : exportMeshes(args.format, args.items);

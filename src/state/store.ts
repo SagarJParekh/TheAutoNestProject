@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type {
   AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, IntersectionEntry, Job, Notice, Part, PickMode, PickSlot, PlaneSettings,
-  Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap,
+  Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap, ShellView, TriEdit,
 } from './types';
 import type { MeshData } from '../geometry';
 
@@ -39,6 +39,11 @@ export interface AppState {
   customFont: { name: string; data: ArrayBuffer } | null;
   heightmap: { name: string; map: Heightmap } | null;
   zoomWindow: boolean;
+  /** viewer is in lasso-drawing mode (cut tool) */
+  lassoMode: boolean;
+  shellView: ShellView | null;
+  triEdit: TriEdit | null;
+  showSearch: boolean;
   preview: Preview | null;
   analysis: Record<string, AnalysisEntry>;
   settings: ToolSettings;
@@ -80,6 +85,10 @@ export const useStore = create<AppState>(() => ({
   customFont: null,
   heightmap: null,
   zoomWindow: false,
+  lassoMode: false,
+  shellView: null,
+  triEdit: null,
+  showSearch: false,
   preview: null,
   analysis: {},
   settings: {
@@ -113,6 +122,9 @@ export const useStore = create<AppState>(() => ({
     })(),
     align2: { location: 'center', axis: 'both', beside: false, distance: 5 },
     perforateExtra: { keepPlugs: false },
+    openEdges: { maxPerimeter: 20 },
+    triEdit: { mode: 'delete', smooth: false, angle: 20 },
+    cutMode: 'plane',
   },
   jobs: [],
   notices: [],

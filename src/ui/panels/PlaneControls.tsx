@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Vector3 } from 'three';
 import { NumberField, Row, Segmented, Slider, Check } from '../controls';
 import type { Part, PlaneSettings } from '../../state/types';
-import { approxSceneBounds, planeNormal } from '../../state/math';
+import { approxSceneBounds, planeNormal, TILT_AXES } from '../../state/math';
 
 export function PlaneControls({ value, onChange, parts }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[] }) {
   const n = planeNormal({ ...value, flip: false });
@@ -23,6 +23,17 @@ export function PlaneControls({ value, onChange, parts }: { value: PlaneSettings
   }, [parts, n[0], n[1], n[2]]);
   const set = (patch: Partial<PlaneSettings>) => onChange({ ...value, ...patch });
   const span = range.max - range.min;
+  const tiltAxes = TILT_AXES[value.axis];
+  // tilting pivots the plane about the point where it currently crosses the parts' centre line
+  const setTilt = (patch: Partial<PlaneSettings>) => {
+    const b = approxSceneBounds(parts);
+    const c = b.isEmpty() ? new Vector3() : b.getCenter(new Vector3());
+    const old = new Vector3(...n);
+    const pivot = c.clone().addScaledVector(old, value.offset - c.dot(old));
+    const next = { ...value, ...patch };
+    const nn = new Vector3(...planeNormal({ ...next, flip: false }));
+    onChange({ ...next, offset: Math.round(pivot.dot(nn) * 1000) / 1000 });
+  };
   return (
     <>
       <Row label="Normal">
@@ -53,6 +64,25 @@ export function PlaneControls({ value, onChange, parts }: { value: PlaneSettings
             <Slider value={value.elevation} min={-90} max={90} step={1} onChange={(elevation) => set({ elevation })} />
             <NumberField value={value.elevation} onChange={(elevation) => set({ elevation })} suffix="°" width={74} />
           </Row>
+        </>
+      )}
+      {tiltAxes && (
+        <>
+          <Row label={`Tilt about ${tiltAxes[0]}`}>
+            <Slider value={value.tiltA ?? 0} min={-90} max={90} step={1} onChange={(tiltA) => setTilt({ tiltA })} />
+            <NumberField value={value.tiltA ?? 0} min={-180} max={180} onChange={(tiltA) => setTilt({ tiltA })} suffix="°" width={74} />
+          </Row>
+          <Row label={`Tilt about ${tiltAxes[1]}`}>
+            <Slider value={value.tiltB ?? 0} min={-90} max={90} step={1} onChange={(tiltB) => setTilt({ tiltB })} />
+            <NumberField value={value.tiltB ?? 0} min={-180} max={180} onChange={(tiltB) => setTilt({ tiltB })} suffix="°" width={74} />
+          </Row>
+          {((value.tiltA ?? 0) !== 0 || (value.tiltB ?? 0) !== 0) && (
+            <Row>
+              <button className="mini" onClick={() => setTilt({ tiltA: 0, tiltB: 0 })}>
+                Reset angle
+              </button>
+            </Row>
+          )}
         </>
       )}
       <Row label="Position">

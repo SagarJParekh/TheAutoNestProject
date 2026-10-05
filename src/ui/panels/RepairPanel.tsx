@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
-import { AlignTab, CombineTab, FixExtras, PropsTab } from './RepairTabs';
+import { CombineTab, FixExtras } from './RepairTabs';
+import { ShellsTab, TriEditTab, OpenEdgesSection } from './EditTabs';
 import { getState, setState, useStore } from '../../state/store';
 import { analyzePart, previewFillHoles, previewRepair } from '../../state/actions';
 import { previewCleanTriangles, previewFixNonManifold } from '../../state/repairActions';
@@ -16,16 +17,16 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
           onChange={(repairTab) => setState({ repairTab, pickMode: null, preview: null })}
           options={[
             { value: 'fix', label: 'Fix' },
+            { value: 'shells', label: 'Shells' },
             { value: 'combine', label: 'Combine' },
-            { value: 'align', label: 'Align' },
-            { value: 'props', label: 'Props' },
+            { value: 'edit', label: 'Edit' },
           ]}
         />
       </div>
       {tab === 'fix' && <FixTab parts={parts} />}
+      {tab === 'shells' && <ShellsTab parts={parts} />}
       {tab === 'combine' && <CombineTab parts={parts} />}
-      {tab === 'align' && <AlignTab />}
-      {tab === 'props' && <PropsTab />}
+      {tab === 'edit' && <TriEditTab parts={parts} />}
     </>
   );
 }
@@ -138,6 +139,8 @@ function FixTab({ parts }: { parts: Part[] }) {
           {report.loops.length > 300 && <Hint>Showing the first 300 holes.</Hint>}
         </Section>
       )}
+
+      {report && report.openEdges > 0 && <OpenEdgesSection part={part} openEdges={report.openEdges} />}
 
       <Section title="Auto repair">
         <Check checked={settings.repair.stitch} onChange={(stitch) => setRepair({ stitch })}>
