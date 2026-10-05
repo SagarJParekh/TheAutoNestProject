@@ -93,10 +93,13 @@ The UI never parses or computes geometry on the main thread. `pool.run(op, args)
 
 - **glTF/GLB** follows the spec: Y-up in metres, converted to Z-up millimetres (×1000). Draco and meshopt-compressed files are rejected with a message. A `.gltf` with external `.bin` files works when you drop all of them together.
 - **3DM**: rhino3dm cannot tessellate NURBS itself, so Breps and Extrusions use the render meshes cached in the file. Objects without one are reported; save from Rhino with render meshes or export STEP.
-- **STEP/IGES/BREP** are tessellated by OpenCascade (occt-import-js) in the worker. The 7.6 MB WASM is downloaded the first time you import a CAD file.
+- **STEP/IGES/BREP** are tessellated by OpenCascade (occt-import-js) in the worker at the **CAD quality** chosen in the toolbar (Draft / Normal / Fine / Ultra; Fine is the default). Parts from a CAD file can be **re-imported** at another quality from the Info panel; names, colours and placement are kept. The 7.6 MB WASM is downloaded the first time you import a CAD file.
 - **3MF/AMF** honour the `unit` attribute, plus 3MF build-item and component transforms.
 
 ## Performance
+
+Models up to about 12 million triangles are supported. A 12M-triangle STL (600 MB) imported in about 45 s and was ready to pick in about 70 s in headless Chromium with software rendering; a plane cut took 13 s. Larger models still load, with a warning.
+
 
 These numbers were measured with a 2,000,000-triangle STL in headless Chromium:
 

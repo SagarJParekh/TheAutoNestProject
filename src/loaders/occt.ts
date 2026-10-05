@@ -1,5 +1,5 @@
 import type { ImportedBody, LoaderContext, LoaderModule } from './types';
-import { ImportError } from './types';
+import { CAD_QUALITY, ImportError } from './types';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let occtPromise: Promise<any> | null = null;
@@ -20,12 +20,13 @@ async function getOcct(ctx: LoaderContext): Promise<any> {
 async function readCad(kind: 'step' | 'iges' | 'brep', buffer: ArrayBuffer, ctx: LoaderContext): Promise<ImportedBody[]> {
   ctx.onProgress(0.05, 'Loading OpenCascade');
   const occt = await getOcct(ctx);
-  ctx.onProgress(0.2, 'Tessellating');
+  const q = CAD_QUALITY[ctx.cadQuality ?? 'fine'];
+  ctx.onProgress(0.2, `Tessellating (${q.label})`);
   const params = {
     linearUnit: 'millimeter',
     linearDeflectionType: 'bounding_box_ratio',
-    linearDeflection: 0.0005,
-    angularDeflection: 0.35,
+    linearDeflection: q.linearDeflection,
+    angularDeflection: q.angularDeflection,
   };
   const data = new Uint8Array(buffer);
   const res =

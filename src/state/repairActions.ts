@@ -363,3 +363,49 @@ export async function previewProps() {
     },
   });
 }
+
+// ---------------------------------------------------------------- single-purpose cleanups
+
+export async function previewCleanTriangles(what: 'duplicates' | 'degenerate') {
+  const part = firstEditable();
+  if (!part) return;
+  const r = await runJob(what === 'duplicates' ? 'Removing duplicate triangles' : 'Removing degenerate triangles', 'cleanTriangles', { mesh: part.mesh, what });
+  if (!r) return;
+  if (!r.removed) return notify('info', `No ${what} triangles found`);
+  setPreview({
+    tool: 'repair',
+    label: what === 'duplicates' ? 'Remove duplicate triangles' : 'Remove degenerate triangles',
+    replaces: [part.id],
+    meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r.mesh }), color: part.color }],
+    summary: [`Triangles removed: ${r.removed.toLocaleString()}`],
+    apply: () => {
+      replaceLocalMesh(what === 'duplicates' ? 'Remove duplicate triangles' : 'Remove degenerate triangles', part.id, r.mesh);
+      invalidateAnalysis(part.id);
+      analyzePart(part.id);
+    },
+  });
+}
+
+export async function previewFixNonManifold(fill = true) {
+  const part = firstEditable();
+  if (!part) return;
+  const r = await runJob('Fixing non-manifold edges', 'fixNonManifold', { mesh: part.mesh, fill });
+  if (!r) return;
+  if (!r.removed) return notify('info', 'No non-manifold edges found');
+  setPreview({
+    tool: 'repair',
+    label: 'Fix non-manifold edges',
+    replaces: [part.id],
+    meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r.mesh }), color: part.color }],
+    summary: [
+      `Non-manifold edges: ${r.edges.toLocaleString()}`,
+      `Extra triangles removed: ${r.removed.toLocaleString()}`,
+      `Openings filled: ${r.filled}`,
+    ],
+    apply: () => {
+      replaceLocalMesh('Fix non-manifold edges', part.id, r.mesh);
+      invalidateAnalysis(part.id);
+      analyzePart(part.id);
+    },
+  });
+}

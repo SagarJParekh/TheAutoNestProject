@@ -167,3 +167,27 @@ export async function booleanMeshes(op: BooleanOp, base: MeshData, others: MeshD
     all.forEach((m) => m.delete());
   }
 }
+
+/** base ∩ union(cutters): the material the cutters would remove (e.g. perforation plugs). */
+export async function intersectWithUnion(base: MeshData, cutters: MeshData[]): Promise<MeshData> {
+  const wasm = await getManifold();
+  const a = await toManifold(base);
+  if (!a) throw new NotManifoldError('Part');
+  const tools: Manifold[] = [];
+  try {
+    for (const c of cutters) {
+      const t = await toManifold(c);
+      if (!t) throw new NotManifoldError('Cutting tool');
+      tools.push(t);
+    }
+    const u = wasm.Manifold.union(tools);
+    const r = a.intersect(u);
+    u.delete();
+    const out = fromManifold(r);
+    r.delete();
+    return out;
+  } finally {
+    a.delete();
+    tools.forEach((t) => t.delete());
+  }
+}

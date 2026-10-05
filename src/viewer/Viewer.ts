@@ -82,6 +82,8 @@ export class Viewer {
   private previewGroup = new Group();
   private overlayGroup = new Group();
   private annotGroup = new Group();
+  private hoverGroup = new Group();
+  private hoverPending = false;
   private annotKey: unknown[] = [];
   private zoomRect: { x: number; y: number; div: HTMLDivElement } | null = null;
   private capsGroup = new Group();
@@ -139,7 +141,7 @@ export class Viewer {
       if (!dragging) this.commitGizmo();
     });
 
-    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup);
+    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup);
     this.buildGrid(200);
 
     const el = this.renderer.domElement;
@@ -147,7 +149,11 @@ export class Viewer {
       this.pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
       if (this.state?.zoomWindow && e.button === 0) this.startZoomRect(e);
     });
-    el.addEventListener('pointermove', (e) => this.moveZoomRect(e));
+    el.addEventListener('pointermove', (e) => {
+      this.moveZoomRect(e);
+      this.scheduleHover(e.clientX, e.clientY, e.buttons !== 0);
+    });
+    el.addEventListener('pointerleave', () => this.clearHover());
     el.addEventListener('pointerup', (e) => {
       if (this.zoomRect) return this.endZoomRect(e);
       this.onPointerUp(e);
@@ -961,6 +967,132 @@ export class Viewer {
     const w = new Vector3(...p).applyMatrix4(o.group.matrixWorld);
     const nn = n ? new Vector3(...n).applyMatrix3(new Matrix3().getNormalMatrix(o.group.matrixWorld)).normalize() : new Vector3(0, 0, 1);
     return { point: [w.x, w.y, w.z], normal: [nn.x, nn.y, nn.z] };
+  }
+
+  // ------------------------------------------------------------------ snapping (vertex + ortho)
+
+  /** Whether clicks currently pick points (measure / point picks), which enables the hover snap marker. */
+  private pointPicking(): boolean {
+    const s = this.state;
+    if (!s || s.zoomWindow) return false;
+    if (s.pickMode === 'point') return true;
+    return s.tool === 'measure' && !s.pickMode && s.settings.measure.mode !== 'thickness';
+  }
+
+  /** The previous point that ortho snapping measures from, if any. */
+  private snapAnchor(): Vec3 | null {
+    const s = this.state;
+    if (!s || !s.settings.measure.ortho) return null;
+    if (s.tool === 'measure' && !s.pickMode) {
+      if (s.measurePending.points.length) return s.measurePending.points[s.measurePending.points.length - 1];
+      const last = s.measurePending.entities[s.measurePending.entities.length - 1]?.entity;
+      if (last?.kind === 'point') return last.p;
+      if (last?.kind === 'circle' || last?.kind === 'sphere') return last.c;
+      return null;
+    }
+    if (s.pickMode === 'point' && s.pointSlot === 'propEnd' && s.pointPicks.propStart) {
+      const p = s.pointPicks.propStart;
+      return this.localToWorld(p.partId, p.point, p.normal)?.point ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * Snap a picked surface point: to a nearby vertex, else (with a previous
+   * point) onto the X/Y/Z line through that point when the cursor is close
+   * to it on screen, else the raw surface point.
+   */
+  snapPoint(partId: string, tri: number, point: Vec3, clientX: number, clientY: number): { point: Vec3; kind: 'vertex' | 'ortho' | 'surface'; axis?: number; anchor?: Vec3 } {
+    const v = this.snapVertex(partId, tri, clientX, clientY, 10);
+    if (v) return { point: v, kind: 'vertex' };
+    const anchor = this.snapAnchor();
+    if (anchor) {
+      let best = -1, bd = 12;
+      const [ax, ay] = this.toScreen(anchor);
+      for (let a = 0; a < 3; a++) {
+        const q: Vec3 = [...anchor];
+        q[a] += 1;
+        const [bx, by] = this.toScreen(q);
+        const dx = bx - ax, dy = by - ay, l = Math.hypot(dx, dy);
+        if (l < 1e-6) continue;
+        const d = Math.abs((clientX - ax) * dy - (clientY - ay) * dx) / l;
+        if (d < bd) {
+          bd = d;
+          best = a;
+        }
+      }
+      if (best >= 0) {
+        const out: Vec3 = [...anchor];
+        out[best] = point[best];
+        return { point: out, kind: 'ortho', axis: best, anchor };
+      }
+    }
+    return { point, kind: 'surface' };
+  }
+
+  private scheduleHover(clientX: number, clientY: number, dragging: boolean) {
+    if (dragging || !this.pointPicking()) {
+      if (this.hoverGroup.children.length) this.clearHover();
+      return;
+    }
+    if (this.hoverPending) return;
+    this.hoverPending = true;
+    requestAnimationFrame(() => {
+      this.hoverPending = false;
+      this.updateHover(clientX, clientY);
+    });
+  }
+
+  private clearHover() {
+    if (!this.hoverGroup.children.length) return;
+    disposeChildren(this.hoverGroup);
+    this.requestRender();
+  }
+
+  private updateHover(clientX: number, clientY: number) {
+    disposeChildren(this.hoverGroup);
+    const hit = this.pick(clientX, clientY);
+    if (!hit) return this.requestRender();
+    const snap = this.snapPoint(hit.partId, hit.faceIndex, hit.point, clientX, clientY);
+    const AXIS = [0xff4d5e, 0x57d16a, 0x4d8dff];
+    const color = snap.kind === 'vertex' ? 0x22d3ee : snap.kind === 'ortho' ? AXIS[snap.axis!] : 0xffffff;
+    const marker = new Points(
+      new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(snap.point), 3)),
+      new PointsMaterial({ color, size: snap.kind === 'surface' ? 7 : 11, sizeAttenuation: false, depthTest: false, transparent: true }),
+    );
+    marker.renderOrder = 1004;
+    this.hoverGroup.add(marker);
+    if (snap.kind === 'ortho' && snap.anchor) {
+      // guide: long faint axis line through the anchor plus the snapped segment
+      const a = snap.anchor, b = snap.point, ax = snap.axis!;
+      const far = (this.camera.position.distanceTo(new Vector3(...a)) || 100) * 2;
+      const p0: Vec3 = [...a], p1: Vec3 = [...a];
+      p0[ax] -= far;
+      p1[ax] += far;
+      const guide = new LineSegments(
+        new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array([...p0, ...p1]), 3)),
+        new LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.35 }),
+      );
+      const seg = new LineSegments(
+        new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array([...a, ...b]), 3)),
+        new LineBasicMaterial({ color, depthTest: false, transparent: true }),
+      );
+      guide.renderOrder = seg.renderOrder = 1003;
+      this.hoverGroup.add(guide, seg);
+      const len = Math.abs(b[ax] - a[ax]);
+      this.hoverGroup.add(textSprite(`${'XYZ'[ax]} ${len.toFixed(2)} mm`, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]));
+    } else {
+      const anchor = this.snapAnchor();
+      if (anchor) {
+        const seg = new LineSegments(
+          new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array([...anchor, ...snap.point]), 3)),
+          new LineBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true, opacity: 0.6 }),
+        );
+        seg.renderOrder = 1003;
+        this.hoverGroup.add(seg);
+      }
+    }
+    this.requestRender();
   }
 
   // ------------------------------------------------------------------ zoom window

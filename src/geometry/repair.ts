@@ -193,3 +193,70 @@ export function autoRepair(
     },
   };
 }
+
+/**
+ * Make every edge used by at most two triangles. At each non-manifold edge
+ * the best consistently-oriented pair of triangles (largest area) is kept and
+ * the other triangles on that edge are removed, which typically deletes fins,
+ * internal walls and doubled faces. Holes left behind can then be filled.
+ */
+export function fixNonManifoldEdges(mesh: MeshData): { mesh: MeshData; removed: number; edges: number } {
+  let cur = mesh;
+  let removed = 0;
+  let edges = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    const topo = buildTopology(cur);
+    const bad = new Map<number, number[]>();
+    for (let e = 0; e < topo.edgeCount; e++) if (topo.edgeFaceCount[e] > 2) bad.set(e, []);
+    if (!bad.size) break;
+    if (pass === 0) edges = bad.size;
+    for (let h = 0; h < topo.halfEdgeEdge.length; h++) {
+      const list = bad.get(topo.halfEdgeEdge[h]);
+      if (list) list.push(h);
+    }
+    const p = cur.positions, idx = cur.indices;
+    const area = (t: number) => {
+      const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+      const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+      const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+      return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+    };
+    const drop = new Set<number>();
+    for (const hs of bad.values()) {
+      const live = hs.filter((h) => !drop.has((h / 3) | 0));
+      if (live.length <= 2) continue;
+      let best: [number, number] | null = null, bestScore = -1;
+      for (let i = 0; i < live.length; i++)
+        for (let j = i + 1; j < live.length; j++) {
+          const ti = (live[i] / 3) | 0, tj = (live[j] / 3) | 0;
+          // opposite traversal directions = consistent orientation
+          const consistent = idx[live[i]] !== idx[live[j]];
+          const score = (consistent ? 1e12 : 0) + area(ti) + area(tj);
+          if (score > bestScore) {
+            bestScore = score;
+            best = [ti, tj];
+          }
+        }
+      for (const h of live) {
+        const t = (h / 3) | 0;
+        if (best && t !== best[0] && t !== best[1]) drop.add(t);
+      }
+    }
+    if (!drop.size) break;
+    removed += drop.size;
+    cur = removeTriangles(cur, Uint32Array.from(drop));
+  }
+  return { mesh: cur, removed, edges };
+}
+
+/** Remove triangles that repeat an earlier triangle's three vertices. */
+export function removeDuplicateTriangles(mesh: MeshData): { mesh: MeshData; removed: number } {
+  const d = findDuplicateTriangles(mesh);
+  return { mesh: removeTriangles(mesh, d), removed: d.length };
+}
+
+/** Remove zero-area / collapsed triangles. */
+export function removeDegenerateTriangles(mesh: MeshData): { mesh: MeshData; removed: number } {
+  const d = findDegenerateTriangles(mesh);
+  return { mesh: removeTriangles(mesh, d), removed: d.length };
+}

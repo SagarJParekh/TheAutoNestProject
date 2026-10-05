@@ -3,6 +3,7 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { AlignTab, CombineTab, FixExtras, PropsTab } from './RepairTabs';
 import { getState, setState, useStore } from '../../state/store';
 import { analyzePart, previewFillHoles, previewRepair } from '../../state/actions';
+import { previewCleanTriangles, previewFixNonManifold } from '../../state/repairActions';
 import type { Part, RepairTab, ToolSettings } from '../../state/types';
 
 export function RepairPanel({ parts }: { parts: Part[] }) {
@@ -50,13 +51,20 @@ function FixTab({ parts }: { parts: Part[] }) {
 
   if (!part) return <Section title="Repair"><Hint>Select one part to analyse and repair.</Hint></Section>;
 
-  const rowItem = (label: string, value: number, color?: string, bad = value > 0) => (
+  const rowItem = (label: string, value: number, color?: string, bad = value > 0, fix?: { label: string; run: () => void }) => (
     <>
       <dt>
         {color && <i className="dot" style={{ background: color }} />}
         {label}
       </dt>
-      <dd className={bad ? 'warn' : 'okc'}>{value.toLocaleString()}</dd>
+      <dd className={bad ? 'warn' : 'okc'}>
+        {fix && value > 0 && (
+          <button className="mini fix-btn" disabled={!!preview || part.locked} onClick={fix.run}>
+            {fix.label}
+          </button>
+        )}
+        {value.toLocaleString()}
+      </dd>
     </>
   );
 
@@ -83,12 +91,20 @@ function FixTab({ parts }: { parts: Part[] }) {
             <dl className="info">
               {rowItem('Open edges', report.openEdges, '#ff3b4e')}
               {rowItem('Holes', report.holes)}
-              {rowItem('Non-manifold edges', report.nonManifoldEdges, '#ffb020')}
+              {rowItem('Non-manifold edges', report.nonManifoldEdges, '#ffb020', undefined, { label: 'Fix', run: () => previewFixNonManifold(true) })}
               {rowItem('Flipped triangles', report.flippedTriangles, '#d040ff')}
-              {rowItem('Degenerate triangles', report.degenerateTriangles, '#00e0ff')}
-              {rowItem('Duplicate triangles', report.duplicateTriangles)}
+              {rowItem('Degenerate triangles', report.degenerateTriangles, '#00e0ff', undefined, { label: 'Remove', run: () => previewCleanTriangles('degenerate') })}
+              {rowItem('Duplicate triangles', report.duplicateTriangles, undefined, undefined, { label: 'Remove', run: () => previewCleanTriangles('duplicates') })}
               {rowItem('Shells', report.shells, undefined, report.shells > 1)}
             </dl>
+            <div className="btn-grid two">
+              <button className="btn" disabled={!!preview || part.locked} onClick={() => previewCleanTriangles('duplicates')}>
+                Remove duplicates
+              </button>
+              <button className="btn" disabled={!!preview || part.locked} onClick={() => previewFixNonManifold(true)} title="Keeps the best pair of triangles on each non-manifold edge, removes the rest and fills the openings">
+                Fix non-manifold edges
+              </button>
+            </div>
             <Row label="Highlight">
               <Check checked={settings.highlight.open} onChange={(open) => setHl({ open })}>Open</Check>
               <Check checked={settings.highlight.nonManifold} onChange={(nonManifold) => setHl({ nonManifold })}>Non-manifold</Check>

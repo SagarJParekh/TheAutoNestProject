@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { Hint, Row, Section, Segmented } from '../controls';
+import { Check, Hint, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearMeasurements, deleteMeasurement, resetPending } from '../../state/measureActions';
 import type { MeasureMode, MeasurePickAs } from '../../state/types';
@@ -64,6 +64,11 @@ export function MeasurePanel() {
           <Row label="Pick">
             <Segmented<MeasurePickAs> value={st.pickAs} onChange={(pickAs) => set({ pickAs })} options={PICKS[st.mode]} />
           </Row>
+        )}
+        {st.mode !== 'thickness' && (
+          <Check checked={st.ortho} onChange={(ortho) => set({ ortho })}>
+            Ortho snapping (X/Y/Z from the previous point)
+          </Check>
         )}
         <Hint>{HELP[st.mode]}</Hint>
         {(pending.entities.length > 0 || pending.points.length > 0) && (

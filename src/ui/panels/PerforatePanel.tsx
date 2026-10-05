@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { previewPerforationPattern } from '../../state/actions';
 import { previewPointHoles, removePerfPoint, startPointPick } from '../../state/featureActions';
@@ -11,6 +11,7 @@ export function PerforatePanel() {
   const p = useStore((s) => s.settings.perforate);
   const points = useStore((s) => s.perfPoints);
   const placing = useStore((s) => s.pickMode === 'point' && s.pointSlot === 'perfPoint');
+  const keepPlugs = useStore((s) => s.settings.perforateExtra.keepPlugs);
   const set = (patch: Partial<ToolSettings['perforate']>) =>
     setState({ settings: { ...getState().settings, perforate: { ...getState().settings.perforate, ...patch } } });
   useEffect(() => {
@@ -97,6 +98,12 @@ export function PerforatePanel() {
       <Row label="Rotation">
         <NumberField value={p.angle ?? 0} step={5} suffix="°" onChange={(angle) => set({ angle })} />
       </Row>
+      <Check
+        checked={keepPlugs}
+        onChange={(v) => setState({ settings: { ...getState().settings, perforateExtra: { keepPlugs: v } } })}
+      >
+        Keep the plugs as a separate part
+      </Check>
       <Hint>Holes go along the surface normal. Set an exit size for tapered holes (different diameter at each end). The preview outlines show the entry size; Apply runs a boolean subtraction (needs a watertight part).</Hint>
     </Section>
   );

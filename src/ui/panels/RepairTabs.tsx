@@ -7,11 +7,11 @@ import {
 import type { Part, PickSlot, PointSlot, ToolSettings } from '../../state/types';
 import { clearPointPick, previewSingleProp, startPointPick, worldPoint } from '../../state/featureActions';
 
-type Key = keyof ToolSettings;
-function useSetting<K extends Key>(k: K) {
+type Key = { [K in keyof ToolSettings]: ToolSettings[K] extends object ? K : never }[keyof ToolSettings];
+export function useSetting<K extends Key>(k: K) {
   const v = useStore((s) => s.settings[k]);
   const set = (patch: Partial<ToolSettings[K]>) =>
-    setState({ settings: { ...getState().settings, [k]: { ...getState().settings[k], ...patch } }, preview: null });
+    setState({ settings: { ...getState().settings, [k]: { ...(getState().settings[k] as object), ...patch } }, preview: null });
   return [v, set] as const;
 }
 

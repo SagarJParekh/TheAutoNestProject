@@ -1,4 +1,5 @@
 import { useStore } from '../state/store';
+import { cancelTool } from '../state/actions';
 import { InfoPanel } from './panels/InfoPanel';
 import { TransformPanel } from './panels/TransformPanel';
 import { ClipPanel } from './panels/ClipPanel';
@@ -35,6 +36,12 @@ export function PropertiesPanel() {
     <aside className="panel right">
       <header className="panel-head">
         <h2>{TITLES[tool]}</h2>
+        <div className="grow" />
+        {tool !== 'transform' && (
+          <button className="mini" onClick={cancelTool} title="Cancel this tool: discard its preview and picks and return to Transform">
+            Cancel
+          </button>
+        )}
       </header>
       <div className="panel-scroll">
         <PreviewBar />

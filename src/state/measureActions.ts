@@ -78,7 +78,7 @@ export async function onMeasurePick(info: PickInfo) {
     return;
   }
 
-  const snapped = () => viewer.snapVertex(info.partId, info.faceIndex, info.clientX, info.clientY) ?? info.point;
+  const snapped = () => viewer.snapPoint(info.partId, info.faceIndex, info.point, info.clientX, info.clientY).point;
 
   // three-point modes collect raw points
   if (pickAs === 'circle3' || (mode === 'angle' && pickAs === 'point')) {

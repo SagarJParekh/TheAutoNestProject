@@ -1,8 +1,8 @@
 import { Icon } from '../icons';
-import { Check, Hint, NumberField, Row, Section, VecRow } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented, VecRow } from '../controls';
 import { getState, setState, updateParts, useStore } from '../../state/store';
 import { centerOnOrigin, dropToBed, mirrorParts } from '../../state/actions';
-import { arrangeOnBed, arrayParts, mirrorCopies } from '../../state/featureActions';
+import { alignToReference, arrangeOnBed, arrayParts, mirrorCopies } from '../../state/featureActions';
 import { localBounds } from '../../state/math';
 import type { Part, Transform } from '../../state/types';
 import type { Vec3 } from '../../geometry';
@@ -12,6 +12,12 @@ import { Vector3 } from 'three';
 export function TransformPanel({ parts }: { parts: Part[] }) {
   const pickMode = useStore((s) => s.pickMode);
   const arr = useStore((s) => s.settings.arrange);
+  const al = useStore((s) => s.settings.align2);
+  // select raw state; deriving a new array inside the selector would re-render forever
+  const selection = useStore((s) => s.selection);
+  const allParts = useStore((s) => s.parts);
+  const selOrder = selection.map((id) => allParts.find((p) => p.id === id)?.name ?? '');
+  const setAl = (patch: Partial<typeof al>) => setState({ settings: { ...getState().settings, align2: { ...getState().settings.align2, ...patch } } });
   const setArr = (patch: Partial<typeof arr>) => setState({ settings: { ...getState().settings, arrange: { ...getState().settings.arrange, ...patch } } });
   const [uniform, setUniform] = useState(true);
   const editable = parts.filter((p) => !p.locked);
@@ -147,6 +153,60 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           {parts.some((p) => p.locked) && <Hint>Locked parts are not changed.</Hint>}
         </>
       )}
+      <h4>Align to part</h4>
+      {selOrder.length < 2 ? (
+        <Hint>Select the reference part, then Ctrl-click the part(s) to move.</Hint>
+      ) : (
+        <p className="muted small">
+          Reference: <strong>{selOrder[0]}</strong> · moving: {selOrder.slice(1).join(', ')}
+        </p>
+      )}
+      <Row label="Location">
+        <Segmented
+          value={al.location}
+          onChange={(location) => setAl({ location })}
+          options={[
+            { value: 'center', label: 'Centre' },
+            { value: 'left', label: 'Left' },
+            { value: 'right', label: 'Right' },
+            { value: 'front', label: 'Front' },
+            { value: 'back', label: 'Back' },
+          ]}
+        />
+      </Row>
+      <Row label="Axis">
+        <Segmented
+          value={al.axis}
+          onChange={(axis) => setAl({ axis })}
+          options={[
+            { value: 'x', label: 'X' },
+            { value: 'y', label: 'Y' },
+            { value: 'both', label: 'X + Y' },
+          ]}
+        />
+      </Row>
+      {al.location !== 'center' && (
+        <>
+          <Check checked={al.beside} onChange={(beside) => setAl({ beside })}>
+            Place beside the reference (outside its {al.location} side)
+          </Check>
+          {al.beside && (
+            <Row label="Distance to part">
+              <NumberField value={al.distance} min={0} step={1} suffix="mm" onChange={(distance) => setAl({ distance })} />
+            </Row>
+          )}
+        </>
+      )}
+      <button className="btn wide" disabled={selOrder.length < 2} onClick={alignToReference}>
+        Align
+      </button>
+      <Hint>
+        {al.location === 'center'
+          ? 'Centres the parts on the reference along the chosen axis.'
+          : al.beside
+            ? `Puts the parts ${al.distance} mm outside the reference's ${al.location} side${al.axis === 'both' ? ', centred on the other axis' : ''}.`
+            : `Lines up the ${al.location} edges with the reference.`}
+      </Hint>
       <h4>Array &amp; arrange (2D)</h4>
       <Row label="Columns × rows">
         <NumberField value={arr.cols} min={1} max={50} step={1} precision={0} onChange={(cols) => setArr({ cols: Math.round(cols) })} />

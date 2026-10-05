@@ -98,10 +98,21 @@ export const useStore = create<AppState>(() => ({
     label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold' },
     texture: {
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
-      scope: 'face', smooth: false, angleTolerance: 2,
+      scope: 'face', smooth: false, angleTolerance: 2, imageFit: 'fit',
     },
     arrange: { bedWidth: 220, gap: 5, cols: 2, rows: 2, mirrorCopy: false },
-    measure: { mode: 'distance', pickAs: 'point' },
+    measure: { mode: 'distance', pickAs: 'point', ortho: true },
+    importQuality: (() => {
+      try {
+        const q = localStorage.getItem('autonest.importQuality');
+        if (q === 'draft' || q === 'normal' || q === 'fine' || q === 'ultra') return q;
+      } catch {
+        /* storage unavailable */
+      }
+      return 'fine';
+    })(),
+    align2: { location: 'center', axis: 'both', beside: false, distance: 5 },
+    perforateExtra: { keepPlugs: false },
   },
   jobs: [],
   notices: [],

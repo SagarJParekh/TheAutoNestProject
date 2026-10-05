@@ -223,3 +223,4 @@ kbd { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4
 .textarea-field textarea { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; resize: vertical; font: inherit; color: inherit; }
 .textarea-field textarea:focus { outline: none; border-color: var(--accent-2); }
 @media (max-width: 1500px) { .tools .tb span { display: none; } }
+.fix-btn { margin-right: 8px; padding: 0 6px; font-size: 11px; }

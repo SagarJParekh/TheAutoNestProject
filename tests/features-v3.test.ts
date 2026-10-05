@@ -225,3 +225,48 @@ describe('2D arrangement', () => {
     expect(gridArrayOffsets(3, 2, 10, 20)).toEqual([[10, 0], [20, 0], [0, 20], [10, 20], [20, 20]]);
   });
 });
+
+describe('sheet 3: repair buttons, plugs, image fit', () => {
+  it('fixes a non-manifold fin edge and removes duplicates', async () => {
+    const { fixNonManifoldEdges, removeDuplicateTriangles, analyzeMesh, mergeMeshes: mm } = await import('../src/geometry');
+    const c = boxMesh([0, 0, 0], [10, 10, 10]);
+    const pos = Float32Array.from([...c.positions, 5, -5, -5]);
+    const fin = { positions: pos, indices: Uint32Array.from([...c.indices, 0, 1, 8]) };
+    expect(analyzeMesh(fin).nonManifoldEdges).toBe(1);
+    const r = fixNonManifoldEdges(fin);
+    expect(r.removed).toBe(1);
+    expect(isWatertight(r.mesh)).toBe(true);
+    const dup = { positions: c.positions, indices: Uint32Array.from([...c.indices, c.indices[0], c.indices[1], c.indices[2]]) };
+    const d = removeDuplicateTriangles(dup);
+    expect(d.removed).toBe(1);
+    expect(isWatertight(d.mesh)).toBe(true);
+    void mm;
+  });
+  it('keeps perforation plugs as a separate solid', async () => {
+    const { intersectWithUnion } = await import('../src/geometry');
+    const plate = boxMesh([0, 0, 0], [30, 30, 4]);
+    const params = { pattern: 'square' as const, size: 4, spacing: 2, margin: 1 };
+    const cutters = pointHoleCutters(plate, [{ point: [10, 10, 4], normal: [0, 0, 1] }, { point: [20, 20, 4], normal: [0, 0, 1] }], params);
+    const plugs = await intersectWithUnion(plate, cutters);
+    expect(meshVolume(plugs)).toBeCloseTo(2 * 16 * 4, 1);
+    expect(findShells(plugs).shellCount).toBe(2);
+  });
+  it('fits an image once over the face', () => {
+    // left half black, right half white
+    const w = 8, h = 8;
+    const data = new Float32Array(w * h).map((_, i) => (i % w >= w / 2 ? 1 : 0));
+    const g = gridCube(20, 2);
+    const top = growCoplanarRegion(g, 8, 1);
+    const out = textureMesh(g, top, { pattern: 'image', period: 2, depth: 1, angle: 0, projection: 'planar', heightmap: { width: w, height: h, data }, imageFit: 'fit' });
+    expect(isWatertight(out)).toBe(true);
+    // one half of the top is raised by ~1 mm and the other is not: count raised vertices on each side of the centre
+    let up = 0, flat = 0;
+    for (let i = 0; i < out.positions.length; i += 3) {
+      if (out.positions[i + 2] < 19.99) continue;
+      if (out.positions[i + 2] > 20.9) up++;
+      else flat++;
+    }
+    expect(up).toBeGreaterThan(50);
+    expect(flat).toBeGreaterThan(50);
+  });
+});

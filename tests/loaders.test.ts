@@ -200,3 +200,22 @@ describe('exporters', () => {
     expect(Object.keys(z).sort()).toEqual(['a.stl', 'a_2.stl']);
   });
 });
+
+describe('CAD import quality', () => {
+  it('finer quality gives more triangles on curved STEP faces, with the same volume', async () => {
+    const step = (await import('node:fs')).readFileSync(new URL('./fixtures/cylinder.step', import.meta.url));
+    const counts: Record<string, number> = {};
+    for (const q of ['draft', 'normal', 'fine', 'ultra'] as const) {
+      const bodies = await importFile(ab(new Uint8Array(step)), { ...ctx('cylinder.step'), cadQuality: q });
+      counts[q] = bodies.reduce((a, b) => a + b.mesh.indices.length / 3, 0);
+      const vol = Math.abs(bodies.reduce((a, b) => a + meshVolume(b.mesh), 0));
+      // pi * 10^2 * 20 = 6283 mm³; coarse tessellation is slightly smaller
+      expect(vol).toBeGreaterThan(6283 * (q === 'draft' ? 0.9 : 0.995));
+      expect(vol).toBeLessThan(6283.3);
+    }
+    expect(counts.draft).toBeLessThan(counts.normal);
+    expect(counts.normal).toBeLessThan(counts.fine);
+    expect(counts.fine).toBeLessThan(counts.ultra);
+    console.log('cylinder triangles by quality', counts);
+  });
+});

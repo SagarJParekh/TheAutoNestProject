@@ -21,6 +21,8 @@ export interface Part {
   mesh: MeshData;
   transform: Transform;
   source?: string;
+  /** bounding-box centre of the body in the source file (used to keep placement when re-importing) */
+  importCenter?: Vec3;
 }
 
 export type ToolId = 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture';
@@ -159,7 +161,10 @@ export interface ToolSettings {
   label: Omit<LabelParams, 'curveSegments'> & { font: string };
   texture: Omit<TextureParams, 'heightmap'> & { scope: 'face' | 'part'; smooth: boolean; angleTolerance: number };
   arrange: { bedWidth: number; gap: number; cols: number; rows: number; mirrorCopy: boolean };
-  measure: { mode: MeasureMode; pickAs: MeasurePickAs };
+  measure: { mode: MeasureMode; pickAs: MeasurePickAs; ortho: boolean };
+  importQuality: 'draft' | 'normal' | 'fine' | 'ultra';
+  align2: { location: 'center' | 'left' | 'right' | 'front' | 'back'; axis: 'x' | 'y' | 'both'; beside: boolean; distance: number };
+  perforateExtra: { keepPlugs: boolean };
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

@@ -5,6 +5,8 @@ import { useStore } from '../../state/store';
 import { matrixOf } from '../../state/math';
 import { meshEntry } from '../../state/meshCache';
 import type { Part } from '../../state/types';
+import { CAD_EXTENSIONS, reimportSource, sourceFiles } from '../../state/actions';
+import { extensionOf } from '../../loaders/registry';
 
 const f = (v: number, d = 2) =>
   (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -26,8 +28,19 @@ export function InfoPanel({ parts }: { parts: Part[] }) {
 function SingleInfo({ part }: { part: Part }) {
   const m = useMemo(() => measureMesh(part.mesh, matrixOf(part.transform).elements), [part.mesh, part.transform]);
   const wt = meshEntry(part.mesh).watertight;
+  const quality = useStore((s) => s.settings.importQuality);
+  const canReimport = !!part.source && CAD_EXTENSIONS.has(extensionOf(part.source)) && sourceFiles.has(part.source);
   return (
-    <Section title="Info">
+    <Section
+      title="Info"
+      actions={
+        canReimport && (
+          <button className="mini" title="Re-tessellate all parts from this CAD file at the CAD quality chosen in the toolbar" onClick={() => reimportSource(part.source!)}>
+            Re-import ({quality})
+          </button>
+        )
+      }
+    >
       <dl className="info">
         <dt>Size</dt>
         <dd>

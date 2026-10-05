@@ -77,11 +77,12 @@ export function buildTopology(mesh: MeshData): Topology {
   }
   return {
     edgeCount,
-    edgeV0: edgeV0.slice(0, edgeCount),
-    edgeV1: edgeV1.slice(0, edgeCount),
-    edgeFaceCount: edgeFaceCount.slice(0, edgeCount),
-    edgeHE0: edgeHE0.slice(0, edgeCount),
-    edgeHE1: edgeHE1.slice(0, edgeCount),
+    // subarrays avoid doubling peak memory on very large meshes
+    edgeV0: edgeV0.subarray(0, edgeCount),
+    edgeV1: edgeV1.subarray(0, edgeCount),
+    edgeFaceCount: edgeFaceCount.subarray(0, edgeCount),
+    edgeHE0: edgeHE0.subarray(0, edgeCount),
+    edgeHE1: edgeHE1.subarray(0, edgeCount),
     halfEdgeEdge,
   };
 }

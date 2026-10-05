@@ -45,7 +45,9 @@ export function onPointPick(info: PickInfo) {
   const s = getState();
   const part = partById(info.partId);
   if (!part) return;
-  const pick = toLocal(part, info.point, info.normal);
+  // the prop end point can snap to vertices / ortho lines from the start point
+  const pt = s.pointSlot === 'propEnd' ? viewerApi.current?.viewer?.snapPoint(info.partId, info.faceIndex, info.point, info.clientX, info.clientY).point ?? info.point : info.point;
+  const pick = toLocal(part, pt, info.normal);
   if (s.pointSlot === 'perfPoint') {
     // stays armed so several holes can be placed
     setState({ perfPoints: [...s.perfPoints.filter((p) => p.mesh === part.mesh || p.partId !== part.id), pick], preview: null });
@@ -164,9 +166,13 @@ export async function applyPointHoles() {
       notify('warning', `${g.part.name} is locked`);
       continue;
     }
-    const r = await runJob(`Cutting ${g.points.length} holes`, 'pointHoles', { mesh: worldMesh(g.part), points: g.points, params });
+    const keepPlugs = getState().settings.perforateExtra.keepPlugs;
+    const r = await runJob(`Cutting ${g.points.length} holes`, 'pointHoles', { mesh: worldMesh(g.part), points: g.points, params, keepPlugs });
     if (!r) return;
-    replaceWithWorldMeshes(`Perforate (${r.holes} holes)`, g.part.id, [{ name: g.part.name, mesh: r.mesh, color: g.part.color }]);
+    replaceWithWorldMeshes(`Perforate (${r.holes} holes)`, g.part.id, [
+      { name: g.part.name, mesh: r.mesh, color: g.part.color },
+      ...(r.plugs && r.plugs.indices.length ? [{ name: `${g.part.name} plugs`, mesh: r.plugs }] : []),
+    ]);
   }
   setState({ perfPoints: [] });
 }
@@ -267,7 +273,7 @@ export async function previewTexture() {
     replaces: [p.id],
     meshes: [{ name: p.name, mesh: r, color: p.color }],
     summary: [
-      `Period ${st.period} mm, depth ${st.depth} mm`,
+      st.pattern === 'image' && (st.imageFit ?? 'fit') === 'fit' ? `Image fitted to the area, depth ${st.depth} mm` : `Period ${st.period} mm, depth ${st.depth} mm`,
       `Triangles: ${(p.mesh.indices.length / 3).toLocaleString()} → ${(r.indices.length / 3).toLocaleString()}`,
     ],
     apply: () => replaceWithWorldMeshes('Texture', p.id, [{ name: p.name, mesh: r, color: p.color }]),
@@ -341,4 +347,57 @@ export function mirrorCopies(axis: 0 | 1 | 2) {
     return { ...p, id: newId(), name: `${p.name} (mirror)`, color: nextColor(), locked: false, mesh, transform: IDENTITY_TRANSFORM(center) };
   });
   commit(`Mirror copy ${'XYZ'[axis]}`, [...s.parts, ...copies], { selection: copies.map((c) => c.id) });
+}
+
+// ---------------------------------------------------------------- align to a reference part
+
+/**
+ * Align the selected parts to the first selected one (the reference) using
+ * bounding boxes: flush centre/left/right/front/back along X/Y, or place
+ * beside the reference at a given distance.
+ */
+export function alignToReference() {
+  const s = getState();
+  const order = s.selection.map((id) => s.parts.find((p) => p.id === id)).filter((p): p is Part => !!p);
+  if (order.length < 2) return notify('warning', 'Select the reference part first, then Ctrl-click the part(s) to align');
+  const [ref, ...moving] = order;
+  const rb = worldBounds(ref);
+  const { location, axis, beside, distance } = s.settings.align2;
+  const updates = new Map<string, Vec3>();
+  for (const p of moving) {
+    if (p.locked) continue;
+    const b = worldBounds(p);
+    let dx = 0, dy = 0;
+    const cx = (rb.min.x + rb.max.x) / 2 - (b.min.x + b.max.x) / 2;
+    const cy = (rb.min.y + rb.max.y) / 2 - (b.min.y + b.max.y) / 2;
+    switch (location) {
+      case 'center':
+        if (axis !== 'y') dx = cx;
+        if (axis !== 'x') dy = cy;
+        break;
+      case 'left':
+        dx = beside ? rb.min.x - distance - b.max.x : rb.min.x - b.min.x;
+        if (beside && axis !== 'x') dy = cy;
+        break;
+      case 'right':
+        dx = beside ? rb.max.x + distance - b.min.x : rb.max.x - b.max.x;
+        if (beside && axis !== 'x') dy = cy;
+        break;
+      case 'front':
+        dy = beside ? rb.min.y - distance - b.max.y : rb.min.y - b.min.y;
+        if (beside && axis !== 'y') dx = cx;
+        break;
+      case 'back':
+        dy = beside ? rb.max.y + distance - b.min.y : rb.max.y - b.max.y;
+        if (beside && axis !== 'y') dx = cx;
+        break;
+    }
+    const pos = p.transform.position;
+    updates.set(p.id, [pos[0] + dx, pos[1] + dy, pos[2]]);
+  }
+  if (!updates.size) return notify('warning', 'The parts to align are locked');
+  commit(
+    `Align to ${ref.name}`,
+    s.parts.map((p) => (updates.has(p.id) ? { ...p, transform: { ...p.transform, position: updates.get(p.id)! } } : p)),
+  );
 }

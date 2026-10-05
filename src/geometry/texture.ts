@@ -35,6 +35,8 @@ export interface TextureParams {
    */
   projection: 'planar' | 'cylindrical' | 'triplanar';
   heightmap?: Heightmap;
+  /** image pattern: 'fit' stretches the image once over the area (keeping aspect), 'tile' repeats it every `period` mm */
+  imageFit?: 'fit' | 'tile';
   /** invert the height pattern */
   invert?: boolean;
   /** abort if refinement would exceed this many triangles */
@@ -56,6 +58,17 @@ function valueNoise(x: number, y: number): number {
   const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
   const a = hash2(xi, yi), b = hash2(xi + 1, yi), c = hash2(xi, yi + 1), d = hash2(xi + 1, yi + 1);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+/** Bilinear sample of a heightmap at u,v in 0..1 (v = 0 at the bottom of the image). */
+export function sampleHeightmap(hm: Heightmap, u: number, v: number): number {
+  const x = Math.min(1, Math.max(0, u)) * (hm.width - 1);
+  const y = (1 - Math.min(1, Math.max(0, v))) * (hm.height - 1);
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const x1 = Math.min(hm.width - 1, x0 + 1), y1 = Math.min(hm.height - 1, y0 + 1);
+  const fu = x - x0, fv = y - y0;
+  const g = (xx: number, yy: number) => hm.data[yy * hm.width + xx];
+  return (g(x0, y0) * (1 - fu) + g(x1, y0) * fu) * (1 - fv) + (g(x0, y1) * (1 - fu) + g(x1, y1) * fu) * fv;
 }
 
 /** Height (0..1) of a pattern at plane coordinates (s, t) in mm. */
@@ -123,14 +136,7 @@ export function patternHeight(p: TextureParams, s: number, t: number): number {
     case 'image': {
       const hm = p.heightmap;
       if (!hm) return 0;
-      const aspect = hm.height / hm.width;
-      const u = fract(x) * (hm.width - 1);
-      const v = (1 - fract(y / aspect)) * (hm.height - 1);
-      const x0 = Math.floor(u), y0 = Math.floor(v);
-      const x1 = Math.min(hm.width - 1, x0 + 1), y1 = Math.min(hm.height - 1, y0 + 1);
-      const fu = u - x0, fv = v - y0;
-      const g = (xx: number, yy: number) => hm.data[yy * hm.width + xx];
-      h = (g(x0, y0) * (1 - fu) + g(x1, y0) * fu) * (1 - fv) + (g(x0, y1) * (1 - fu) + g(x1, y1) * fu) * fv;
+      h = sampleHeightmap(hm, fract(x), fract(y / (hm.height / hm.width)));
       break;
     }
   }
@@ -149,7 +155,7 @@ export function refineRegion(
   mesh: MeshData,
   region: Uint8Array,
   maxEdge: number,
-  maxTriangles = 4_000_000,
+  maxTriangles = 12_000_000,
   onProgress: ProgressFn = noProgress,
 ): { mesh: MeshData; region: Uint8Array } {
   let cur = mesh;
@@ -245,8 +251,22 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
   const region0 = new Uint8Array(nt0);
   if (regionTris) for (let i = 0; i < regionTris.length; i++) region0[regionTris[i]] = 1;
   else region0.fill(1);
-  const res = params.resolution && params.resolution > 0 ? params.resolution : params.period / 6;
-  const { mesh: m, region } = refineRegion(mesh, region0, res, params.maxTriangles ?? 4_000_000, onProgress);
+  let res = params.resolution && params.resolution > 0 ? params.resolution : params.period / 6;
+  if (!(params.resolution && params.resolution > 0) && params.pattern === 'image' && params.heightmap && (params.imageFit ?? 'fit') === 'fit') {
+    // about one vertex per image pixel across the area (capped at 300 across)
+    const ids: number[] = [];
+    for (let t = 0; t < nt0; t++) if (region0[t]) ids.push(t);
+    const used = new Set<number>();
+    for (const t of ids) for (let k = 0; k < 3; k++) used.add(mesh.indices[t * 3 + k]);
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const v of used) for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k], mesh.positions[v * 3 + k]);
+      hi[k] = Math.max(hi[k], mesh.positions[v * 3 + k]);
+    }
+    const extent = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
+    res = extent / Math.min(300, Math.max(params.heightmap.width, params.heightmap.height));
+  }
+  const { mesh: m, region } = refineRegion(mesh, region0, res, params.maxTriangles ?? 12_000_000, onProgress);
   onProgress(0.92, 'Displacing');
   const p = m.positions.slice(), idx = m.indices;
   const nv = p.length / 3, nt = idx.length / 3;
@@ -304,6 +324,10 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
     cyl = { axis, u, v, cx: f.x, cy: f.y, turns };
   }
   const out = new Float32Array(p);
+  // pass 1: projected pattern coordinates and normals for movable vertices
+  const movable: number[] = [];
+  const st: number[] = [];
+  const nrm: number[] = [];
   for (let v = 0; v < nv; v++) {
     if (!inR[v] || outR[v]) continue; // border vertices stay put
     let nx = vn[v * 3], ny = vn[v * 3 + 1], nz = vn[v * 3 + 2];
@@ -316,7 +340,6 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
       const pu = x * cyl.u[0] + y * cyl.u[1] + z * cyl.u[2] - cyl.cx;
       const pv = x * cyl.v[0] + y * cyl.v[1] + z * cyl.v[2] - cyl.cy;
       const theta = Math.atan2(pv, pu);
-      // arc coordinate scaled so one turn = `turns` periods
       [s, t] = rot((theta / (2 * Math.PI)) * cyl.turns * params.period, x * cyl.axis[0] + y * cyl.axis[1] + z * cyl.axis[2]);
     } else if (params.projection === 'planar') {
       const dx = x - centroid[0], dy = y - centroid[1], dz = z - centroid[2];
@@ -326,10 +349,36 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
       const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
       [s, t] = rot(...((az >= ax && az >= ay ? [x, y] : ax >= ay ? [y, z] : [x, z]) as [number, number]));
     }
-    const h = patternHeight(params, s, t) * params.depth;
-    out[v * 3] = x + nx * h;
-    out[v * 3 + 1] = y + ny * h;
-    out[v * 3 + 2] = z + nz * h;
+    movable.push(v);
+    st.push(s, t);
+    nrm.push(nx, ny, nz);
+  }
+  // fitted image: map the image once onto the bounding box of the area (aspect kept, centred)
+  let fit: { s0: number; t0: number; size: number; aspect: number } | null = null;
+  if (params.pattern === 'image' && params.heightmap && (params.imageFit ?? 'fit') === 'fit' && movable.length) {
+    let s0 = Infinity, s1 = -Infinity, t0 = Infinity, t1 = -Infinity;
+    for (let i = 0; i < st.length; i += 2) {
+      s0 = Math.min(s0, st[i]); s1 = Math.max(s1, st[i]);
+      t0 = Math.min(t0, st[i + 1]); t1 = Math.max(t1, st[i + 1]);
+    }
+    const aspect = params.heightmap.height / params.heightmap.width;
+    const w = s1 - s0, h = t1 - t0;
+    const size = Math.max(w, h / aspect); // image width in mm
+    fit = { s0: (s0 + s1) / 2 - size / 2, t0: (t0 + t1) / 2 - (size * aspect) / 2, size, aspect };
+  }
+  for (let i = 0; i < movable.length; i++) {
+    const v = movable[i];
+    let hgt: number;
+    if (fit) {
+      const u = (st[i * 2] - fit.s0) / fit.size;
+      const w = (st[i * 2 + 1] - fit.t0) / (fit.size * fit.aspect);
+      hgt = u < 0 || u > 1 || w < 0 || w > 1 ? 0 : sampleHeightmap(params.heightmap!, u, w);
+      if (params.invert) hgt = 1 - hgt;
+    } else hgt = patternHeight(params, st[i * 2], st[i * 2 + 1]);
+    const h = hgt * params.depth;
+    out[v * 3] = p[v * 3] + nrm[i * 3] * h;
+    out[v * 3 + 1] = p[v * 3 + 1] + nrm[i * 3 + 1] * h;
+    out[v * 3 + 2] = p[v * 3 + 2] + nrm[i * 3 + 2] * h;
   }
   onProgress(1);
   return { positions: out, indices: idx };

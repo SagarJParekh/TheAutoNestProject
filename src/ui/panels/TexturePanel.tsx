@@ -79,9 +79,23 @@ export function TexturePanel() {
           />
         </Row>
       )}
-      <Row label={st.pattern === 'image' ? 'Tile width' : 'Period'}>
-        <NumberField value={st.period} min={0.2} step={0.5} suffix="mm" onChange={(period) => set({ period })} />
-      </Row>
+      {st.pattern === 'image' && (
+        <Row label="Image placement">
+          <Segmented
+            value={st.imageFit ?? 'fit'}
+            onChange={(imageFit) => set({ imageFit, projection: st.projection === 'triplanar' && imageFit === 'fit' ? 'planar' : st.projection })}
+            options={[
+              { value: 'fit', label: 'Fit to face', title: 'Stretch the image once over the area (aspect kept)' },
+              { value: 'tile', label: 'Tile', title: 'Repeat the image every “tile width” mm' },
+            ]}
+          />
+        </Row>
+      )}
+      {!(st.pattern === 'image' && (st.imageFit ?? 'fit') === 'fit') && (
+        <Row label={st.pattern === 'image' ? 'Tile width' : 'Period'}>
+          <NumberField value={st.period} min={0.2} step={0.5} suffix="mm" onChange={(period) => set({ period })} />
+        </Row>
+      )}
       <Row label="Depth">
         <NumberField value={st.depth} step={0.1} suffix="mm" title="Positive raises the pattern, negative carves it in" onChange={(depth) => set({ depth })} />
       </Row>
@@ -89,7 +103,7 @@ export function TexturePanel() {
         <NumberField value={st.angle} step={15} suffix="°" onChange={(angle) => set({ angle })} />
       </Row>
       <Row label="Resolution">
-        <NumberField value={st.resolution ?? 0} min={0} step={0.05} precision={3} suffix="mm" title="Target edge length; 0 = period / 6" onChange={(resolution) => set({ resolution })} />
+        <NumberField value={st.resolution ?? 0} min={0} step={0.05} precision={3} suffix="mm" title="Target edge length; 0 = automatic (period / 6, or one vertex per image pixel)" onChange={(resolution) => set({ resolution })} />
       </Row>
       <Row label="Projection">
         <Segmented

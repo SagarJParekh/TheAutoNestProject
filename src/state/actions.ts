@@ -82,6 +82,10 @@ export function partFromWorld(name: string, world: MeshData, color?: string, sou
 }
 
 const SIDE_FILES = new Set(['bin', 'png', 'jpg', 'jpeg', 'webp', 'ktx2']);
+export const CAD_EXTENSIONS = new Set(['step', 'stp', 'iges', 'igs', 'brep', 'brp']);
+
+/** Original files of CAD imports, kept so parts can be re-tessellated at another quality. */
+export const sourceFiles = new Map<string, File>();
 
 /** Import any number of files; each runs as its own cancellable job. */
 export async function importFiles(files: File[]) {
@@ -104,14 +108,20 @@ export async function importFiles(files: File[]) {
       return;
     }
     const buffer = await file.arrayBuffer();
+    const cadQuality = getState().settings.importQuality;
     const r = await runJob(`Importing ${file.name}`, 'import', {
       name: file.name,
       buffer,
       siblings: ext === 'gltf' ? siblings : undefined,
+      cadQuality,
     });
     if (!r) return;
+    if (CAD_EXTENSIONS.has(ext)) sourceFiles.set(file.name, file);
     r.warnings.forEach((w) => notify('warning', w, 10000));
-    const parts = r.bodies.map((b) => makePart(r.bodies.length > 1 ? b.name : b.name || file.name, b.mesh, b.center, file.name));
+    const parts = r.bodies.map((b) => ({
+      ...makePart(r.bodies.length > 1 ? b.name : b.name || file.name, b.mesh, b.center, file.name),
+      importCenter: b.center,
+    }));
     const s = getState();
     commit(`Import ${file.name}`, [...s.parts, ...parts], { selection: parts.map((p) => p.id) });
     const tris = parts.reduce((a, p) => a + p.mesh.indices.length / 3, 0);
@@ -510,10 +520,14 @@ export async function applyPerforation() {
   if (!part || part.locked) return;
   const { angleTolerance: _a, ...params } = s.settings.perforate;
   void _a;
-  const r = await runJob('Perforating', 'perforate', { mesh: worldMesh(part), tris: fs.tris, params });
+  const keepPlugs = s.settings.perforateExtra.keepPlugs;
+  const r = await runJob('Perforating', 'perforate', { mesh: worldMesh(part), tris: fs.tris, params, keepPlugs });
   if (!r) return;
-  replaceWithWorldMeshes(`Perforate (${r.holes} holes)`, part.id, [{ name: part.name, mesh: r.mesh, color: part.color }]);
-  notify('success', `Cut ${r.holes} holes`);
+  replaceWithWorldMeshes(`Perforate (${r.holes} holes)`, part.id, [
+    { name: part.name, mesh: r.mesh, color: part.color },
+    ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs }] : []),
+  ]);
+  notify('success', `Cut ${r.holes} holes${r.plugs ? ' (plugs kept as a separate part)' : ''}`);
 }
 
 // ---------------------------------------------------------------- hollow
@@ -573,3 +587,74 @@ export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selecte
 }
 
 export { matrixOf };
+
+/**
+ * Re-tessellate every part that came from a CAD file at the current import
+ * quality, keeping names, colours, visibility, locks and placement.
+ */
+export async function reimportSource(source: string) {
+  const file = sourceFiles.get(source);
+  if (!file) return notify('warning', `The original file ${source} is no longer available; open it again`);
+  const cadQuality = getState().settings.importQuality;
+  const r = await runJob(`Re-importing ${source} (${cadQuality})`, 'import', { name: file.name, buffer: await file.arrayBuffer(), cadQuality });
+  if (!r) return;
+  r.warnings.forEach((w) => notify('warning', w, 10000));
+  const s = getState();
+  const old = s.parts.filter((p) => p.source === source);
+  const unused = [...old];
+  const replaced = new Map<string, Part>();
+  const created: Part[] = [];
+  r.bodies.forEach((b, i) => {
+    const name = r.bodies.length > 1 ? b.name : b.name || file.name;
+    const k = unused.findIndex((p) => p.name === name || p.name.startsWith(name));
+    const match = k >= 0 ? unused.splice(k, 1)[0] : unused.length && r.bodies.length === old.length ? unused.splice(0, 1)[0] : undefined;
+    prepareMesh(b.mesh);
+    if (match) {
+      const ic = match.importCenter ?? b.center;
+      const pos = match.transform.position;
+      const np: Part = {
+        ...match,
+        mesh: b.mesh,
+        importCenter: b.center,
+        transform: { ...match.transform, position: [pos[0] + b.center[0] - ic[0], pos[1] + b.center[1] - ic[1], pos[2] + b.center[2] - ic[2]] },
+      };
+      replaced.set(match.id, np);
+    } else {
+      created.push({ ...makePart(name, b.mesh, b.center, source), importCenter: b.center });
+    }
+    void i;
+  });
+  const gone = new Set(unused.map((p) => p.id));
+  const parts = s.parts.filter((p) => !gone.has(p.id)).map((p) => replaced.get(p.id) ?? p);
+  commit(`Re-import ${source}`, [...parts, ...created]);
+  const tris = [...replaced.values(), ...created].reduce((a, p) => a + p.mesh.indices.length / 3, 0);
+  notify('success', `Re-imported ${source} at ${cadQuality} quality: ${tris.toLocaleString()} triangles`);
+}
+
+export function setImportQuality(q: 'draft' | 'normal' | 'fine' | 'ultra') {
+  setState((s) => ({ settings: { ...s.settings, importQuality: q } }));
+  try {
+    localStorage.setItem('autonest.importQuality', q);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Leave the current tool: drop its preview, picks and pending state, back to Transform. */
+export function cancelTool() {
+  const s = getState();
+  const tool = s.tool;
+  setState({
+    preview: null,
+    pickMode: null,
+    pickSlot: 'primary',
+    zoomWindow: false,
+    faceSelection: tool === 'extrude' || tool === 'perforate' ? null : s.faceSelection,
+    facePicks: tool === 'repair' || tool === 'texture' ? {} : s.facePicks,
+    pointPicks: tool === 'repair' || tool === 'label' ? {} : s.pointPicks,
+    perfPoints: tool === 'perforate' ? [] : s.perfPoints,
+    measurePending: { entities: [], points: [] },
+    settings: tool === 'hollow' ? { ...s.settings, hollow: { ...s.settings.hollow, drainHoles: [] } } : s.settings,
+    tool: 'transform',
+  });
+}

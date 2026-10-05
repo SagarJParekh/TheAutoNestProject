@@ -3,6 +3,9 @@ import { getLoader } from './registry';
 import { ImportError, LoaderContext } from './types';
 import './index';
 
+/** Soft limit: larger models still load, with a warning. */
+export const MAX_TRIANGLES = 12_000_000;
+
 export interface PreparedBody {
   name: string;
   /** welded, indexed mesh, recentred so its bounding-box centre is the origin */
@@ -48,5 +51,7 @@ export async function importFile(buffer: ArrayBuffer, ctx: LoaderContext): Promi
     out.push({ name: b.name, mesh: { positions: p, indices: mesh.indices }, center: c });
   }
   if (!out.length) throw new ImportError('File contains no triangles');
+  const tris = out.reduce((a, b) => a + b.mesh.indices.length / 3, 0);
+  if (tris > MAX_TRIANGLES) ctx.warn(`${ctx.fileName} has ${(tris / 1e6).toFixed(1)} million triangles (above ${MAX_TRIANGLES / 1e6} million); editing may be slow.`);
   return out;
 }

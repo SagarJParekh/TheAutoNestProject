@@ -8,6 +8,7 @@ import { MeshBVH } from 'three-mesh-bvh';
 import * as G from '../geometry';
 import type { MeshData, Plane, Vec3 } from '../geometry';
 import { importFile, PreparedBody } from '../loaders/pipeline';
+import type { CadQuality } from '../loaders/types';
 import { exportMeshes, exportZip, ExportFormat, ExportItem } from '../exporters';
 
 export type Progress = (fraction: number, message?: string) => void;
@@ -44,13 +45,14 @@ export interface CutArgs {
 }
 
 export const ops = {
-  async import(args: { name: string; buffer: ArrayBuffer; siblings?: [string, ArrayBuffer][]; wasmUrls?: { occt?: string; rhino?: string } }, progress: Progress): Promise<Result<{ bodies: PreparedBody[]; warnings: string[] }>> {
+  async import(args: { name: string; buffer: ArrayBuffer; siblings?: [string, ArrayBuffer][]; wasmUrls?: { occt?: string; rhino?: string }; cadQuality?: CadQuality }, progress: Progress): Promise<Result<{ bodies: PreparedBody[]; warnings: string[] }>> {
     const warnings: string[] = [];
     const bodies = await importFile(args.buffer, {
       fileName: args.name,
       onProgress: progress,
       siblings: args.siblings ? new Map(args.siblings) : undefined,
       wasmUrls: args.wasmUrls,
+      cadQuality: args.cadQuality,
       warn: (m) => warnings.push(m),
     });
     return { result: { bodies, warnings }, transfer: bodies.flatMap((b) => meshBuffers(b.mesh)) };
@@ -150,7 +152,10 @@ export const ops = {
     return { result: plan, transfer: [plan.outlines.buffer as ArrayBuffer] };
   },
 
-  async perforate(args: { mesh: MeshData; tris: Uint32Array; params: G.PerforationParams }, progress: Progress): Promise<Result<{ mesh: MeshData; holes: number }>> {
+  async perforate(
+    args: { mesh: MeshData; tris: Uint32Array; params: G.PerforationParams; keepPlugs?: boolean },
+    progress: Progress,
+  ): Promise<Result<{ mesh: MeshData; holes: number; plugs?: MeshData }>> {
     progress(0.1, 'Planning pattern');
     const plan = G.planPerforation(args.mesh, args.tris, args.params);
     if (plan.centers.length === 0) throw new Error('No holes fit in the selected region with these settings.');
@@ -158,7 +163,12 @@ export const ops = {
     const cutters = G.perforationCutters(args.mesh, plan, args.params.depth ?? 0, G.exitRatioOf(args.params));
     progress(0.5, 'Boolean subtraction');
     const mesh = await G.subtractMeshes(args.mesh, cutters);
-    return { result: { mesh, holes: plan.centers.length }, transfer: meshBuffers(mesh) };
+    let plugs: MeshData | undefined;
+    if (args.keepPlugs) {
+      progress(0.8, 'Extracting plugs');
+      plugs = await G.intersectWithUnion(args.mesh, cutters);
+    }
+    return { result: { mesh, holes: plan.centers.length, plugs }, transfer: [...meshBuffers(mesh), ...(plugs ? meshBuffers(plugs) : [])] };
   },
 
   async stitch(args: { mesh: MeshData; tolerance?: number }, progress: Progress): Promise<Result<G.StitchResult>> {
@@ -218,13 +228,40 @@ export const ops = {
     return { result: r, transfer: meshBuffers(r.mesh) };
   },
 
-  async pointHoles(args: { mesh: MeshData; points: G.HolePoint[]; params: G.PerforationParams }, progress: Progress): Promise<Result<{ mesh: MeshData; holes: number }>> {
+  async pointHoles(
+    args: { mesh: MeshData; points: G.HolePoint[]; params: G.PerforationParams; keepPlugs?: boolean },
+    progress: Progress,
+  ): Promise<Result<{ mesh: MeshData; holes: number; plugs?: MeshData }>> {
     if (!args.points.length) throw new Error('Pick at least one hole location');
     progress(0.2, 'Building cutters');
     const cutters = G.pointHoleCutters(args.mesh, args.points, args.params);
     progress(0.4, 'Boolean subtraction');
     const mesh = await G.subtractMeshes(args.mesh, cutters);
-    return { result: { mesh, holes: args.points.length }, transfer: meshBuffers(mesh) };
+    let plugs: MeshData | undefined;
+    if (args.keepPlugs) {
+      progress(0.8, 'Extracting plugs');
+      plugs = await G.intersectWithUnion(args.mesh, cutters);
+    }
+    return { result: { mesh, holes: args.points.length, plugs }, transfer: [...meshBuffers(mesh), ...(plugs ? meshBuffers(plugs) : [])] };
+  },
+
+  async cleanTriangles(args: { mesh: MeshData; what: 'duplicates' | 'degenerate' }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number }>> {
+    progress(0.3, args.what === 'duplicates' ? 'Removing duplicate triangles' : 'Removing degenerate triangles');
+    const r = args.what === 'duplicates' ? G.removeDuplicateTriangles(args.mesh) : G.removeDegenerateTriangles(args.mesh);
+    return { result: r, transfer: r.removed ? meshBuffers(r.mesh) : [] };
+  },
+
+  async fixNonManifold(args: { mesh: MeshData; fill: boolean }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number; edges: number; filled: number }>> {
+    progress(0.2, 'Fixing non-manifold edges');
+    const r = G.fixNonManifoldEdges(args.mesh);
+    let mesh = r.mesh, filled = 0;
+    if (args.fill && r.removed) {
+      progress(0.7, 'Filling the openings');
+      const f = G.fillHoles(mesh);
+      mesh = G.fixWinding(f.mesh).mesh;
+      filled = f.filled;
+    }
+    return { result: { mesh, removed: r.removed, edges: r.edges, filled }, transfer: meshBuffers(mesh) };
   },
 
   async fitFeature(args: { mesh: MeshData; seed: number; kind: 'cylinder' | 'sphere'; angle?: number }): Promise<Result<{ c: Vec3; axis?: Vec3; r: number; rms: number }>> {

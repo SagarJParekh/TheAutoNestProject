@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { Icon } from './icons';
 import { getState, redo, setState, undo, useStore } from '../state/store';
-import { importFiles, setTool } from '../state/actions';
+import { importFiles, setImportQuality, setTool } from '../state/actions';
 import { viewerApi } from '../viewer/api';
 import { importableExtensions } from '../loaders/registry';
 import type { DisplayMode, ToolId } from '../state/types';
@@ -27,6 +27,7 @@ export function Toolbar() {
   const ortho = useStore((s) => s.orthographic);
   const grid = useStore((s) => s.showGrid);
   const zooming = useStore((s) => s.zoomWindow);
+  const importQuality = useStore((s) => s.settings.importQuality);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
   const undoLabel = useStore((s) => s.past[s.past.length - 1]?.label);
@@ -44,6 +45,17 @@ export function Toolbar() {
           {Icon.open}
           <span>Open</span>
         </button>
+        <select
+          className="tb-select"
+          value={importQuality}
+          title="Tessellation quality for STEP / IGES / BREP imports (finer = more triangles)"
+          onChange={(e) => setImportQuality(e.target.value as 'draft' | 'normal' | 'fine' | 'ultra')}
+        >
+          <option value="draft">CAD: Draft</option>
+          <option value="normal">CAD: Normal</option>
+          <option value="fine">CAD: Fine</option>
+          <option value="ultra">CAD: Ultra</option>
+        </select>
         <button className="tb" title="Export (Ctrl+E)" onClick={() => setState({ showExport: true })}>
           {Icon.export}
           <span>Export</span>
