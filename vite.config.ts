@@ -1,8 +1,16 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'node:url';
+
+const isTest = !!process.env.VITEST;
+const stub = fileURLToPath(new URL('./src/stubs/empty.ts', import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // rhino3dm's Emscripten glue references `ws` for Node pthreads; it is never loaded in browsers
+    alias: isTest ? {} : { ws: stub },
+  },
   worker: {
     format: 'es',
   },
