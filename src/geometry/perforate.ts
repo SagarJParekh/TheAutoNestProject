@@ -22,6 +22,11 @@ export interface PerforationParams {
   angle?: number;
   /** safety cap on the number of holes */
   maxHoles?: number;
+  /**
+   * hole size at the exit end for tapered (conical) holes; 0/undefined = straight.
+   * Same unit as `size` (diameter, across flats or side).
+   */
+  exitSize?: number;
 }
 
 export interface PerforationPlan {
@@ -120,8 +125,9 @@ export function planPerforation(
   };
 
   const { radius, sides, rotation } = shape(params);
-  const clearance = (params.pattern === 'round' ? params.size / 2 : radius) + Math.max(0, params.margin);
-  const pitch = Math.max(1e-3, params.size + Math.max(0, params.spacing));
+  const big = Math.max(1, (params.exitSize ?? 0) / params.size);
+  const clearance = (params.pattern === 'round' ? params.size / 2 : radius) * big + Math.max(0, params.margin);
+  const pitch = Math.max(1e-3, params.size * big + Math.max(0, params.spacing));
   const staggered = params.pattern !== 'square';
   const rowStep = staggered ? (pitch * Math.sqrt(3)) / 2 : pitch;
   const maxHoles = params.maxHoles ?? 20000;
@@ -167,28 +173,91 @@ export function planPerforation(
   return { normal, origin: centroid, u, v, centers, radius, sides, rotation, outlines, truncated };
 }
 
+/** Circumradius ratio exit/entry for a tapered hole (1 = straight). */
+export function exitRatioOf(params: PerforationParams): number {
+  return params.exitSize && params.exitSize > 0 ? params.exitSize / params.size : 1;
+}
+
 /**
- * Build the cutting prisms for a plan. Depth is either fixed or measured per
- * hole by casting a ray from the surface inward to the opposite wall.
+ * One cutter: polygon of circumradius r0 at the surface point, axis into the
+ * part along -n, depth d; tapering linearly to r0*ratio at depth d. The cutter
+ * starts 1 mm outside the surface and ends 1 mm past the exit.
  */
-export function perforationCutters(mesh: MeshData, plan: PerforationPlan, depth = 0): MeshData[] {
+function holeCutter(c: Vec3, n: Vec3, u: Vec3, v: Vec3, r0: number, ratio: number, sides: number, rotation: number, d: number): MeshData {
+  const above = 1;
+  const r1 = r0 * ratio;
+  const slope = (r1 - r0) / Math.max(d, 1e-6);
+  const rStart = Math.max(r0 * 0.05, r0 - slope * above);
+  const rEnd = Math.max(r0 * 0.05, r0 + slope * (d + 1));
+  const base: Vec3 = [c[0] + n[0] * above, c[1] + n[1] * above, c[2] + n[2] * above];
+  const poly = regularPolygon(0, 0, rStart, sides, rotation);
+  return extrudePolygon(base, u, v, [-n[0], -n[1], -n[2]], poly, above + d + 1, rEnd / rStart);
+}
+
+function measureDepth(bvh: ReturnType<typeof makeBVH> | null, c: Vec3, n: Vec3, fixed: number, ray: Ray): number {
+  if (!bvh) return fixed;
+  const eps = 0.01;
+  ray.origin.set(c[0] - n[0] * eps, c[1] - n[1] * eps, c[2] - n[2] * eps);
+  ray.direction.set(-n[0], -n[1], -n[2]);
+  const hit = bvh.raycastFirst(ray, DoubleSide);
+  return hit ? hit.distance + eps : 10;
+}
+
+/** A single hole location picked on the surface. */
+export interface HolePoint {
+  point: Vec3;
+  /** outward surface normal */
+  normal: Vec3;
+}
+
+function holeFrame(normal: Vec3, angleDeg: number) {
+  const l = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+  const n: Vec3 = [normal[0] / l, normal[1] / l, normal[2] / l];
+  const b = planeBasis(n);
+  const a = (angleDeg * Math.PI) / 180;
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const u: Vec3 = [b.u[0] * ca + b.v[0] * sa, b.u[1] * ca + b.v[1] * sa, b.u[2] * ca + b.v[2] * sa];
+  const v: Vec3 = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+  return { n, u, v };
+}
+
+/** Cutters for individually placed holes (each along its own surface normal). */
+export function pointHoleCutters(mesh: MeshData, points: HolePoint[], params: PerforationParams): MeshData[] {
+  const { radius, sides, rotation } = shape(params);
+  const ratio = exitRatioOf(params);
+  const depth = params.depth ?? 0;
+  const bvh = depth > 0 ? null : makeBVH(mesh);
+  const ray = new Ray();
+  return points.map(({ point, normal }) => {
+    const { n, u, v } = holeFrame(normal, params.angle ?? 0);
+    return holeCutter(point, n, u, v, radius, ratio, sides, rotation, measureDepth(bvh, point, n, depth, ray));
+  });
+}
+
+/** Preview outlines (entry polygons) for point holes. */
+export function pointHoleOutlines(points: HolePoint[], params: PerforationParams): Float32Array {
+  const { radius, sides, rotation } = shape(params);
+  const out: number[] = [];
+  const lift = 0.02 + params.size * 0.01;
+  for (const { point, normal } of points) {
+    const { n, u, v } = holeFrame(normal, params.angle ?? 0);
+    const pt = (k: number) => {
+      const t = rotation + (k / sides) * Math.PI * 2;
+      const x = Math.cos(t) * radius, y = Math.sin(t) * radius;
+      return [0, 1, 2].map((i) => point[i] + u[i] * x + v[i] * y + n[i] * lift);
+    };
+    for (let k = 0; k < sides; k++) out.push(...pt(k), ...pt(k + 1));
+  }
+  return Float32Array.from(out);
+}
+
+/**
+ * Build the cutting prisms (or frustums, for tapered holes) for a plan.
+ * Depth is either fixed or measured per hole by casting a ray inward.
+ */
+export function perforationCutters(mesh: MeshData, plan: PerforationPlan, depth = 0, exitRatio = 1): MeshData[] {
   const n = plan.normal;
   const bvh = depth > 0 ? null : makeBVH(mesh);
   const ray = new Ray();
-  const out: MeshData[] = [];
-  const above = 1;
-  for (const c of plan.centers) {
-    let d = depth;
-    if (bvh) {
-      const eps = 0.01;
-      ray.origin.set(c[0] - n[0] * eps, c[1] - n[1] * eps, c[2] - n[2] * eps);
-      ray.direction.set(-n[0], -n[1], -n[2]);
-      const hit = bvh.raycastFirst(ray, DoubleSide);
-      d = hit ? hit.distance + eps : 10;
-    }
-    const base: Vec3 = [c[0] + n[0] * above, c[1] + n[1] * above, c[2] + n[2] * above];
-    const poly = regularPolygon(0, 0, plan.radius, plan.sides, plan.rotation);
-    out.push(extrudePolygon(base, plan.u, plan.v, [-n[0], -n[1], -n[2]], poly, above + d + 1));
-  }
-  return out;
+  return plan.centers.map((c) => holeCutter(c, n, plan.u, plan.v, plan.radius, exitRatio, plan.sides, plan.rotation, measureDepth(bvh, c, n, depth, ray)));
 }

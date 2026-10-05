@@ -27,3 +27,7 @@ export * from './intersect';
 export * from './shells';
 export * from './align';
 export * from './props';
+export * from './measure3d';
+export * from './label';
+export * from './texture';
+export * from './arrange';

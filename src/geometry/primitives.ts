@@ -65,16 +65,29 @@ export function cylinderMesh(base: Vec3, axis: Vec3, radius: number, length: num
  * [x0,y0,...]) placed at `base` along `axis` by `length`. The result is a
  * closed, outward-oriented solid regardless of frame handedness.
  */
-export function extrudePolygon(base: Vec3, u: Vec3, v: Vec3, axis: Vec3, pts: ArrayLike<number>, length: number): MeshData {
+export function extrudePolygon(
+  base: Vec3,
+  u: Vec3,
+  v: Vec3,
+  axis: Vec3,
+  pts: ArrayLike<number>,
+  length: number,
+  /** polygon scale at the far end (1 = prism, otherwise a frustum scaled about the polygon centroid) */
+  endScale = 1,
+): MeshData {
   const n = pts.length / 2;
   const al = Math.hypot(axis[0], axis[1], axis[2]) || 1;
   const ax: Vec3 = [(axis[0] / al) * length, (axis[1] / al) * length, (axis[2] / al) * length];
   const positions = new Float32Array((n * 2 + 2) * 3);
   let cx = 0, cy = 0;
   for (let i = 0; i < n; i++) {
-    const x = pts[i * 2], y = pts[i * 2 + 1];
-    cx += x / n; cy += y / n;
+    cx += pts[i * 2] / n;
+    cy += pts[i * 2 + 1] / n;
+  }
+  for (let i = 0; i < n; i++) {
     for (let k = 0; k < 2; k++) {
+      const sc = k === 0 ? 1 : endScale;
+      const x = cx + (pts[i * 2] - cx) * sc, y = cy + (pts[i * 2 + 1] - cy) * sc;
       const o = (i * 2 + k) * 3;
       positions[o] = base[0] + u[0] * x + v[0] * y + ax[0] * k;
       positions[o + 1] = base[1] + u[1] * x + v[1] * y + ax[1] * k;
