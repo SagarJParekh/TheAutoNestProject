@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type {
-  AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, Job, Notice, Part, PickMode, PlaneSettings, Preview,
-  ToolId, ToolSettings, Transform,
+  AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, IntersectionEntry, Job, Notice, Part, PickMode, PickSlot, PlaneSettings,
+  Preview, RepairTab, ToolId, ToolSettings, Transform,
 } from './types';
 import type { MeshData } from '../geometry';
 
@@ -25,7 +25,12 @@ export interface AppState {
   clip: PlaneSettings;
   cutPlane: PlaneSettings;
   pickMode: PickMode;
+  pickSlot: PickSlot;
   faceSelection: FaceSelection | null;
+  /** face picks used by the repair tabs (normals, align, props) */
+  facePicks: Partial<Record<Exclude<PickSlot, 'primary'>, FaceSelection>>;
+  repairTab: RepairTab;
+  intersections: Record<string, IntersectionEntry>;
   preview: Preview | null;
   analysis: Record<string, AnalysisEntry>;
   settings: ToolSettings;
@@ -54,16 +59,26 @@ export const useStore = create<AppState>(() => ({
   clip: defaultPlane('z'),
   cutPlane: defaultPlane('z'),
   pickMode: null,
+  pickSlot: 'primary',
   faceSelection: null,
+  facePicks: {},
+  repairTab: 'fix',
+  intersections: {},
   preview: null,
   analysis: {},
   settings: {
-    repair: { removeSmallShells: false, smallShellRatio: 0.01, weldTolerance: 0, fillHoles: true },
+    repair: { removeSmallShells: false, smallShellRatio: 0.01, weldTolerance: 0, fillHoles: true, stitch: true },
     hollow: { thickness: 2, quality: 'normal', drainDiameter: 4, drainHoles: [] },
     perforate: { pattern: 'round', size: 4, spacing: 2, margin: 2, depth: 0, angle: 0, angleTolerance: 2 },
     extrude: { distance: 5, angleTolerance: 2 },
     cut: { gap: 0 },
     highlight: { open: true, nonManifold: true, flipped: true, holeIndex: null },
+    stitch: { tolerance: 0 },
+    normals: { show: false },
+    solid: { voxelSize: 0 },
+    boolean: { op: 'union' },
+    align: { mode: 'mate', offset: 0, center: true },
+    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false },
   },
   jobs: [],
   notices: [],

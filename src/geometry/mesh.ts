@@ -95,6 +95,27 @@ export function subsetTriangles(mesh: MeshData, keep: (tri: number) => boolean):
   return compactMesh({ positions: mesh.positions, indices: tmp.slice(0, n) });
 }
 
+/** Drop the listed triangles (and unused vertices). */
+export function removeTriangles(mesh: MeshData, tris: Uint32Array): MeshData {
+  if (tris.length === 0) return mesh;
+  const drop = new Uint8Array(triangleCount(mesh));
+  for (let i = 0; i < tris.length; i++) drop[tris[i]] = 1;
+  return subsetTriangles(mesh, (t) => !drop[t]);
+}
+
+/** Flip the winding of the listed triangles. */
+export function flipTriangles(mesh: MeshData, tris: Uint32Array): MeshData {
+  if (tris.length === 0) return mesh;
+  const idx = mesh.indices.slice();
+  for (let i = 0; i < tris.length; i++) {
+    const t = tris[i] * 3;
+    const s = idx[t + 1];
+    idx[t + 1] = idx[t + 2];
+    idx[t + 2] = s;
+  }
+  return { positions: mesh.positions, indices: idx };
+}
+
 /** Remove vertices not referenced by any triangle. */
 export function compactMesh(mesh: MeshData): MeshData {
   const nv = vertexCount(mesh);

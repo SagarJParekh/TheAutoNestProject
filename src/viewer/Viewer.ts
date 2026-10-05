@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData } from '../geometry';
+import { faceNormalSegments } from '../geometry/props';
 import type { AppState } from '../state/store';
 import type { Part, Transform, ViewName } from '../state/types';
 import { meshEntry, onMeshEntryChange } from '../state/meshCache';
@@ -584,14 +585,50 @@ export class Viewer {
     // per-part overlays: analysis highlights, face selection
     for (const obj of this.objects.values()) {
       const a = s.analysis[obj.part.id];
-      const analysis = a && a.mesh === obj.part.mesh && s.tool === 'repair' ? a : null;
+      const analysis = a && a.mesh === obj.part.mesh && s.tool === 'repair' && s.repairTab === 'fix' ? a : null;
       const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate') ? s.faceSelection : null;
       const hl = s.settings.highlight;
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}`;
-      if (obj.overlayKey === key && obj.overlay.userData.analysis === analysis && obj.overlay.userData.fs === fs) continue;
+      const inRepair = s.tool === 'repair';
+      const ix = inRepair && s.repairTab === 'fix' ? s.intersections[obj.part.id] : undefined;
+      const inter = ix && ix.mesh === obj.part.mesh ? ix : null;
+      const showNormals = inRepair && s.repairTab === 'fix' && s.settings.normals.show;
+      const picks = inRepair
+        ? (Object.entries(s.facePicks) as [string, NonNullable<AppState['facePicks'][keyof AppState['facePicks']]>][]).filter(
+            ([slot, p]) =>
+              p.partId === obj.part.id &&
+              p.mesh === obj.part.mesh &&
+              ((s.repairTab === 'fix' && slot === 'flip') ||
+                (s.repairTab === 'align' && slot.startsWith('align')) ||
+                (s.repairTab === 'props' && slot.startsWith('props'))),
+          )
+        : [];
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals}|${picks.map(([k, p]) => k + p.seed).join()}`;
+      if (
+        obj.overlayKey === key &&
+        obj.overlay.userData.analysis === analysis &&
+        obj.overlay.userData.fs === fs &&
+        obj.overlay.userData.inter === inter &&
+        obj.overlay.userData.mesh === obj.part.mesh
+      )
+        continue;
       obj.overlayKey = key;
-      obj.overlay.userData = { analysis, fs };
+      obj.overlay.userData = { analysis, fs, inter, mesh: obj.part.mesh };
       disposeChildren(obj.overlay);
+      if (inter) {
+        if (inter.report.intersecting.length) obj.overlay.add(triMesh(obj.part.mesh, inter.report.intersecting, 0xff7a1a));
+        if (inter.report.overlapping.length) obj.overlay.add(triMesh(obj.part.mesh, inter.report.overlapping, 0x22d3ee));
+      }
+      if (showNormals) {
+        const size = obj.mesh.geometry.boundingSphere?.radius ?? 10;
+        obj.overlay.add(lines(faceNormalSegments(obj.part.mesh, Math.max(0.2, size * 0.04), 40000), 0x7dd3fc, false));
+      }
+      for (const [slot, p] of picks) {
+        const color = slot === 'flip' ? 0xd040ff : slot.endsWith('Source') || slot.endsWith('A') ? 0xffd23f : 0x22d3ee;
+        const m = triMesh(obj.part.mesh, p.tris, color);
+        (m.material as MeshBasicMaterial).transparent = true;
+        (m.material as MeshBasicMaterial).opacity = 0.6;
+        obj.overlay.add(m);
+      }
       if (analysis) {
         const h = analysis.report.highlights;
         if (hl.open && h.openEdges.length) obj.overlay.add(lines(h.openEdges, 0xff3b4e, true));

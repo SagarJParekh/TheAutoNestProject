@@ -1,15 +1,42 @@
 import { useEffect } from 'react';
-import { Check, Hint, NumberField, Row, Section } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { AlignTab, CombineTab, FixExtras, PropsTab } from './RepairTabs';
 import { getState, setState, useStore } from '../../state/store';
 import { analyzePart, previewFillHoles, previewRepair } from '../../state/actions';
-import type { Part, ToolSettings } from '../../state/types';
+import type { Part, RepairTab, ToolSettings } from '../../state/types';
 
 export function RepairPanel({ parts }: { parts: Part[] }) {
+  const tab = useStore((s) => s.repairTab);
+  return (
+    <>
+      <div className="repair-tabs">
+        <Segmented<RepairTab>
+          value={tab}
+          onChange={(repairTab) => setState({ repairTab, pickMode: null, preview: null })}
+          options={[
+            { value: 'fix', label: 'Fix' },
+            { value: 'combine', label: 'Combine' },
+            { value: 'align', label: 'Align' },
+            { value: 'props', label: 'Props' },
+          ]}
+        />
+      </div>
+      {tab === 'fix' && <FixTab parts={parts} />}
+      {tab === 'combine' && <CombineTab parts={parts} />}
+      {tab === 'align' && <AlignTab />}
+      {tab === 'props' && <PropsTab />}
+    </>
+  );
+}
+
+function FixTab({ parts }: { parts: Part[] }) {
   const part = parts.length === 1 ? parts[0] : null;
   const entry = useStore((s) => (part ? s.analysis[part.id] : undefined));
   const settings = useStore((s) => s.settings);
   const preview = useStore((s) => s.preview);
   const report = entry && part && entry.mesh === part.mesh ? entry.report : null;
+  const ix = useStore((s) => (part ? s.intersections[part.id] : undefined));
+  const crossing = ix && part && ix.mesh === part.mesh ? ix.report.intersecting.length + ix.report.overlapping.length : 0;
 
   useEffect(() => {
     // analyse automatically for reasonably sized parts
@@ -46,8 +73,12 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
         {!report && <Hint>Run the analysis to find problems.</Hint>}
         {report && (
           <>
-            <div className={`verdict ${report.watertight ? 'ok' : 'bad'}`}>
-              {report.watertight ? 'Watertight — ready to print' : 'Not watertight'}
+            <div className={`verdict ${report.watertight && !crossing ? 'ok' : 'bad'}`}>
+              {!report.watertight
+                ? 'Not watertight'
+                : crossing
+                  ? 'Watertight, but triangles intersect (see below)'
+                  : 'Watertight — ready to print'}
             </div>
             <dl className="info">
               {rowItem('Open edges', report.openEdges, '#ff3b4e')}
@@ -93,6 +124,9 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
       )}
 
       <Section title="Auto repair">
+        <Check checked={settings.repair.stitch} onChange={(stitch) => setRepair({ stitch })}>
+          Stitch cracks
+        </Check>
         <Check checked={settings.repair.fillHoles} onChange={(fillHoles) => setRepair({ fillHoles })}>
           Fill holes
         </Check>
@@ -124,8 +158,9 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
         <button className="btn primary wide" disabled={!!preview || part.locked} onClick={previewRepair}>
           Auto repair…
         </button>
-        <Hint>Welds duplicate vertices, removes degenerate/duplicate triangles, fixes winding, fills holes. Shows a before/after summary before applying.</Hint>
+        <Hint>Welds duplicate vertices, removes degenerate/duplicate triangles, stitches cracks, fixes winding, fills holes. Shows a before/after summary before applying.</Hint>
       </Section>
+      <FixExtras part={part} />
     </>
   );
 }

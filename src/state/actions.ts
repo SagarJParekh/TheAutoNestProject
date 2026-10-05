@@ -269,6 +269,7 @@ export function setTool(tool: ToolId) {
     tool,
     preview: null,
     pickMode: null,
+    pickSlot: 'primary',
     faceSelection: tool === 'extrude' || tool === 'perforate' ? s.faceSelection : null,
     ...extra,
   });
@@ -365,6 +366,8 @@ export async function previewRepair() {
       smallShellRatio: st.smallShellRatio,
       weldTolerance: st.weldTolerance > 0 ? st.weldTolerance : undefined,
       fillHoles: st.fillHoles,
+      stitch: st.stitch,
+      stitchTolerance: getState().settings.stitch.tolerance > 0 ? getState().settings.stitch.tolerance : undefined,
     },
   });
   if (!r) return;
@@ -376,6 +379,7 @@ export async function previewRepair() {
     `Duplicates removed: ${m.duplicatesRemoved}`,
     `Triangles flipped: ${m.trianglesFlipped}`,
     `Holes filled: ${m.holesFilled}`,
+    `Stitched: ${m.stitchedVertices} vertices, ${m.stitchedEdges} T-junctions`,
     `Shells removed: ${m.shellsRemoved}`,
     '—',
     line('Open edges', m.before.openEdges, m.after.openEdges),

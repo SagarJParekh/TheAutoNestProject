@@ -21,7 +21,10 @@ npm run build      # type-check + production build into dist/
 | Transform | Move/rotate gizmos plus numeric fields (simple arithmetic like `25.4*2` works), uniform or per-axis scale (% or target size), mirror X/Y/Z, drop to bed, centre on origin, lay flat by clicking a face. |
 | Clip | Non-destructive section plane on X/Y/Z or a free orientation, with a slider. The section is capped with stencil caps and outlined using the BVH. |
 | Cut | Splits a part along a plane into two closed, capped parts. You can set a gap to push the halves apart. |
-| Repair | Analysis report: open edges, holes, non-manifold edges, flipped, degenerate and duplicate triangles, shells. Problems are highlighted in the viewport. Fill one hole or all of them. One-click auto repair shows a before/after summary. |
+| Repair → Fix | Analysis report: open edges, holes, non-manifold edges, flipped, degenerate and duplicate triangles, shells, with viewport highlights. Fill one hole or all of them. One-click auto repair with a before/after summary. **Stitch** closes cracks (merges nearby open-edge vertices, splits T-junctions). **Overlapping triangles** finds self-intersecting and coplanar doubled triangles (BVH self-test) and removes doubled surfaces. **Normals**: show normal hairs, unify outward, flip all, flip picked faces. |
+| Repair → Combine | Split shells into parts, unify overlapping shells with an exact boolean, or **make solid**: a voxel remesh that turns overlapping, self-intersecting or leaky shells into one watertight solid. Boolean union, subtract and intersect between selected parts (the first selected is the base), or merge parts without a boolean. |
+| Repair → Align | Pick a face on the part to move and a face on a target part. **Mate** (face to face) or **flush** (same direction), with an offset and optional centring. Only the transform changes. |
+| Repair → Props | Pick a start face and a target face (on another part, or another shell of the same part). Cylindrical props are laid out on a grid (diameter, spacing, border margin, max length, embed depth). They are added as a new part, or unioned with the parts into one solid. |
 | Hollow | Inner wall from a voxel signed-distance field plus marching tetrahedra, so it never self-intersects. Drain holes are placed by clicking the surface. |
 | Perforate | Pick a face, then choose round, hex or square holes, size, web spacing, border margin, depth (automatic through-wall or fixed) and rotation. The pattern is previewed on the face and applied as a manifold-3d boolean. |
 | Extrude | Pick a face. The selection grows across neighbours within an angle tolerance. Extrude it out or in by ± mm; side walls are stitched so the part stays watertight. |
@@ -54,7 +57,8 @@ Typed arrays transfer cheaply to and from workers. The main entry points are:
 - `weldVertices`, `compactMesh`, `mergeMeshes`, `applyMatrix`, `mirrorMesh`, `dropToBed`, `centerOnOrigin`, `layFlatQuaternion`
 - `measureMesh`, `meshVolume`, `meshArea`, `computeBounds`
 - `buildTopology`, `findShells`, `analyzeMesh`, `isWatertight`
-- `findBoundaryLoops`, `fillHoles`, `autoRepair`, `fixWinding`, `removeSmallShells`
+- `findBoundaryLoops`, `fillHoles`, `autoRepair`, `fixWinding`, `removeSmallShells`, `stitchBoundaries`, `findIntersections`, `removeOverlappingTriangles`
+- `splitShells`, `unifyShells`, `makeSolid`, `booleanMeshes`, `alignMatrix`, `planProps`
 - `cutMesh` (planar split with caps), `splitByPlaneManifold`, `subtractMeshes`, `unionMeshes` (manifold-3d)
 - `growCoplanarRegion`, `extrudeRegion`
 - `hollowMesh`, `drainHoleCutters`, `signedDistanceGrid`, `marchingTetrahedra`

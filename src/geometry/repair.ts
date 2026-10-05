@@ -1,8 +1,9 @@
-import { MeshData, compactMesh, triangleCount, subsetTriangles, ProgressFn, noProgress } from './mesh';
+import { MeshData, compactMesh, triangleCount, subsetTriangles, ProgressFn, noProgress, removeTriangles, flipTriangles } from './mesh';
 import { weldVertices, defaultWeldTolerance } from './weld';
 import { findDegenerateTriangles, findDuplicateTriangles, findFlippedTriangles, analyzeMesh } from './analysis';
 import { fillHoles, findBoundaryLoops } from './holes';
 import { buildTopology, findShells } from './topology';
+import { stitchBoundaries } from './stitch';
 
 export interface RepairOptions {
   /** weld distance in mm; undefined = automatic (tiny, relative to size) */
@@ -11,6 +12,9 @@ export interface RepairOptions {
   removeDuplicates?: boolean;
   fixWinding?: boolean;
   fillHoles?: boolean;
+  /** close cracks by merging nearby boundary vertices and fixing T-junctions */
+  stitch?: boolean;
+  stitchTolerance?: number;
   /** remove floating shells smaller than `smallShellRatio` of the largest shell's volume */
   removeSmallShells?: boolean;
   smallShellRatio?: number;
@@ -38,6 +42,8 @@ export interface RepairSummary {
   trianglesFlipped: number;
   holesFilled: number;
   shellsRemoved: number;
+  stitchedVertices: number;
+  stitchedEdges: number;
   before: RepairCounts;
   after: RepairCounts;
 }
@@ -56,26 +62,6 @@ export function repairCounts(mesh: MeshData): RepairCounts {
     shells: r.shells,
     watertight: r.watertight,
   };
-}
-
-export function removeTriangles(mesh: MeshData, tris: Uint32Array): MeshData {
-  if (tris.length === 0) return mesh;
-  const drop = new Uint8Array(triangleCount(mesh));
-  for (let i = 0; i < tris.length; i++) drop[tris[i]] = 1;
-  return subsetTriangles(mesh, (t) => !drop[t]);
-}
-
-/** Flip the winding of the listed triangles. */
-export function flipTriangles(mesh: MeshData, tris: Uint32Array): MeshData {
-  if (tris.length === 0) return mesh;
-  const idx = mesh.indices.slice();
-  for (let i = 0; i < tris.length; i++) {
-    const t = tris[i] * 3;
-    const s = idx[t + 1];
-    idx[t + 1] = idx[t + 2];
-    idx[t + 2] = s;
-  }
-  return { positions: mesh.positions, indices: idx };
 }
 
 /** Make winding consistent and outward-facing. Returns number of triangles flipped. */
@@ -121,6 +107,7 @@ export function autoRepair(
     removeDuplicates: true,
     fixWinding: true,
     fillHoles: true,
+    stitch: true,
     removeSmallShells: false,
     smallShellRatio: 0.01,
     ...options,
@@ -148,6 +135,14 @@ export function autoRepair(
     const d = findDuplicateTriangles(mesh);
     duplicatesRemoved = d.length;
     mesh = removeTriangles(mesh, d);
+  }
+  let stitchedVertices = 0, stitchedEdges = 0;
+  if (opts.stitch) {
+    onProgress(0.45, 'Stitching cracks');
+    const r = stitchBoundaries(mesh, opts.stitchTolerance);
+    mesh = r.mesh;
+    stitchedVertices = r.mergedVertices;
+    stitchedEdges = r.splitEdges;
   }
   let trianglesFlipped = 0;
   if (opts.fixWinding) {
@@ -191,6 +186,8 @@ export function autoRepair(
       trianglesFlipped,
       holesFilled,
       shellsRemoved,
+      stitchedVertices,
+      stitchedEdges,
       before,
       after,
     },

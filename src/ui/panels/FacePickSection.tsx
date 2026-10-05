@@ -8,7 +8,7 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' }) {
   const tol = useStore((s) => s.settings[tool].angleTolerance);
   return (
     <>
-      <button className={`btn wide ${pickMode === 'face' ? 'primary' : ''}`} onClick={() => setState({ pickMode: pickMode === 'face' ? null : 'face' })}>
+      <button className={`btn wide ${pickMode === 'face' ? 'primary' : ''}`} onClick={() => setState({ pickMode: pickMode === 'face' ? null : 'face', pickSlot: 'primary' })}>
         {pickMode === 'face' ? 'Click a face in the viewport…' : fs ? 'Pick another face' : 'Pick face…'}
       </button>
       {fs && (

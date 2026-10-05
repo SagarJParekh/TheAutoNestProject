@@ -199,3 +199,13 @@ kbd { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4
   .app { grid-template-columns: 1fr; grid-template-rows: 46px 1fr 180px 220px 26px; grid-template-areas: 'tb' 'center' 'left' 'right' 'sb'; }
   .panel.left, .panel.right { border: 0; border-top: 1px solid var(--line); }
 }
+
+/* repair tabs */
+.repair-tabs { padding: 10px 12px 0; }
+.repair-tabs .segmented { width: 100%; display: grid; grid-template-columns: repeat(4, 1fr); }
+.pick-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pick-row .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-grid.two .btn:last-child { grid-column: auto; }
+.operand-list { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.operand-list li { display: list-item; }
+.operand-list .dot { margin-right: 4px; }

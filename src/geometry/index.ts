@@ -22,3 +22,8 @@ export * from './sdf';
 export * from './marching';
 export * from './triangulate';
 export * from './manifold';
+export * from './stitch';
+export * from './intersect';
+export * from './shells';
+export * from './align';
+export * from './props';

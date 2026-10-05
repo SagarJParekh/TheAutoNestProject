@@ -133,3 +133,37 @@ export async function splitByPlaneManifold(
     man.delete();
   }
 }
+
+export type BooleanOp = 'union' | 'subtract' | 'intersect';
+
+/** Boolean of a base mesh with one or more others (subtract/intersect apply each in turn). */
+export async function booleanMeshes(op: BooleanOp, base: MeshData, others: MeshData[]): Promise<MeshData> {
+  const wasm = await getManifold();
+  const all: Manifold[] = [];
+  try {
+    const a = await toManifold(base);
+    if (!a) throw new NotManifoldError('The first part');
+    all.push(a);
+    for (const o of others) {
+      const m = await toManifold(o);
+      if (!m) throw new NotManifoldError('One of the parts');
+      all.push(m);
+    }
+    let res: Manifold;
+    if (op === 'union') res = wasm.Manifold.union(all);
+    else if (op === 'subtract') res = wasm.Manifold.difference(all);
+    else {
+      res = all[0];
+      for (const m of all.slice(1)) {
+        const next = res.intersect(m);
+        if (!all.includes(res)) res.delete();
+        res = next;
+      }
+    }
+    const out = fromManifold(res);
+    if (!all.includes(res)) res.delete();
+    return out;
+  } finally {
+    all.forEach((m) => m.delete());
+  }
+}

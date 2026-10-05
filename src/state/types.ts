@@ -1,4 +1,6 @@
-import type { MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan } from '../geometry';
+import type {
+  MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
+} from '../geometry';
 
 export interface Transform {
   /** mm */
@@ -77,6 +79,8 @@ export interface FaceSelection {
   normal: Vec3;
   centroid: Vec3;
   area: number;
+  /** the mesh the triangle ids refer to (a pick goes stale when the part's mesh changes) */
+  mesh?: MeshData;
 }
 
 export interface AnalysisEntry {
@@ -91,13 +95,29 @@ export interface DrainHolePick {
 
 export type PickMode = null | 'layflat' | 'face' | 'drain';
 
+/** Which face slot a 'face' pick fills: the extrude/perforate selection or one of the repair picks. */
+export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip';
+
+export type RepairTab = 'fix' | 'combine' | 'align' | 'props';
+
+export interface IntersectionEntry {
+  mesh: MeshData;
+  report: IntersectionReport;
+}
+
 export interface ToolSettings {
-  repair: { removeSmallShells: boolean; smallShellRatio: number; weldTolerance: number; fillHoles: boolean };
+  repair: { removeSmallShells: boolean; smallShellRatio: number; weldTolerance: number; fillHoles: boolean; stitch: boolean };
   hollow: { thickness: number; quality: 'draft' | 'normal' | 'fine'; drainDiameter: number; drainHoles: DrainHolePick[] };
   perforate: PerforationParams & { angleTolerance: number };
   extrude: { distance: number; angleTolerance: number };
   cut: { gap: number };
   highlight: { open: boolean; nonManifold: boolean; flipped: boolean; holeIndex: number | null };
+  stitch: { tolerance: number };
+  normals: { show: boolean };
+  solid: { voxelSize: number };
+  boolean: { op: BooleanOp };
+  align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
+  props: PropParams & { merge: boolean };
 }
 
-export type { RepairSummary, PerforationPlan };
+export type { RepairSummary, PerforationPlan, BooleanOp };

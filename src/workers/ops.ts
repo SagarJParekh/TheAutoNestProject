@@ -143,6 +143,63 @@ export const ops = {
     return { result: { mesh, holes: plan.centers.length }, transfer: meshBuffers(mesh) };
   },
 
+  async stitch(args: { mesh: MeshData; tolerance?: number }, progress: Progress): Promise<Result<G.StitchResult>> {
+    progress(0.2, 'Stitching');
+    const r = G.stitchBoundaries(args.mesh, args.tolerance);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async intersections(args: { mesh: MeshData }, progress: Progress): Promise<Result<G.IntersectionReport>> {
+    progress(0.05, 'Building BVH');
+    const r = G.findIntersections(args.mesh, 500000, progress);
+    return { result: r, transfer: [r.intersecting.buffer, r.overlapping.buffer, r.overlapPairs.buffer] as ArrayBuffer[] };
+  },
+
+  async removeOverlaps(args: { mesh: MeshData }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number }>> {
+    progress(0.1, 'Finding overlaps');
+    const r = G.removeOverlappingTriangles(args.mesh, G.findIntersections(args.mesh, 500000, (f, m) => progress(f * 0.9, m)));
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async fixWinding(args: { mesh: MeshData }, progress: Progress): Promise<Result<{ mesh: MeshData; flipped: number }>> {
+    progress(0.2, 'Orienting normals');
+    const r = G.fixWinding(args.mesh);
+    return { result: r, transfer: r.flipped ? meshBuffers(r.mesh) : [] };
+  },
+
+  async splitShells(args: { mesh: MeshData }, progress: Progress): Promise<Result<MeshData[]>> {
+    progress(0.2, 'Splitting shells');
+    const r = G.splitShells(args.mesh);
+    return { result: r, transfer: r.length > 1 ? r.flatMap(meshBuffers) : [] };
+  },
+
+  async unifyShells(args: { mesh: MeshData }, progress: Progress): Promise<Result<{ mesh: MeshData; shells: number }>> {
+    progress(0.2, 'Boolean union of shells');
+    const r = await G.unifyShells(args.mesh);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async makeSolid(args: { mesh: MeshData; voxelSize?: number }, progress: Progress): Promise<Result<{ mesh: MeshData; voxelSize: number }>> {
+    const h = args.voxelSize && args.voxelSize > 0 ? args.voxelSize : G.chooseSolidVoxel(args.mesh);
+    const mesh = G.makeSolid(args.mesh, h, progress);
+    return { result: { mesh, voxelSize: h }, transfer: meshBuffers(mesh) };
+  },
+
+  async boolean(args: { op: G.BooleanOp; base: MeshData; others: MeshData[] }, progress: Progress): Promise<Result<MeshData>> {
+    progress(0.2, `Boolean ${args.op}`);
+    const m = await G.booleanMeshes(args.op, args.base, args.others);
+    return { result: m, transfer: meshBuffers(m) };
+  },
+
+  async props(
+    args: { source: MeshData; tris: Uint32Array; target: MeshData; params: G.PropParams; towards?: Vec3 },
+    progress: Progress,
+  ): Promise<Result<G.PropPlan>> {
+    progress(0.2, 'Placing props');
+    const r = G.planProps(args.source, args.tris, args.target, args.params, args.towards);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
   async export(args: { format: ExportFormat; items: ExportItem[]; zip: boolean }, progress: Progress): Promise<Result<Uint8Array>> {
     progress(0.2, 'Writing file');
     const bytes = args.zip ? exportZip(args.format, args.items) : exportMeshes(args.format, args.items);
