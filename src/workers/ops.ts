@@ -9,7 +9,7 @@ import * as G from '../geometry';
 import type { MeshData, Plane, Vec3 } from '../geometry';
 import { importFile, PreparedBody } from '../loaders/pipeline';
 import type { CadQuality } from '../loaders/types';
-import { exportMeshes, exportZip, ExportFormat, ExportItem } from '../exporters';
+import { exportMeshes, exportZip, ExportFormat, ExportItem, ExportOptions } from '../exporters';
 
 export type Progress = (fraction: number, message?: string) => void;
 
@@ -331,10 +331,31 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
   },
 
-  async export(args: { format: ExportFormat; items: ExportItem[]; zip: boolean }, progress: Progress): Promise<Result<Uint8Array>> {
-    progress(0.2, 'Writing file');
-    const bytes = args.zip ? exportZip(args.format, args.items) : exportMeshes(args.format, args.items);
-    return { result: bytes, transfer: [bytes.buffer as ArrayBuffer] };
+  async export(
+    args: { format: ExportFormat; items: ExportItem[]; zip: boolean; quality?: number; options?: ExportOptions },
+    progress: Progress,
+  ): Promise<Result<{ bytes: Uint8Array; trianglesBefore: number; trianglesAfter: number }>> {
+    const ratio = args.quality ?? 1;
+    let before = 0, after = 0;
+    let items = args.items;
+    if (ratio < 1) {
+      const total = items.reduce((n, it) => n + it.mesh.indices.length, 0) || 1;
+      let done = 0;
+      items = items.map((it) => {
+        const share = it.mesh.indices.length / total;
+        const r = G.simplifyMesh(it.mesh, ratio, (f) => progress(0.05 + 0.75 * (done + f * share), 'Reducing triangles'));
+        done += share;
+        before += r.trianglesBefore;
+        after += r.trianglesAfter;
+        return { name: it.name, mesh: r.mesh };
+      });
+    } else {
+      for (const it of items) before += it.mesh.indices.length / 3;
+      after = before;
+    }
+    progress(0.85, 'Writing file');
+    const bytes = args.zip ? exportZip(args.format, items, args.options) : exportMeshes(args.format, items, args.options);
+    return { result: { bytes, trianglesBefore: before, trianglesAfter: after }, transfer: [bytes.buffer as ArrayBuffer] };
   },
 };
 

@@ -207,7 +207,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
             ? `Puts the parts ${al.distance} mm outside the reference's ${al.location} side${al.axis === 'both' ? ', centred on the other axis' : ''}.`
             : `Lines up the ${al.location} edges with the reference.`}
       </Hint>
-      <h4>Array &amp; arrange (2D)</h4>
+      <h4>Array (2D)</h4>
       <Row label="Columns × rows">
         <NumberField value={arr.cols} min={1} max={50} step={1} precision={0} onChange={(cols) => setArr({ cols: Math.round(cols) })} />
         <NumberField value={arr.rows} min={1} max={50} step={1} precision={0} onChange={(rows) => setArr({ rows: Math.round(rows) })} />
@@ -218,12 +218,47 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       <button className="btn wide" disabled={parts.length !== 1 || !!parts[0]?.locked} onClick={arrayParts} title="Copies of the selected part in a grid on the bed">
         Create {arr.cols}×{arr.rows} array
       </button>
-      <Row label="Bed width">
-        <NumberField value={arr.bedWidth} min={10} step={10} suffix="mm" onChange={(bedWidth) => setArr({ bedWidth })} />
+      <h4>Arrange on bed</h4>
+      <Row label="Directions">
+        <div className="btn-row axis-toggles">
+          {(['x', 'y', 'z'] as const).map((a) => {
+            const on = arr.axes.includes(a);
+            return (
+              <button
+                key={a}
+                className={`mini ${on ? 'active' : ''}`}
+                aria-pressed={on}
+                title={`${on ? 'Stop arranging' : 'Arrange'} along ${a.toUpperCase()}`}
+                onClick={() => {
+                  const next = on ? arr.axes.filter((x) => x !== a) : [...arr.axes, a];
+                  if (next.length) setArr({ axes: (['x', 'y', 'z'] as const).filter((x) => next.includes(x)) });
+                }}
+              >
+                {a.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
       </Row>
-      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) in rows on the bed, without overlaps">
-        Arrange on bed
+      <Row label="Bed X × Y">
+        <NumberField value={arr.bedWidth} min={10} step={10} suffix="mm" onChange={(bedWidth) => setArr({ bedWidth })} />
+        <NumberField value={arr.bedDepth} min={10} step={10} suffix="mm" onChange={(bedDepth) => setArr({ bedDepth })} />
+      </Row>
+      <Row label="Bed Z (height)">
+        <NumberField value={arr.bedHeight} min={10} step={10} suffix="mm" onChange={(bedHeight) => setArr({ bedHeight })} />
+      </Row>
+      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) without overlaps along the chosen directions">
+        Arrange along {arr.axes.map((a) => a.toUpperCase()).join(' + ')}
       </button>
+      <Hint>{arrangeHint(arr.axes)}</Hint>
     </Section>
   );
+}
+
+function arrangeHint(axes: ('x' | 'y' | 'z')[]): string {
+  const A = axes.map((a) => a.toUpperCase());
+  if (axes.length === 1) return `One line of parts along ${A[0]}${axes[0] === 'z' ? ', stacked up from the bed' : ''}, spaced by the gap.`;
+  if (axes.length === 2)
+    return `Rows along ${A[0]} up to the bed ${A[0]} size; new rows step along ${A[1]}${axes[1] === 'z' ? ' (stacked)' : ''}.`;
+  return 'Rows along X within the bed width, rows along Y within the bed depth, then full layers stacked along Z.';
 }

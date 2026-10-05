@@ -33,3 +33,4 @@ export * from './texture';
 export * from './arrange';
 export * from './edit';
 export * from './lasso';
+export * from './simplify';

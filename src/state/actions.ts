@@ -567,13 +567,29 @@ export async function previewHollow() {
 
 // ---------------------------------------------------------------- export
 
-export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selected' | 'all', zip: boolean) {
+export interface ExportSettings {
+  /** fraction of triangles to keep, 1 = original */
+  quality?: number;
+  stlAscii?: boolean;
+  /** decimal places for text formats; undefined = full precision */
+  decimals?: number;
+}
+
+export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selected' | 'all', zip: boolean, opts: ExportSettings = {}) {
   const s = getState();
   const parts = scope === 'all' ? s.parts : selectedParts();
   if (!parts.length) return notify('warning', 'Nothing to export');
   const items = parts.map((p) => ({ name: p.name, mesh: worldMesh(p) }));
-  const bytes = await runJob('Exporting', 'export', { format, items, zip });
-  if (!bytes) return;
+  const quality = opts.quality ?? 1;
+  const r = await runJob(quality < 1 ? 'Reducing & exporting' : 'Exporting', 'export', {
+    format,
+    items,
+    zip,
+    quality,
+    options: { stlAscii: opts.stlAscii, decimals: opts.decimals },
+  });
+  if (!r) return;
+  const bytes = r.bytes;
   const base = parts.length === 1 ? parts[0].name.replace(/[^\w.-]+/g, '_') : 'parts';
   const name = zip ? `${base}-${format}.zip` : `${base}.${format}`;
   const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
@@ -583,7 +599,10 @@ export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selecte
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  notify('success', `Exported ${parts.length} part${parts.length > 1 ? 's' : ''} as ${name}`);
+  const tris = r.trianglesAfter < r.trianglesBefore
+    ? ` (${r.trianglesBefore.toLocaleString()} → ${r.trianglesAfter.toLocaleString()} triangles)`
+    : ` (${r.trianglesAfter.toLocaleString()} triangles)`;
+  notify('success', `Exported ${parts.length} part${parts.length > 1 ? 's' : ''} as ${name}${tris}`);
 }
 
 export { matrixOf };

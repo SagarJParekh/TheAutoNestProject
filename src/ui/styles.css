@@ -128,6 +128,8 @@ h2, h3, h4 { margin: 0; font-weight: 600; }
 .btn-grid .btn:last-child { grid-column: 1 / -1; }
 .mini { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; font-size: 12px; }
 .mini:hover:not(:disabled) { border-color: var(--muted); }
+.mini.active { background: var(--accent); border-color: var(--accent); color: #111; }
+.axis-toggles .mini { min-width: 34px; font-weight: 600; }
 
 .info { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
 .info dt { color: var(--muted); display: flex; align-items: center; gap: 6px; }

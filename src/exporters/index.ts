@@ -1,10 +1,48 @@
 import { zipSync, strToU8 } from 'fflate';
 import type { MeshData } from '../geometry';
 
+export interface ExportOptions {
+  /** write ASCII instead of binary STL */
+  stlAscii?: boolean;
+  /** decimal places for text formats (OBJ, 3MF, ASCII STL); undefined = full float precision */
+  decimals?: number;
+}
+
 export interface ExportItem {
   name: string;
   /** world-space mesh (transforms already baked) */
   mesh: MeshData;
+}
+
+/** ASCII STL with one `solid` block per item. */
+export function exportSTLAscii(items: ExportItem[], decimals?: number): Uint8Array {
+  const f = (v: number) => fmt(v, decimals);
+  const out: string[] = [];
+  for (const { name, mesh } of items) {
+    const solid = name.replace(/\s+/g, '_') || 'part';
+    const lines: string[] = [`solid ${solid}`];
+    const p = mesh.positions, idx = mesh.indices;
+    for (let i = 0; i < idx.length; i += 3) {
+      const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
+      const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+      const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nx /= l; ny /= l; nz /= l;
+      lines.push(
+        ` facet normal ${nx.toPrecision(6)} ${ny.toPrecision(6)} ${nz.toPrecision(6)}`,
+        '  outer loop',
+        `   vertex ${f(p[a])} ${f(p[a + 1])} ${f(p[a + 2])}`,
+        `   vertex ${f(p[b])} ${f(p[b + 1])} ${f(p[b + 2])}`,
+        `   vertex ${f(p[c])} ${f(p[c + 1])} ${f(p[c + 2])}`,
+        '  endloop',
+        ' endfacet',
+      );
+    }
+    lines.push(`endsolid ${solid}`);
+    out.push(lines.join('\n') + '\n');
+  }
+  return strToU8(out.join(''));
 }
 
 /** Binary STL containing all items. */
@@ -41,13 +79,13 @@ export function exportSTL(items: ExportItem[]): Uint8Array {
 }
 
 /** Wavefront OBJ, one `o` block per item. */
-export function exportOBJ(items: ExportItem[]): Uint8Array {
+export function exportOBJ(items: ExportItem[], decimals?: number): Uint8Array {
   const parts: string[] = ['# Exported by AutoNest Mesh Prep (units: mm)\n'];
   let base = 1;
   for (const { name, mesh } of items) {
     const lines: string[] = [`o ${name.replace(/\s+/g, '_')}`];
     const p = mesh.positions;
-    for (let i = 0; i < p.length; i += 3) lines.push(`v ${fmt(p[i])} ${fmt(p[i + 1])} ${fmt(p[i + 2])}`);
+    for (let i = 0; i < p.length; i += 3) lines.push(`v ${fmt(p[i], decimals)} ${fmt(p[i + 1], decimals)} ${fmt(p[i + 2], decimals)}`);
     const idx = mesh.indices;
     for (let i = 0; i < idx.length; i += 3) lines.push(`f ${idx[i] + base} ${idx[i + 1] + base} ${idx[i + 2] + base}`);
     base += p.length / 3;
@@ -56,8 +94,15 @@ export function exportOBJ(items: ExportItem[]): Uint8Array {
   return strToU8(parts.join(''));
 }
 
-function fmt(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toPrecision(9).replace(/\.?0+$/, '');
+function fmt(v: number, decimals?: number): string {
+  if (Number.isInteger(v)) return String(v);
+  if (decimals === undefined) return trimZeros(v.toPrecision(9));
+  const s = trimZeros(v.toFixed(decimals));
+  return s === '-0' ? '0' : s;
+}
+
+function trimZeros(s: string): string {
+  return s.includes('.') && !s.includes('e') ? s.replace(/\.?0+$/, '') : s;
 }
 
 function xmlEscape(s: string): string {
@@ -65,14 +110,14 @@ function xmlEscape(s: string): string {
 }
 
 /** 3MF package with one object + build item per part. */
-export function export3MF(items: ExportItem[]): Uint8Array {
+export function export3MF(items: ExportItem[], decimals?: number): Uint8Array {
   const objs: string[] = [];
   const build: string[] = [];
   items.forEach(({ name, mesh }, i) => {
     const id = i + 1;
     const v: string[] = [];
     const p = mesh.positions;
-    for (let k = 0; k < p.length; k += 3) v.push(`<vertex x="${fmt(p[k])}" y="${fmt(p[k + 1])}" z="${fmt(p[k + 2])}"/>`);
+    for (let k = 0; k < p.length; k += 3) v.push(`<vertex x="${fmt(p[k], decimals)}" y="${fmt(p[k + 1], decimals)}" z="${fmt(p[k + 2], decimals)}"/>`);
     const t: string[] = [];
     const idx = mesh.indices;
     for (let k = 0; k < idx.length; k += 3) t.push(`<triangle v1="${idx[k]}" v2="${idx[k + 1]}" v3="${idx[k + 2]}"/>`);
@@ -105,19 +150,19 @@ export function export3MF(items: ExportItem[]): Uint8Array {
 
 export type ExportFormat = 'stl' | '3mf' | 'obj';
 
-export function exportMeshes(format: ExportFormat, items: ExportItem[]): Uint8Array {
+export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: ExportOptions = {}): Uint8Array {
   switch (format) {
     case 'stl':
-      return exportSTL(items);
+      return opts.stlAscii ? exportSTLAscii(items, opts.decimals) : exportSTL(items);
     case 'obj':
-      return exportOBJ(items);
+      return exportOBJ(items, opts.decimals);
     case '3mf':
-      return export3MF(items);
+      return export3MF(items, opts.decimals);
   }
 }
 
 /** Separate files, one per item, zipped together. */
-export function exportZip(format: ExportFormat, items: ExportItem[]): Uint8Array {
+export function exportZip(format: ExportFormat, items: ExportItem[], opts: ExportOptions = {}): Uint8Array {
   const files: Record<string, Uint8Array> = {};
   const used = new Set<string>();
   for (const it of items) {
@@ -125,7 +170,7 @@ export function exportZip(format: ExportFormat, items: ExportItem[]): Uint8Array
     let n = 1;
     while (used.has(base)) base = `${it.name.replace(/[^\w.-]+/g, '_')}_${++n}`;
     used.add(base);
-    files[`${base}.${format}`] = exportMeshes(format, [it]);
+    files[`${base}.${format}`] = exportMeshes(format, [it], opts);
   }
   return zipSync(files, { level: 0 });
 }

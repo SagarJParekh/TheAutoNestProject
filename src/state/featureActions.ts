@@ -3,7 +3,7 @@
  * texturing, 2D arrays/arrangement and mirror copies.
  */
 import { Matrix3, Matrix4, Vector3 } from 'three';
-import { arrangeShelves, cylinderMesh, gridArrayOffsets, mirrorMesh, pointHoleOutlines } from '../geometry';
+import { arrangeBoxes, cylinderMesh, gridArrayOffsets, mirrorMesh, pointHoleOutlines } from '../geometry';
 import type { Heightmap, MeshData, Vec3 } from '../geometry';
 import { commit, getState, notify, partById, selectedParts, setState } from './store';
 import type { FaceSelection, Part, PointPick, PointSlot } from './types';
@@ -306,28 +306,32 @@ export function arrangeOnBed() {
   const sel = selectedParts();
   const parts = (sel.length > 1 ? sel : s.parts).filter((p) => !p.locked && p.visible);
   if (!parts.length) return notify('warning', 'Nothing to arrange');
+  const { axes, bedWidth, bedDepth, bedHeight, gap } = s.settings.arrange;
+  if (!axes.length) return notify('warning', 'Choose at least one direction (X, Y or Z)');
   const boxes = new Map(parts.map((p) => [p.id, worldBounds(p)]));
-  const { placements, width, depth } = arrangeShelves(
+  const { placements, size, overflow } = arrangeBoxes(
     parts.map((p) => {
       const b = boxes.get(p.id)!;
-      return { id: p.id, w: b.max.x - b.min.x, d: b.max.y - b.min.y };
+      return { id: p.id, size: [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z] as [number, number, number] };
     }),
-    s.settings.arrange.bedWidth,
-    s.settings.arrange.gap,
+    axes,
+    [bedWidth, bedDepth, bedHeight],
+    gap,
   );
-  const at = new Map(placements.map((pl) => [pl.id, pl]));
+  const at = new Map(placements.map((pl) => [pl.id, pl.min]));
   commit(
-    'Arrange on bed',
+    `Arrange on bed (${axes.join('').toUpperCase()})`,
     s.parts.map((p) => {
-      const pl = at.get(p.id);
-      if (!pl) return p;
+      const m = at.get(p.id);
+      if (!m) return p;
       const b = boxes.get(p.id)!;
       const pos = p.transform.position;
-      return { ...p, transform: { ...p.transform, position: [pos[0] + pl.x - b.min.x, pos[1] + pl.y - b.min.y, pos[2] - b.min.z] as Vec3 } };
+      return { ...p, transform: { ...p.transform, position: [pos[0] + m[0] - b.min.x, pos[1] + m[1] - b.min.y, pos[2] + m[2] - b.min.z] as Vec3 } };
     }),
   );
   viewerApi.current?.fitView();
-  notify('info', `Arranged ${parts.length} parts in ${width.toFixed(0)} × ${depth.toFixed(0)} mm`);
+  const dims = size.map((v) => v.toFixed(0)).join(' × ');
+  notify(overflow ? 'warning' : 'info', `Arranged ${parts.length} parts in ${dims} mm${overflow ? ' — larger than the bed' : ''}`);
 }
 
 /** Mirrored copies placed next to the originals along the mirror axis. */

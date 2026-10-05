@@ -66,6 +66,17 @@ export function buildCommands(): Command[] {
     { id: 'align-part', label: 'Align parts to a reference part', group: 'Transform', keywords: 'left right front back centre distance', run: () => { setTool('transform'); alignToReference(); } },
     { id: 'array', label: 'Create 2D array of copies', group: 'Transform', keywords: 'grid pattern copies duplicate', run: () => { setTool('transform'); arrayParts(); } },
     { id: 'arrange', label: 'Arrange parts on bed', group: 'Transform', keywords: 'layout pack nest 2d', run: arrangeOnBed },
+    ...(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'] as const).map((ax) => ({
+      id: `arrange-${ax}`,
+      label: `Arrange on bed along ${ax.toUpperCase().split('').join(' + ')}`,
+      group: 'Transform',
+      keywords: 'layout pack nest stack direction axis',
+      run: () => {
+        const st = getState();
+        setState({ settings: { ...st.settings, arrange: { ...st.settings.arrange, axes: ax.split('') as ('x' | 'y' | 'z')[] } } });
+        arrangeOnBed();
+      },
+    })),
     { id: 'align-tool', label: 'Align by faces (mate / flush)', group: 'Transform', keywords: 'mate flush face', shortcut: 'A', run: tool('align') },
     // view
     { id: 'fit', label: 'Fit all to view', group: 'View', keywords: 'zoom extents', shortcut: 'Home', run: () => viewerApi.current?.fitView() },
