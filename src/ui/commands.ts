@@ -12,7 +12,7 @@ import {
   splitShellsToParts, unifyNormals, previewCleanTriangles, previewFixNonManifold,
 } from '../state/repairActions';
 import { alignToReference, arrangeOnBed, arrayParts } from '../state/featureActions';
-import { loadShells, previewFixOpenEdges, startLasso } from '../state/editActions';
+import { growMarked, invertMarked, loadShells, previewFixOpenEdges, previewRemesh, startLasso, startPolyline } from '../state/editActions';
 import { viewerApi } from '../viewer/api';
 import type { DisplayMode, MeasureMode, RepairTab, ToolId } from '../state/types';
 
@@ -90,6 +90,9 @@ export function buildCommands(): Command[] {
     { id: 'disp-wire', label: 'Display: wireframe', group: 'View', keywords: 'mesh triangles', run: display('wireframe') },
     { id: 'disp-xray', label: 'Display: x-ray', group: 'View', keywords: 'transparent see through', run: display('xray') },
     // tools
+    { id: 'dimensions', label: 'Dimensions (bounding box on the part + all info)', group: 'Tools', keywords: 'size bounding box info measure', shortcut: 'I', run: tool('dimensions') },
+    { id: 'report', label: 'Parts report (copy to Excel)', group: 'Tools', keywords: 'table volume list export excel csv', shortcut: 'N', run: tool('report') },
+    { id: 'orient-colors', label: 'Colour triangles by orientation (normal / inverted)', group: 'Repair', keywords: 'normals inverted flipped back faces colours', run: () => setState((s) => ({ settings: { ...s.settings, normals: { ...s.settings.normals, orientation: !s.settings.normals.orientation } } })) },
     { id: 'clip', label: 'Section clip (inspect inside)', group: 'Tools', keywords: 'section plane cross-section', shortcut: 'C', run: tool('clip') },
     { id: 'cut', label: 'Cut with a plane', group: 'Tools', keywords: 'split slice angle tilt', shortcut: 'X', run: tool('cut', {}) },
     { id: 'lasso', label: 'Lasso cut (freehand)', group: 'Tools', keywords: 'cut split draw outline', run: () => { setTool('cut'); setState((s) => ({ settings: { ...s.settings, cutMode: 'lasso' } })); startLasso(); } },
@@ -127,7 +130,17 @@ export function buildCommands(): Command[] {
     { id: 'subtract', label: 'Boolean subtract', group: 'Repair', keywords: 'difference minus remove', run: boolOp('subtract') },
     { id: 'intersect', label: 'Boolean intersect', group: 'Repair', keywords: 'common overlap', run: boolOp('intersect') },
     { id: 'merge', label: 'Merge parts (no boolean)', group: 'Repair', keywords: 'combine group', run: repair('combine', mergeSelectedParts) },
-    { id: 'tri-delete', label: 'Delete triangles (manual)', group: 'Repair', keywords: 'edit remove faces', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'delete' } }, pickMode: 'triangle' }))) },
+    { id: 'mark-triangle', label: 'Mark triangles (click)', group: 'Repair', keywords: 'select delete edit faces', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'triangle' } }, pickMode: 'triangle' }))) },
+    { id: 'mark-plane', label: 'Mark plane', group: 'Repair', keywords: 'select flat coplanar', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'plane' } }, pickMode: 'triangle' }))) },
+    { id: 'mark-surface', label: 'Mark surface', group: 'Repair', keywords: 'select smooth region', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'surface' } }, pickMode: 'triangle' }))) },
+    { id: 'mark-shell', label: 'Mark shell', group: 'Repair', keywords: 'select connected piece', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'shell' } }, pickMode: 'triangle' }))) },
+    { id: 'mark-brush', label: 'Mark with brush', group: 'Repair', keywords: 'paint select', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'brush' } }, pickMode: 'brush' }))) },
+    { id: 'mark-window', label: 'Mark window (rectangle)', group: 'Repair', keywords: 'box select rectangle', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'window' } }, pickMode: 'window' }))) },
+    { id: 'mark-grow', label: 'Grow marked', group: 'Repair', keywords: 'expand selection', run: () => growMarked(1) },
+    { id: 'mark-invert', label: 'Invert marked selection', group: 'Repair', keywords: 'invert selection', run: invertMarked },
+    { id: 'remesh-part', label: 'Remesh whole part', group: 'Repair', keywords: 'isotropic triangles uniform quality', run: repair('edit', () => previewRemesh('part')) },
+    { id: 'remesh-marked', label: 'Remesh marked triangles', group: 'Repair', keywords: 'isotropic local', run: repair('edit', () => previewRemesh('marked')) },
+    { id: 'cut-line', label: 'Cut along a drawn line', group: 'Cut', keywords: 'polyline draw step zigzag', run: () => { setTool('cut'); setState((s) => ({ settings: { ...s.settings, cutMode: 'polyline' } })); startPolyline(); } },
     { id: 'tri-create', label: 'Create triangles (manual)', group: 'Repair', keywords: 'edit add face bridge', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'create' } }, pickMode: 'vertex' }))) },
     // help
     { id: 'shortcuts', label: 'Keyboard shortcuts', group: 'Help', shortcut: '?', run: () => setState({ showShortcuts: true }) },

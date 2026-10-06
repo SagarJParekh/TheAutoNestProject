@@ -2,10 +2,10 @@ import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import {
-  clearTriSelection, deleteSelectedTriangles, hoverShell, liveShellView, loadShells, previewFixOpenEdges, selectShells, shellAction,
-  startTriPick, toggleIsolate, toggleShell,
+  clearTriSelection, deleteSelectedTriangles, extractMarked, growMarked, hoverShell, invertMarked, liveShellView, loadShells, markAll, previewFixOpenEdges,
+  previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell,
 } from '../../state/editActions';
-import type { Part } from '../../state/types';
+import type { MarkTool, Part } from '../../state/types';
 
 const fmtVol = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} cm³` : `${v.toFixed(1)} mm³`);
 
@@ -129,66 +129,175 @@ export function ShellsTab({ parts }: { parts: Part[] }) {
 
 // ------------------------------------------------------------------ triangle edit
 
+const MARK_TOOLS: { value: MarkTool; label: string; title: string }[] = [
+  { value: 'triangle', label: 'Triangle', title: 'Mark single triangles by clicking' },
+  { value: 'plane', label: 'Plane', title: 'Mark the flat area around the clicked triangle' },
+  { value: 'surface', label: 'Surface', title: 'Mark the surface around the clicked triangle, up to sharp edges' },
+  { value: 'shell', label: 'Shell', title: 'Mark the whole shell (connected piece) of the clicked triangle' },
+  { value: 'brush', label: 'Brush', title: 'Paint over the surface to mark triangles' },
+  { value: 'window', label: 'Window', title: 'Drag a rectangle to mark the triangles inside it' },
+];
+
+const PICK_FOR: Record<MarkTool, 'triangle' | 'brush' | 'window'> = {
+  triangle: 'triangle',
+  plane: 'triangle',
+  surface: 'triangle',
+  shell: 'triangle',
+  brush: 'brush',
+  window: 'window',
+};
+
 export function TriEditTab({ parts }: { parts: Part[] }) {
   const part = parts.length === 1 ? parts[0] : null;
   const st = useStore((s) => s.settings.triEdit);
   const te = useStore((s) => s.triEdit);
   const pickMode = useStore((s) => s.pickMode);
+  const preview = useStore((s) => s.preview);
   const live = te && part && te.partId === part.id && te.mesh === part.mesh ? te : null;
+  const marked = live?.tris.length ?? 0;
   const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, triEdit: { ...getState().settings.triEdit, ...patch } } });
+  const marking = pickMode === 'triangle' || pickMode === 'brush' || pickMode === 'window';
+  const chooseTool = (markTool: MarkTool) => {
+    set({ markTool });
+    // switch the active pick mode along with the tool
+    if (marking) setState({ pickMode: PICK_FOR[markTool] });
+  };
+  const busy = !!preview || !!part?.locked;
   return (
-    <Section title="Edit triangles">
-      <Segmented
-        value={st.mode}
-        onChange={(mode) => {
-          set({ mode });
-          setState({ pickMode: null });
-          clearTriSelection();
-        }}
-        options={[
-          { value: 'delete', label: 'Delete triangles' },
-          { value: 'create', label: 'Create triangles' },
-        ]}
-      />
-      {st.mode === 'delete' ? (
-        <>
-          <button className={`btn wide ${pickMode === 'triangle' ? 'primary' : ''}`} onClick={() => startTriPick('triangle')}>
-            {pickMode === 'triangle' ? 'Done selecting' : 'Select triangles…'}
-          </button>
-          <Check checked={st.smooth} onChange={(smooth) => set({ smooth })}>
-            Select connected smooth area
-          </Check>
-          {st.smooth && (
-            <Row label="Max crease">
-              <NumberField value={st.angle} min={0} max={89} suffix="°" onChange={(angle) => set({ angle })} />
-            </Row>
-          )}
-          <p className="muted small">{live?.tris.length ? `${live.tris.length.toLocaleString()} triangles selected` : 'Click triangles to select them; click again to deselect.'}</p>
-          <div className="btn-grid two">
-            <button className="btn danger" disabled={!live?.tris.length || part?.locked} onClick={deleteSelectedTriangles}>
-              Delete selected
+    <>
+      <Section title="Edit triangles">
+        <Segmented
+          value={st.mode}
+          onChange={(mode) => {
+            set({ mode });
+            setState({ pickMode: null });
+            clearTriSelection();
+          }}
+          options={[
+            { value: 'mark', label: 'Mark / select' },
+            { value: 'create', label: 'Create triangles' },
+          ]}
+        />
+        {st.mode === 'mark' ? (
+          <>
+            <div className="mark-tools">
+              {MARK_TOOLS.map((m) => (
+                <button key={m.value} className={`mini ${st.markTool === m.value ? 'active' : ''}`} title={m.title} onClick={() => chooseTool(m.value)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            {st.markTool === 'plane' && (
+              <Row label="Normal tolerance">
+                <NumberField value={st.planeAngle} min={0} max={45} step={0.5} suffix="°" onChange={(planeAngle) => set({ planeAngle })} />
+              </Row>
+            )}
+            {st.markTool === 'surface' && (
+              <Row label="Max crease">
+                <NumberField value={st.angle} min={0} max={89} suffix="°" onChange={(angle) => set({ angle })} />
+              </Row>
+            )}
+            {st.markTool === 'brush' && (
+              <Row label="Brush radius">
+                <NumberField value={st.brushRadius} min={0.05} step={0.5} suffix="mm" onChange={(brushRadius) => set({ brushRadius })} />
+              </Row>
+            )}
+            {st.markTool === 'window' && (
+              <Check checked={st.windowThrough} onChange={(windowThrough) => set({ windowThrough })}>
+                Mark through (include hidden triangles)
+              </Check>
+            )}
+            <button className={`btn wide ${marking ? 'primary' : ''}`} disabled={!part} onClick={() => startTriPick(PICK_FOR[st.markTool])}>
+              {marking ? 'Done marking' : `Start marking (${MARK_TOOLS.find((m) => m.value === st.markTool)!.label.toLowerCase()})…`}
             </button>
-            <button className="btn" disabled={!live?.tris.length} onClick={clearTriSelection}>
-              Clear selection
+            <p className="muted small">{marked ? `${marked.toLocaleString()} triangles marked` : 'Nothing marked yet. Ctrl + click / drag unmarks.'}</p>
+            <div className="btn-grid three">
+              <button className="btn" disabled={!marked} onClick={() => growMarked(1)} title="Add the triangles next to the marked area">
+                Grow
+              </button>
+              <button className="btn" disabled={!marked} onClick={shrinkMarked} title="Remove the outer ring of the marked area">
+                Shrink
+              </button>
+              <button className="btn" disabled={!part} onClick={invertMarked} title="Mark everything that is not marked, and unmark the rest">
+                Invert
+              </button>
+              <button className="btn" disabled={!part} onClick={markAll}>
+                All
+              </button>
+              <button className="btn" disabled={!marked} onClick={clearTriSelection}>
+                Clear
+              </button>
+              <button className="btn" disabled={!marked} onClick={extractMarked} title="Copy the marked triangles into a new part">
+                Extract
+              </button>
+            </div>
+            <div className="btn-grid two">
+              <button className="btn danger" disabled={!marked || busy} onClick={deleteSelectedTriangles}>
+                Delete marked
+              </button>
+              <button className="btn" disabled={!marked || busy} onClick={() => previewRemesh('marked')} title="Remesh only the marked area; its border stays attached">
+                Remesh marked
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <button className={`btn wide ${pickMode === 'vertex' ? 'primary' : ''}`} onClick={() => startTriPick('vertex')}>
+              {pickMode === 'vertex' ? 'Done creating' : 'Pick vertices…'}
             </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <button className={`btn wide ${pickMode === 'vertex' ? 'primary' : ''}`} onClick={() => startTriPick('vertex')}>
-            {pickMode === 'vertex' ? 'Done creating' : 'Pick vertices…'}
-          </button>
-          <p className="muted small">
-            {live?.verts.length ? `${live.verts.length} of 3 vertices picked` : 'Click three existing vertices (corners) to add a triangle between them, e.g. across a hole.'}
-          </p>
-          {live?.verts.length ? (
-            <button className="btn" onClick={clearTriSelection}>
-              Restart
-            </button>
-          ) : null}
-        </>
-      )}
-      <Hint>Each delete / create is one undo step (Ctrl+Z). New triangles are wound to match the neighbouring open edges.</Hint>
+            <p className="muted small">
+              {live?.verts.length ? `${live.verts.length} of 3 vertices picked` : 'Click three existing vertices (corners) to add a triangle between them, e.g. across a hole.'}
+            </p>
+            {live?.verts.length ? (
+              <button className="btn" onClick={clearTriSelection}>
+                Restart
+              </button>
+            ) : null}
+          </>
+        )}
+        <Hint>Each delete / create / remesh is one undo step (Ctrl+Z). New triangles are wound to match the neighbouring open edges.</Hint>
+      </Section>
+      <RemeshSection part={part} marked={marked} />
+    </>
+  );
+}
+
+export function RemeshSection({ part, marked }: { part: Part | null; marked: number }) {
+  const st = useStore((s) => s.settings.remesh);
+  const preview = useStore((s) => s.preview);
+  const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, remesh: { ...getState().settings.remesh, ...patch } } });
+  const busy = !!preview || !part || part.locked;
+  return (
+    <Section title="Remesh">
+      <Row label="Edge length">
+        <NumberField value={st.edgeLength} min={0.01} step={0.1} suffix="mm" onChange={(edgeLength) => set({ edgeLength })} />
+        <button
+          className="mini"
+          disabled={!part}
+          onClick={() => set({ edgeLength: Math.round(suggestedEdgeLength(marked ? 'marked' : 'part') * 1000) / 1000 })}
+          title="Use the current average edge length"
+        >
+          Average
+        </button>
+      </Row>
+      <Row label="Keep sharp edges over">
+        <NumberField value={st.featureAngle} min={1} max={180} suffix="°" onChange={(featureAngle) => set({ featureAngle })} />
+      </Row>
+      <Row label="Passes">
+        <NumberField value={st.iterations} min={1} max={20} step={1} precision={0} onChange={(iterations) => set({ iterations: Math.round(iterations) })} />
+      </Row>
+      <div className="btn-grid two">
+        <button className="btn primary" disabled={busy} onClick={() => previewRemesh('part')}>
+          Remesh whole part
+        </button>
+        <button className="btn" disabled={busy || !marked} onClick={() => previewRemesh('marked')}>
+          Remesh marked
+        </button>
+      </div>
+      <Hint>
+        Rebuilds the surface with evenly sized, well-shaped triangles of about the given edge length. Sharp edges, open borders and the border of a marked
+        area stay where they are.
+      </Hint>
     </Section>
   );
 }

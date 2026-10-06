@@ -41,6 +41,8 @@ export interface AppState {
   zoomWindow: boolean;
   /** viewer is in lasso-drawing mode (cut tool) */
   lassoMode: boolean;
+  /** viewer is drawing a polyline for a cut */
+  polyMode: boolean;
   shellView: ShellView | null;
   triEdit: TriEdit | null;
   showSearch: boolean;
@@ -86,6 +88,7 @@ export const useStore = create<AppState>(() => ({
   heightmap: null,
   zoomWindow: false,
   lassoMode: false,
+  polyMode: false,
   shellView: null,
   triEdit: null,
   showSearch: false,
@@ -99,12 +102,12 @@ export const useStore = create<AppState>(() => ({
     cut: { gap: 0 },
     highlight: { open: true, nonManifold: true, flipped: true, holeIndex: null },
     stitch: { tolerance: 0 },
-    normals: { show: false },
+    normals: { show: false, outColor: '#22c55e', inColor: '#ff3b4e', orientation: false, frontColor: '#3fa7ff', backColor: '#ff3b4e' },
     solid: { voxelSize: 0 },
     boolean: { op: 'union' },
     align: { mode: 'mate', offset: 0, center: true },
     props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false, mode: 'single' },
-    label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold' },
+    label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },
     texture: {
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
       scope: 'face', smooth: false, angleTolerance: 2, imageFit: 'fit',
@@ -123,7 +126,8 @@ export const useStore = create<AppState>(() => ({
     align2: { location: 'center', axis: 'both', beside: false, distance: 5 },
     perforateExtra: { keepPlugs: false },
     openEdges: { maxPerimeter: 20 },
-    triEdit: { mode: 'delete', smooth: false, angle: 20 },
+    triEdit: { mode: 'mark', markTool: 'triangle', angle: 20, planeAngle: 2, brushRadius: 3, windowThrough: false },
+    remesh: { edgeLength: 1, iterations: 5, featureAngle: 35 },
     cutMode: 'plane',
   },
   jobs: [],

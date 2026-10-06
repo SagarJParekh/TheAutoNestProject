@@ -7,7 +7,7 @@ import { viewerApi } from '../viewer/api';
 import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOL_KEYS: Record<string, ToolId> = {
-  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure', a: 'align', s: 'props',
+  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure', a: 'align', s: 'props', i: 'dimensions', n: 'report',
 };
 const MODES: DisplayMode[] = ['shaded', 'edges', 'wireframe', 'xray'];
 
@@ -42,6 +42,7 @@ export function useShortcuts(openFile: () => void) {
         case e.key === 'Escape':
           if (s.showExport || s.showShortcuts || s.showSearch) setState({ showExport: false, showShortcuts: false, showSearch: false });
           else if (s.lassoMode) setState({ lassoMode: false });
+          else if (s.polyMode) setState({ polyMode: false });
           else if (s.zoomWindow) setState({ zoomWindow: false });
           else if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length))
             setState({ measurePending: { entities: [], points: [] } });
@@ -51,10 +52,12 @@ export function useShortcuts(openFile: () => void) {
           else setState({ selection: [] });
           break;
         case e.key === 'Enter':
-          if (s.preview) applyPreview();
+          if (s.polyMode) viewerApi.current?.viewer?.finishPolyline();
+          else if (s.preview) applyPreview();
           break;
         case e.key === 'Delete' || e.key === 'Backspace':
-          deleteParts();
+          if (s.polyMode) viewerApi.current?.viewer?.undoPolyPoint();
+          else deleteParts();
           break;
         case e.key === '/':
           setState({ showSearch: true });

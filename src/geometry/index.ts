@@ -34,3 +34,4 @@ export * from './arrange';
 export * from './edit';
 export * from './lasso';
 export * from './simplify';
+export * from './remesh';

@@ -19,6 +19,8 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'align', label: 'Align', icon: Icon.align, key: 'A' },
   { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
+  { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
+  { id: 'report', label: 'Report', icon: Icon.report, key: 'N' },
 ];
 
 export function Toolbar() {

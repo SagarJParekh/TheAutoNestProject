@@ -78,6 +78,40 @@ export function planProps(
 }
 
 /** Short line segments along face normals (xyz xyz), sampling at most maxCount faces. */
+/**
+ * Normal hairs split in two sets: triangles marked in `inward` (e.g. the
+ * flipped triangles from analysis) and all the others.
+ */
+export function faceNormalSegmentsSplit(
+  mesh: MeshData,
+  length: number,
+  inward: ArrayLike<number> | null,
+  maxCount = 60000,
+): { outward: Float32Array; inward: Float32Array } {
+  const all = faceNormalSegments(mesh, length, maxCount);
+  if (!inward || !inward.length) return { outward: all, inward: new Float32Array(0) };
+  const nt = mesh.indices.length / 3;
+  const stride = Math.max(1, Math.ceil(nt / maxCount));
+  const mark = new Uint8Array(nt);
+  for (let i = 0; i < inward.length; i++) mark[inward[i]] = 1;
+  const outA: number[] = [], inA: number[] = [];
+  let k = 0;
+  for (let t = 0; t < nt; t += stride, k++) {
+    const dst = mark[t] ? inA : outA;
+    for (let j = 0; j < 6; j++) dst.push(all[k * 6 + j]);
+  }
+  // flipped triangles may fall between the samples: add them all (up to the budget)
+  if (stride > 1) {
+    for (let i = 0; i < inward.length && inA.length < maxCount * 6; i++) {
+      const t = inward[i];
+      if (t % stride === 0) continue;
+      const seg = faceNormalSegments({ positions: mesh.positions, indices: mesh.indices.subarray(t * 3, t * 3 + 3) }, length, 1);
+      for (let j = 0; j < 6; j++) inA.push(seg[j]);
+    }
+  }
+  return { outward: Float32Array.from(outA), inward: Float32Array.from(inA) };
+}
+
 export function faceNormalSegments(mesh: MeshData, length: number, maxCount = 60000): Float32Array {
   const nt = mesh.indices.length / 3;
   const stride = Math.max(1, Math.ceil(nt / maxCount));

@@ -37,6 +37,8 @@ export const Icon = {
   zoomArea: P(<><rect x="3" y="3" width="12" height="12" rx="1" strokeDasharray="3 2" /><circle cx="16" cy="16" r="3.5" /><path d="m19 19 2.5 2.5" /></>),
   align: P(<><path d="M4 3v18" /><rect x="7" y="6" width="12" height="4" rx="1" /><rect x="7" y="14" width="8" height="4" rx="1" /></>),
   props: P(<><path d="M3 4h18M3 20h18" /><path d="M7 4v16M12 4v16M17 4v16" /></>),
+  dimensions: P(<><rect x="6" y="6" width="12" height="12" rx="1" /><path d="M6 3v2M18 3v2M6 4h12M21 6h-2M21 18h-2M20 6v12" /></>),
+  report: P(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M3 14h18M9 9v11M15 9v11" /></>),
   search: P(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>),
   cube: P(<><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="M3 7l9 5 9-5M12 12v10" /></>),
 };

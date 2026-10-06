@@ -13,6 +13,8 @@ import { MeasurePanel } from './panels/MeasurePanel';
 import { LabelPanel } from './panels/LabelPanel';
 import { TexturePanel } from './panels/TexturePanel';
 import { AlignTab, PropsTab } from './panels/RepairTabs';
+import { DimensionsPanel } from './panels/DimensionsPanel';
+import { ReportPanel } from './panels/ReportPanel';
 
 const TITLES = {
   transform: 'Transform',
@@ -27,6 +29,8 @@ const TITLES = {
   texture: 'Texture',
   align: 'Align',
   props: 'Props',
+  dimensions: 'Dimensions',
+  report: 'Report',
 };
 
 export function PropertiesPanel() {
@@ -60,7 +64,9 @@ export function PropertiesPanel() {
         {tool === 'texture' && <TexturePanel />}
         {tool === 'align' && <AlignTab />}
         {tool === 'props' && <PropsTab />}
-        {parts.length > 0 && <InfoPanel parts={parts} />}
+        {tool === 'dimensions' && <DimensionsPanel parts={parts} />}
+        {tool === 'report' && <ReportPanel />}
+        {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && <InfoPanel parts={parts} />}
       </div>
     </aside>
   );

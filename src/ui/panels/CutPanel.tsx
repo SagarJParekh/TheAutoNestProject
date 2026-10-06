@@ -1,5 +1,5 @@
 import { Hint, NumberField, Row, Section, Segmented } from '../controls';
-import { startLasso } from '../../state/editActions';
+import { startLasso, startPolyline } from '../../state/editActions';
 import { getState, setState, useStore } from '../../state/store';
 import { previewCut } from '../../state/actions';
 import { PlaneControls } from './PlaneControls';
@@ -12,11 +12,39 @@ export function CutPanel({ parts }: { parts: Part[] }) {
   const target = parts.find((p) => !p.locked);
   const mode = useStore((s) => s.settings.cutMode);
   const lassoing = useStore((s) => s.lassoMode);
-  const setMode = (cutMode: 'plane' | 'lasso') => setState({ settings: { ...getState().settings, cutMode }, preview: null, lassoMode: false });
+  const drawing = useStore((s) => s.polyMode);
+  const setMode = (cutMode: 'plane' | 'lasso' | 'polyline') =>
+    setState({ settings: { ...getState().settings, cutMode }, preview: null, lassoMode: false, polyMode: false });
+  const modes = (
+    <Segmented
+      value={mode}
+      onChange={setMode}
+      options={[
+        { value: 'plane', label: 'Plane' },
+        { value: 'polyline', label: 'Draw line' },
+        { value: 'lasso', label: 'Lasso' },
+      ]}
+    />
+  );
+  if (mode === 'polyline')
+    return (
+      <Section title="Cut">
+        {modes}
+        {!target && <Hint>Select one unlocked part to cut.</Hint>}
+        <button className="btn primary wide" disabled={!target || !!preview} onClick={startPolyline}>
+          {drawing ? 'Drawing… (Esc to cancel)' : 'Draw cut line…'}
+        </button>
+        <Hint>
+          Look at the part from the direction you want to cut, then click points to draw a line of straight segments across the whole part (steps,
+          zig-zags, notches…). Hold Shift to snap to 15° angles; Backspace removes the last point; double-click or Enter finishes. The part is split
+          along the line, all the way through along your line of sight. Needs a watertight part.
+        </Hint>
+      </Section>
+    );
   if (mode === 'lasso')
     return (
       <Section title="Cut">
-        <Segmented value={mode} onChange={setMode} options={[{ value: 'plane', label: 'Plane' }, { value: 'lasso', label: 'Lasso' }]} />
+        {modes}
         {!target && <Hint>Select one unlocked part to cut.</Hint>}
         <button className={`btn primary wide ${lassoing ? '' : ''}`} disabled={!target || !!preview} onClick={startLasso}>
           {lassoing ? 'Drawing… (Esc to cancel)' : 'Draw lasso…'}
@@ -29,7 +57,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
     );
   return (
     <Section title="Cut">
-      <Segmented value={mode} onChange={setMode} options={[{ value: 'plane', label: 'Plane' }, { value: 'lasso', label: 'Lasso' }]} />
+      {modes}
       {!target && <Hint>Select one unlocked part to cut.</Hint>}
       <PlaneControls value={plane} parts={target ? [target] : []} onChange={(p) => setState({ cutPlane: p, preview: null })} />
       <Row label="Gap">

@@ -92,8 +92,31 @@ export function FixExtras({ part }: { part: Part }) {
 
       <Section title="Surface normals">
         <Check checked={normals.show} onChange={(show) => setNormals({ show })}>
-          Show normals
+          Show normal arrows
         </Check>
+        {normals.show && (
+          <div className="color-row">
+            <label title="Arrows on correctly oriented triangles (pointing out of the part)">
+              <input type="color" value={normals.outColor} onChange={(e) => setNormals({ outColor: e.target.value })} /> Outward
+            </label>
+            <label title="Arrows on inverted triangles (pointing into the part); needs the analysis above">
+              <input type="color" value={normals.inColor} onChange={(e) => setNormals({ inColor: e.target.value })} /> Inward
+            </label>
+          </div>
+        )}
+        <Check checked={normals.orientation} onChange={(orientation) => setNormals({ orientation })}>
+          Colour triangles by orientation
+        </Check>
+        {normals.orientation && (
+          <div className="color-row">
+            <label title="Front side of triangles: correctly oriented surfaces seen from outside">
+              <input type="color" value={normals.frontColor} onChange={(e) => setNormals({ frontColor: e.target.value })} /> Normal
+            </label>
+            <label title="Back side of triangles: inverted triangles seen from outside">
+              <input type="color" value={normals.backColor} onChange={(e) => setNormals({ backColor: e.target.value })} /> Inverted
+            </label>
+          </div>
+        )}
         <div className="btn-grid two">
           <button className="btn" disabled={part.locked} onClick={unifyNormals} title="Make winding consistent and outward-facing">
             Unify outward
@@ -106,7 +129,10 @@ export function FixExtras({ part }: { part: Part }) {
         <button className="btn wide" disabled={part.locked} onClick={flipPickedFaces}>
           Flip picked faces
         </button>
-        <Hint>Back faces render red, so inverted regions stand out.</Hint>
+        <Hint>
+          Inverted triangles show their back side from outside, so they take the “Inverted” colour (red tint when orientation colours are off). Inward arrows
+          use the flipped-triangle result of the analysis.
+        </Hint>
       </Section>
     </>
   );

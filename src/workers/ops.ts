@@ -331,6 +331,14 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
   },
 
+  async remesh(
+    args: { mesh: MeshData; edgeLength: number; region?: Uint32Array | null; iterations?: number; featureAngle?: number },
+    progress: Progress,
+  ): Promise<Result<G.RemeshResult>> {
+    const r = G.remeshMesh(args.mesh, { edgeLength: args.edgeLength, region: args.region, iterations: args.iterations, featureAngle: args.featureAngle }, progress);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
   async export(
     args: { format: ExportFormat; items: ExportItem[]; zip: boolean; quality?: number; options?: ExportOptions },
     progress: Progress,

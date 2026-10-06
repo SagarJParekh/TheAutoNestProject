@@ -26,7 +26,8 @@ export interface Part {
 }
 
 export type ToolId =
-  | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props';
+  | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
+  | 'dimensions' | 'report';
 
 /** Shell browser state for one part (shell ids index `shells`). */
 export interface ShellView {
@@ -120,7 +121,10 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window';
+
+/** How a click / drag marks triangles in Repair → Edit. */
+export type MarkTool = 'triangle' | 'plane' | 'surface' | 'shell' | 'brush' | 'window';
 
 /** Which face slot a 'face' pick fills: the extrude/perforate selection or one of the repair picks. */
 export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip' | 'texture';
@@ -177,7 +181,17 @@ export interface ToolSettings {
   cut: { gap: number };
   highlight: { open: boolean; nonManifold: boolean; flipped: boolean; holeIndex: number | null };
   stitch: { tolerance: number };
-  normals: { show: boolean };
+  normals: {
+    show: boolean;
+    /** colour of normal hairs on correctly oriented (outward) triangles */
+    outColor: string;
+    /** colour of normal hairs on inverted (inward) triangles */
+    inColor: string;
+    /** colour all parts by orientation: front faces / back faces */
+    orientation: boolean;
+    frontColor: string;
+    backColor: string;
+  };
   solid: { voxelSize: number };
   boolean: { op: BooleanOp };
   align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
@@ -190,8 +204,20 @@ export interface ToolSettings {
   align2: { location: 'center' | 'left' | 'right' | 'front' | 'back'; axis: 'x' | 'y' | 'both'; beside: boolean; distance: number };
   perforateExtra: { keepPlugs: boolean };
   openEdges: { maxPerimeter: number };
-  triEdit: { mode: 'delete' | 'create'; smooth: boolean; angle: number };
-  cutMode: 'plane' | 'lasso';
+  triEdit: {
+    mode: 'mark' | 'create';
+    markTool: MarkTool;
+    /** max crease between neighbours for "mark surface", degrees */
+    angle: number;
+    /** normal tolerance for "mark plane", degrees */
+    planeAngle: number;
+    /** brush radius, mm */
+    brushRadius: number;
+    /** window marking also takes hidden triangles behind the visible surface */
+    windowThrough: boolean;
+  };
+  remesh: { edgeLength: number; iterations: number; featureAngle: number };
+  cutMode: 'plane' | 'lasso' | 'polyline';
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

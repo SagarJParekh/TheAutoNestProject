@@ -204,7 +204,10 @@ export async function previewLabel() {
     label: `${params.mode === 'emboss' ? 'Emboss' : 'Engrave'} “${params.text.replace(/\n/g, ' ')}”`,
     replaces: [w.part.id],
     meshes: [{ name: w.part.name, mesh: r.mesh, color: w.part.color }],
-    summary: [`Size ${params.size} mm, ${params.mode === 'emboss' ? 'height' : 'depth'} ${params.depth} mm`, `Rotation ${params.rotation}°`],
+    summary: [
+      `Size ${params.size} mm, ${params.mode === 'emboss' ? 'height' : 'depth'} ${params.depth} mm`,
+      `Rotation ${params.rotation}°, ${params.conform ? 'follows the surface' : 'flat'}`,
+    ],
     apply: () => {
       replaceWithWorldMeshes(params.mode === 'emboss' ? 'Emboss label' : 'Engrave label', w.part.id, [{ name: w.part.name, mesh: r.mesh, color: w.part.color }]);
       setState({ pointPicks: { ...getState().pointPicks, label: undefined } });

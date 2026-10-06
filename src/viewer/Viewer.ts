@@ -10,14 +10,14 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData, Vec3 } from '../geometry';
-import { faceNormalSegments } from '../geometry/props';
+import { faceNormalSegmentsSplit } from '../geometry/props';
 import type { AppState } from '../state/store';
 import type { Part, Transform, ViewName } from '../state/types';
 import { meshEntry, onMeshEntryChange } from '../state/meshCache';
-import { createPartMaterial } from './materials';
+import { createPartMaterial, orientationUniforms } from './materials';
 import { sectionSegments } from './section';
 import { AxisGizmo } from './axisGizmo';
-import { planeFromSettings, quaternionOf, eulerDegFromQuaternion } from '../state/math';
+import { planeFromSettings, quaternionOf, eulerDegFromQuaternion, worldBounds } from '../state/math';
 
 Mesh.prototype.raycast = acceleratedRaycast;
 
@@ -42,6 +42,12 @@ export interface ViewerCallbacks {
   onZoomDone?: () => void;
   /** called with the lasso outline (client coordinates) when a lasso drag ends */
   onLasso?: (points: [number, number][]) => void;
+  /** brush painting: called for each sample while dragging with the brush mark tool */
+  onBrush?: (info: PickInfo, erase: boolean) => void;
+  /** window marking: rectangle in client coordinates */
+  onRect?: (x0: number, y0: number, x1: number, y1: number, erase: boolean) => void;
+  /** polyline drawing finished: points in client coordinates */
+  onPolyline?: (points: [number, number][]) => void;
 }
 
 interface PartObject {
@@ -84,10 +90,14 @@ export class Viewer {
   private previewGroup = new Group();
   private overlayGroup = new Group();
   private annotGroup = new Group();
+  private dimGroup = new Group();
+  private dimKey: unknown[] = [];
   private hoverGroup = new Group();
   private hoverPending = false;
   private annotKey: unknown[] = [];
-  private zoomRect: { x: number; y: number; div: HTMLDivElement } | null = null;
+  private zoomRect: { x: number; y: number; div: HTMLDivElement; mark?: boolean; erase?: boolean } | null = null;
+  private brushing: { erase: boolean; pending: PointerEvent | null } | null = null;
+  private poly: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement; dots: SVGGElement; cursor: [number, number] | null } | null = null;
   private lasso: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement } | null = null;
   private capsGroup = new Group();
   private objects = new Map<string, PartObject>();
@@ -144,7 +154,7 @@ export class Viewer {
       if (!dragging) this.commitGizmo();
     });
 
-    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup);
+    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup, this.dimGroup);
     this.buildGrid(200);
 
     const el = this.renderer.domElement;
@@ -152,17 +162,26 @@ export class Viewer {
       this.pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
       if (this.state?.zoomWindow && e.button === 0) this.startZoomRect(e);
       else if (this.state?.lassoMode && e.button === 0) this.startLasso(e);
+      else if (this.state?.pickMode === 'window' && e.button === 0) this.startZoomRect(e, true);
+      else if (this.state?.pickMode === 'brush' && e.button === 0) this.startBrush(e);
     });
     el.addEventListener('pointermove', (e) => {
       this.moveZoomRect(e);
       this.moveLasso(e);
+      this.moveBrush(e);
+      this.movePoly(e);
       this.scheduleHover(e.clientX, e.clientY, e.buttons !== 0);
     });
     el.addEventListener('pointerleave', () => this.clearHover());
     el.addEventListener('pointerup', (e) => {
       if (this.zoomRect) return this.endZoomRect(e);
       if (this.lasso) return this.endLasso();
+      if (this.brushing) return this.endBrush();
+      if (this.state?.polyMode) return this.clickPoly(e);
       this.onPointerUp(e);
+    });
+    el.addEventListener('dblclick', () => {
+      if (this.state?.polyMode) this.finishPolyline();
     });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -304,6 +323,11 @@ export class Viewer {
   sync(s: AppState) {
     const prev = this.state;
     this.state = s;
+    if (!s.polyMode && this.poly) this.cancelPolyline();
+    const ns = s.settings.normals;
+    orientationUniforms.uOrient.value = ns.orientation ? 1 : 0;
+    orientationUniforms.uFrontColor.value.set(ns.frontColor);
+    orientationUniforms.uBackColor.value.set(ns.backColor);
     if (!prev || prev.orthographic !== s.orthographic) this.setOrthographic(s.orthographic);
     this.gridGroup.visible = s.showGrid;
 
@@ -332,6 +356,7 @@ export class Viewer {
     this.syncPreview(s);
     this.syncOverlays(s);
     this.syncAnnotations(s);
+    this.syncDimensions(s);
     this.updateGridSize(s);
     this.requestRender();
   }
@@ -429,8 +454,8 @@ export class Viewer {
       lm.clippingPlanes = this.clipPlane ? [this.clipPlane] : null;
     }
 
-    // selection bounding box
-    if (selected && part.visible) {
+    // selection bounding box (the Dimensions tab draws its own exact box)
+    if (selected && part.visible && this.state?.tool !== 'dimensions') {
       if (!obj.selBox) {
         obj.selBox = new Box3Helper(new Box3(), ACCENT);
         (obj.selBox.material as LineBasicMaterial).transparent = true;
@@ -618,6 +643,7 @@ export class Viewer {
       const ix = inRepair && s.repairTab === 'fix' ? s.intersections[obj.part.id] : undefined;
       const inter = ix && ix.mesh === obj.part.mesh ? ix : null;
       const showNormals = inRepair && s.repairTab === 'fix' && s.settings.normals.show;
+      const analysisFor = a;
       const picks = (Object.entries(s.facePicks) as [string, NonNullable<AppState['facePicks'][keyof AppState['facePicks']]>][]).filter(
         ([slot, p]) =>
           p.partId === obj.part.id &&
@@ -629,7 +655,7 @@ export class Viewer {
       );
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? te.tris.length + ':' + te.verts.join(',') : ''}`;
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') : ''}`;
       // isolate: ghost the whole part, the selected shells are drawn as an overlay
       const ghostForShells = !!(sv && sv.isolate && sv.selected.length);
       obj.material.transparent = obj.material.transparent || ghostForShells;
@@ -689,7 +715,12 @@ export class Viewer {
       }
       if (showNormals) {
         const size = obj.mesh.geometry.boundingSphere?.radius ?? 10;
-        obj.overlay.add(lines(faceNormalSegments(obj.part.mesh, Math.max(0.2, size * 0.04), 40000), 0x7dd3fc, false));
+        const nset = s.settings.normals;
+        // inward = triangles that analysis found inverted relative to the outside
+        const flipped = analysisFor && analysisFor.mesh === obj.part.mesh ? analysisFor.report.highlights.flippedTriangles : null;
+        const segs = faceNormalSegmentsSplit(obj.part.mesh, Math.max(0.2, size * 0.04), flipped, 40000);
+        if (segs.outward.length) obj.overlay.add(lines(segs.outward, new Color(nset.outColor).getHex(), false));
+        if (segs.inward.length) obj.overlay.add(lines(segs.inward, new Color(nset.inColor).getHex(), true));
       }
       for (const [slot, p] of picks) {
         const color = slot === 'flip' ? 0xd040ff : slot.endsWith('Source') || slot.endsWith('A') ? 0xffd23f : 0x22d3ee;
@@ -744,7 +775,7 @@ export class Viewer {
     }
     const g = new Group();
     g.userData.toolOverlay = true;
-    if (s.tool === 'cut' && !s.preview && s.settings.cutMode !== 'lasso') {
+    if (s.tool === 'cut' && !s.preview && s.settings.cutMode === 'plane') {
       const target = s.selection.map((id) => this.objects.get(id)).find(Boolean);
       const sphere = target
         ? target.mesh.geometry.boundingSphere!.clone().applyMatrix4(target.group.matrixWorld)
@@ -1238,11 +1269,11 @@ export class Viewer {
 
   // ------------------------------------------------------------------ zoom window
 
-  private startZoomRect(e: PointerEvent) {
+  private startZoomRect(e: PointerEvent, mark = false) {
     const div = document.createElement('div');
-    div.className = 'zoom-rect';
+    div.className = mark ? 'zoom-rect mark-rect' : 'zoom-rect';
     this.container.appendChild(div);
-    this.zoomRect = { x: e.clientX, y: e.clientY, div };
+    this.zoomRect = { x: e.clientX, y: e.clientY, div, mark, erase: e.ctrlKey || e.metaKey };
     this.controls.enabled = false;
     this.moveZoomRect(e);
   }
@@ -1261,8 +1292,181 @@ export class Viewer {
     this.zoomRect = null;
     this.controls.enabled = true;
     const w = Math.abs(e.clientX - z.x), h = Math.abs(e.clientY - z.y);
+    if (z.mark) {
+      if (w > 3 && h > 3) this.cb.onRect?.(Math.min(z.x, e.clientX), Math.min(z.y, e.clientY), Math.max(z.x, e.clientX), Math.max(z.y, e.clientY), !!z.erase || e.ctrlKey || e.metaKey);
+      return;
+    }
     if (w > 6 && h > 6) this.zoomToRect((z.x + e.clientX) / 2, (z.y + e.clientY) / 2, w, h);
     this.cb.onZoomDone?.();
+  }
+
+  // ------------------------------------------------------------------ brush marking
+
+  private startBrush(e: PointerEvent) {
+    const info = this.pick(e.clientX, e.clientY);
+    if (!info) return; // empty space: orbit as usual
+    this.brushing = { erase: e.ctrlKey || e.metaKey, pending: null };
+    this.controls.enabled = false;
+    this.cb.onBrush?.({ ...info, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, clientX: e.clientX, clientY: e.clientY }, this.brushing.erase);
+  }
+
+  private moveBrush(e: PointerEvent) {
+    const b = this.brushing;
+    if (!b) return;
+    const first = !b.pending;
+    b.pending = e;
+    if (!first) return;
+    requestAnimationFrame(() => {
+      const ev = this.brushing?.pending;
+      if (!this.brushing || !ev) return;
+      this.brushing.pending = null;
+      const info = this.pick(ev.clientX, ev.clientY);
+      if (info) this.cb.onBrush?.({ ...info, shift: ev.shiftKey, ctrl: ev.ctrlKey || ev.metaKey, clientX: ev.clientX, clientY: ev.clientY }, this.brushing.erase);
+    });
+  }
+
+  private endBrush() {
+    this.brushing = null;
+    this.controls.enabled = true;
+    this.pointerDown = null;
+  }
+
+  /**
+   * Triangles (local ids) of a part whose centres fall inside a screen
+   * rectangle. Without `through`, only triangles facing the camera and not
+   * hidden behind other surfaces count.
+   */
+  trianglesInRect(partId: string, x0: number, y0: number, x1: number, y1: number, through: boolean): number[] {
+    const o = this.objects.get(partId);
+    if (!o) return [];
+    const cam = this.camera;
+    cam.updateMatrixWorld();
+    o.mesh.updateMatrixWorld();
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const nx0 = ((x0 - rect.left) / rect.width) * 2 - 1, nx1 = ((x1 - rect.left) / rect.width) * 2 - 1;
+    const ny0 = -((y1 - rect.top) / rect.height) * 2 + 1, ny1 = -((y0 - rect.top) / rect.height) * 2 + 1;
+    const mw = o.mesh.matrixWorld;
+    const mvp = new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse).multiply(mw);
+    const e = mvp.elements, w = mw.elements;
+    const mesh = o.part.mesh;
+    const p = mesh.positions, idx = mesh.indices;
+    const nt = idx.length / 3;
+    const camPos = cam.getWorldPosition(new Vector3());
+    const viewDir = new Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new Quaternion()));
+    const ortho = cam === this.ortho;
+    const det = new Matrix3().setFromMatrix4(mw).determinant();
+    const out: number[] = [];
+    const meshes = through ? [] : [...this.objects.values()].filter((x) => x.part.visible).map((x) => x.mesh);
+    const rc = new Raycaster();
+    (rc as unknown as { firstHitOnly: boolean }).firstHitOnly = true;
+    const c = new Vector3(), n = new Vector3(), d = new Vector3();
+    for (let t = 0; t < nt; t++) {
+      const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, cc = idx[t * 3 + 2] * 3;
+      const lx = (p[a] + p[b] + p[cc]) / 3, ly = (p[a + 1] + p[b + 1] + p[cc + 1]) / 3, lz = (p[a + 2] + p[b + 2] + p[cc + 2]) / 3;
+      const cw = e[3] * lx + e[7] * ly + e[11] * lz + e[15];
+      if (cw <= 0) continue;
+      const sx = (e[0] * lx + e[4] * ly + e[8] * lz + e[12]) / cw;
+      const sy = (e[1] * lx + e[5] * ly + e[9] * lz + e[13]) / cw;
+      if (sx < nx0 || sx > nx1 || sy < ny0 || sy > ny1) continue;
+      if (through) {
+        out.push(t);
+        continue;
+      }
+      // world centre and normal
+      c.set(w[0] * lx + w[4] * ly + w[8] * lz + w[12], w[1] * lx + w[5] * ly + w[9] * lz + w[13], w[2] * lx + w[6] * ly + w[10] * lz + w[14]);
+      const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+      const vx = p[cc] - p[a], vy = p[cc + 1] - p[a + 1], vz = p[cc + 2] - p[a + 2];
+      n.set(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx).transformDirection(mw);
+      if (det < 0) n.negate();
+      d.copy(ortho ? viewDir : c.clone().sub(camPos).normalize());
+      if (n.dot(d) >= 0) continue; // facing away
+      const origin = ortho ? c.clone().addScaledVector(viewDir, -1e5) : camPos;
+      const dist = origin.distanceTo(c);
+      rc.set(origin, d);
+      rc.far = dist * (1 + 1e-4) + 1e-3;
+      const hit = rc.intersectObjects(meshes, false)[0];
+      if (!hit || (hit.object === o.mesh && hit.faceIndex === t) || hit.distance >= dist - Math.max(1e-3, dist * 1e-5)) out.push(t);
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------------ polyline drawing (cut)
+
+  private ensurePoly() {
+    if (this.poly) return this.poly;
+    const r = this.container.getBoundingClientRect();
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'lasso-svg poly-svg');
+    svg.setAttribute('width', String(r.width));
+    svg.setAttribute('height', String(r.height));
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    const dots = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    svg.append(line, dots);
+    this.container.appendChild(svg);
+    this.poly = { points: [], svg, line, dots, cursor: null };
+    return this.poly;
+  }
+
+  /** Snap to 15° steps (Shift) from the previous point. */
+  private polyPoint(e: PointerEvent | MouseEvent): [number, number] {
+    const pts = this.poly?.points ?? [];
+    const last = pts[pts.length - 1];
+    if (!e.shiftKey || !last) return [e.clientX, e.clientY];
+    const dx = e.clientX - last[0], dy = e.clientY - last[1];
+    const len = Math.hypot(dx, dy);
+    const step = Math.PI / 12;
+    const a = Math.round(Math.atan2(dy, dx) / step) * step;
+    return [last[0] + Math.cos(a) * len, last[1] + Math.sin(a) * len];
+  }
+
+  private drawPoly() {
+    const pl = this.poly;
+    if (!pl) return;
+    const r = this.container.getBoundingClientRect();
+    const pts = pl.cursor ? [...pl.points, pl.cursor] : pl.points;
+    pl.line.setAttribute('points', pts.map(([x, y]) => `${x - r.left},${y - r.top}`).join(' '));
+    pl.dots.innerHTML = pl.points.map(([x, y]) => `<circle cx="${x - r.left}" cy="${y - r.top}" r="4"></circle>`).join('');
+  }
+
+  private clickPoly(e: PointerEvent) {
+    const d = this.pointerDown;
+    this.pointerDown = null;
+    if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+    const pl = this.ensurePoly();
+    const q = this.polyPoint(e);
+    const last = pl.points[pl.points.length - 1];
+    if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 3) return; // second click of a double-click
+    pl.points.push(q);
+    this.drawPoly();
+  }
+
+  private movePoly(e: PointerEvent) {
+    if (!this.state?.polyMode || !this.poly?.points.length) return;
+    this.poly.cursor = this.polyPoint(e);
+    this.drawPoly();
+  }
+
+  /** Remove the last polyline point. */
+  undoPolyPoint() {
+    if (!this.poly) return;
+    this.poly.points.pop();
+    this.drawPoly();
+  }
+
+  polyPointCount() {
+    return this.poly?.points.length ?? 0;
+  }
+
+  finishPolyline() {
+    const pl = this.poly;
+    const pts = pl ? pl.points.slice() : [];
+    this.cancelPolyline();
+    if (pts.length >= 2) this.cb.onPolyline?.(pts);
+  }
+
+  cancelPolyline() {
+    this.poly?.svg.remove();
+    this.poly = null;
   }
 
   /** Zoom so the given screen rectangle (centre + size in px) fills the view. */
@@ -1371,12 +1575,63 @@ export class Viewer {
     }
   }
 
+  /**
+   * Dimensions tab: exact world bounding box of each selected part with
+   * X / Y / Z dimension lines and labels.
+   */
+  private syncDimensions(s: AppState) {
+    const parts = s.tool === 'dimensions' ? s.parts.filter((p) => p.visible && s.selection.includes(p.id)) : [];
+    const key: unknown[] = [parts.length, ...parts.flatMap((p) => [p.mesh, p.transform])];
+    if (key.length === this.dimKey.length && key.every((k, i) => k === this.dimKey[i])) return;
+    this.dimKey = key;
+    disposeChildren(this.dimGroup);
+    for (const sp of [...this.dimGroup.children]) this.dimGroup.remove(sp);
+    for (const p of parts) {
+      const b = worldBounds(p);
+      const size = b.getSize(new Vector3());
+      const mx = Math.max(size.x, size.y, size.z, 1);
+      const off = mx * 0.08;
+      const tick = mx * 0.025;
+      const { min: lo, max: hi } = b;
+      const box: number[] = [];
+      const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z]);
+      for (const [i, j] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) box.push(...corners[i], ...corners[j]);
+      const boxLines = lines(new Float32Array(box), 0x3fa7ff, false);
+      this.dimGroup.add(boxLines);
+      const dim: number[] = [];
+      const fmt = (v: number) => `${v.toFixed(2)} mm`;
+      // X along the front-bottom edge, Y along the right-bottom edge, Z up the front-right edge
+      const yF = lo.y - off, xR = hi.x + off;
+      dim.push(lo.x, yF, lo.z, hi.x, yF, lo.z);
+      dim.push(lo.x, lo.y, lo.z, lo.x, yF - tick, lo.z, hi.x, lo.y, lo.z, hi.x, yF - tick, lo.z);
+      dim.push(xR, lo.y, lo.z, xR, hi.y, lo.z);
+      dim.push(hi.x, lo.y, lo.z, xR + tick, lo.y, lo.z, hi.x, hi.y, lo.z, xR + tick, hi.y, lo.z);
+      const xz = hi.x + off * 0.7, yz = lo.y - off * 0.7;
+      dim.push(xz, yz, lo.z, xz, yz, hi.z);
+      dim.push(hi.x, lo.y, hi.z, xz + tick * 0.7, yz - tick * 0.7, hi.z);
+      this.dimGroup.add(lines(new Float32Array(dim), 0xffd23f, true));
+      this.dimGroup.add(textSprite(`X ${fmt(size.x)}`, [(lo.x + hi.x) / 2, yF - tick, lo.z], 0.03, [0.5, 1.15]));
+      this.dimGroup.add(textSprite(`Y ${fmt(size.y)}`, [xR + tick, (lo.y + hi.y) / 2, lo.z], 0.03, [-0.08, 0.5]));
+      this.dimGroup.add(textSprite(`Z ${fmt(size.z)}`, [xz, yz, (lo.z + hi.z) / 2], 0.03, [-0.08, 0.5]));
+    }
+    this.requestRender();
+  }
+
+  private refIds = new WeakMap<object, number>();
+  private refCounter = 0;
+  /** stable id per array identity (overlay cache keys) */
+  private refId(o: object): number {
+    let id = this.refIds.get(o);
+    if (id === undefined) this.refIds.set(o, (id = ++this.refCounter));
+    return id;
+  }
+
   setCursor(c: string) {
     this.renderer.domElement.style.cursor = c;
   }
 }
 
-function textSprite(text: string, pos: Vec3): Sprite {
+function textSprite(text: string, pos: Vec3, h = 0.045, anchor: [number, number] = [0.5, 0.5]): Sprite {
   const c = document.createElement('canvas');
   const ctx = c.getContext('2d')!;
   const font = '600 28px Inter, system-ui, sans-serif';
@@ -1398,9 +1653,9 @@ function textSprite(text: string, pos: Vec3): Sprite {
   const tex = new CanvasTexture(c);
   tex.colorSpace = SRGBColorSpace;
   const sp = new Sprite(new SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }));
-  const h = 0.045;
   sp.scale.set((h * w) / 44, h, 1);
   sp.position.set(...pos);
+  sp.center.set(anchor[0], anchor[1]);
   sp.renderOrder = 1003;
   sp.raycast = () => {};
   return sp;

@@ -63,3 +63,24 @@ export async function lassoSplit(mesh: MeshData, cutter: MeshData): Promise<{ in
     c.delete();
   }
 }
+
+/**
+ * Turn an open polyline (screen coordinates) into a closed outline that
+ * covers everything on one side of it: both ends are extended far beyond
+ * the view and joined around that side.
+ */
+export function polylineToOutline(points: [number, number][], reach: number): [number, number][] {
+  const n = points.length;
+  const ext = (p: [number, number], q: [number, number]): [number, number] => {
+    const dx = p[0] - q[0], dy = p[1] - q[1];
+    const l = Math.hypot(dx, dy) || 1;
+    return [p[0] + (dx / l) * reach, p[1] + (dy / l) * reach];
+  };
+  const a = ext(points[0], points[1]);
+  const b = ext(points[n - 1], points[n - 2]);
+  // side: perpendicular to the chord between the extended ends
+  const cx = b[0] - a[0], cy = b[1] - a[1];
+  const cl = Math.hypot(cx, cy) || 1;
+  const px = (-cy / cl) * reach * 2, py = (cx / cl) * reach * 2;
+  return [a, ...points, b, [b[0] + px, b[1] + py], [a[0] + px, a[1] + py]];
+}

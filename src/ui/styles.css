@@ -228,6 +228,9 @@ kbd { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4
 .fix-btn { margin-right: 8px; padding: 0 6px; font-size: 11px; }
 .lasso-svg { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
 .lasso-svg polyline { fill: rgba(255, 210, 63, 0.12); stroke: #ffd23f; stroke-width: 1.5; stroke-dasharray: 5 3; }
+.poly-svg polyline { fill: none; stroke-dasharray: none; stroke-width: 2; }
+.poly-svg circle { fill: #ffd23f; stroke: #1b1e24; stroke-width: 1.5; }
+.mark-rect { border-color: #ff5ca8; background: rgba(255, 92, 168, 0.1); }
 .viewport.lassoing canvas { cursor: crosshair; }
 
 /* shells, palette */
@@ -247,3 +250,22 @@ kbd { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4
 .palette-group { font-size: 11px; color: var(--muted); width: 74px; flex: none; text-transform: uppercase; letter-spacing: 0.04em; }
 .palette-label { flex: 1; }
 .palette-empty { padding: 14px; color: var(--muted); }
+.mark-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 6px 0; }
+.mark-tools .mini { padding: 4px 6px; }
+.btn-grid.three { grid-template-columns: repeat(3, 1fr); }
+.btn-grid.three .btn:last-child { grid-column: auto; }
+.color-row { display: flex; gap: 14px; margin: 4px 0 8px 24px; font-size: 12px; color: var(--muted); }
+.color-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.color-row input[type='color'] { width: 26px; height: 20px; padding: 0; border: 1px solid var(--line); background: none; border-radius: 3px; }
+.dim-big { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-size: 15px; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
+.dim-big b { color: var(--accent); margin-right: 3px; }
+.dim-big em { color: var(--muted); font-style: normal; font-size: 12px; }
+.info dd.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-actions { display: flex; gap: 6px; margin: 8px 0; }
+.report-actions .btn { flex: 1; justify-content: center; }
+.report-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+table.report { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+table.report th, table.report td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+table.report th:first-child, table.report td.name { text-align: left; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+table.report th { color: var(--muted); font-weight: 600; background: var(--panel-2); position: sticky; top: 0; }
+table.report tr:last-child td { border-bottom: none; }

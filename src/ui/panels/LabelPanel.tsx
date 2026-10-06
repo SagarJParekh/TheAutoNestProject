@@ -44,6 +44,16 @@ export function LabelPanel() {
           }}
         />
       </Row>
+      <Row label="Shape">
+        <Segmented
+          value={st.conform ? 'curved' : 'flat'}
+          onChange={(v) => set({ conform: v === 'curved' })}
+          options={[
+            { value: 'curved', label: 'Follow surface' },
+            { value: 'flat', label: 'Flat plane' },
+          ]}
+        />
+      </Row>
       <Row label="Mode">
         <Segmented
           value={st.mode}
@@ -85,7 +95,10 @@ export function LabelPanel() {
       <button className="btn primary wide" disabled={!w || !!preview} onClick={previewLabel}>
         Preview label
       </button>
-      <Hint>The text is centred on the picked point, upright relative to Z (or Y on top/bottom faces), and combined with the part by a boolean.</Hint>
+      <Hint>
+        The text is centred on the picked point, upright relative to Z (or Y on top/bottom faces), and combined with the part by a boolean. “Follow surface”
+        wraps the letters over curved faces (cylinders, domes…) keeping their size; “Flat plane” puts them on the tangent plane.
+      </Hint>
     </Section>
   );
 }

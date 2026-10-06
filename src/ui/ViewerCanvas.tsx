@@ -6,7 +6,7 @@ import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
 import { onMeasurePick } from '../state/measureActions';
-import { onLassoDone, onTrianglePick, onVertexPick } from '../state/editActions';
+import { onBrush, onLassoDone, onPolylineDone, onTrianglePick, onVertexPick, onWindowMark } from '../state/editActions';
 
 const SLOT_TEXT: Record<string, string> = {
   primary: 'Click a face to select it',
@@ -40,6 +40,7 @@ export function ViewerCanvas() {
   const pickMode = useStore((s) => s.pickMode);
   const zooming = useStore((s) => s.zoomWindow);
   const lassoing = useStore((s) => s.lassoMode);
+  const drawing = useStore((s) => s.polyMode);
   const measuring = useStore((s) => s.tool === 'measure');
 
   useEffect(() => {
@@ -99,6 +100,15 @@ export function ViewerCanvas() {
       onLasso(points) {
         onLassoDone(points);
       },
+      onBrush(info, erase) {
+        onBrush(info, erase);
+      },
+      onRect(x0, y0, x1, y1, erase) {
+        onWindowMark(x0, y0, x1, y1, erase);
+      },
+      onPolyline(points) {
+        onPolylineDone(points);
+      },
     });
     viewer.edgeRequest = requestEdges;
     viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v), viewer };
@@ -114,11 +124,19 @@ export function ViewerCanvas() {
   }, []);
 
   return (
-    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing ? 'lassoing' : ''}`} ref={ref}>
+    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''}`} ref={ref}>
       {lassoing && (
         <div className="pick-banner">
           Drag around the area to cut out
           <button onClick={() => setState({ lassoMode: false })}>Cancel (Esc)</button>
+        </div>
+      )}
+      {drawing && (
+        <div className="pick-banner">
+          Click points across the part · Shift snaps angles · double-click / Enter to finish
+          <button onClick={() => viewerApi.current?.viewer?.undoPolyPoint()}>Undo point</button>
+          <button onClick={() => viewerApi.current?.viewer?.finishPolyline()}>Finish</button>
+          <button onClick={() => setState({ polyMode: false })}>Cancel (Esc)</button>
         </div>
       )}
       {zooming && (
@@ -133,7 +151,9 @@ export function ViewerCanvas() {
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
           {pickMode === 'point' && <PointBanner />}
-          {pickMode === 'triangle' && 'Click triangles to select or deselect them'}
+          {pickMode === 'triangle' && 'Click to mark triangles · click a marked one (or Ctrl-click) to unmark'}
+          {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · drag empty space to orbit'}
+          {pickMode === 'window' && 'Drag a rectangle to mark · Ctrl-drag to unmark · right-drag to orbit'}
           {pickMode === 'vertex' && 'Click three corners to create a triangle'}
           <button onClick={() => setState({ pickMode: null })}>Done (Esc)</button>
         </div>

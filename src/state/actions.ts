@@ -672,6 +672,7 @@ export function cancelTool() {
     facePicks: tool === 'repair' || tool === 'texture' || tool === 'align' || tool === 'props' ? {} : s.facePicks,
     pointPicks: tool === 'props' || tool === 'label' ? {} : s.pointPicks,
     lassoMode: false,
+    polyMode: false,
     triEdit: null,
     shellView: null,
     perfPoints: tool === 'perforate' ? [] : s.perfPoints,

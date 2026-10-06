@@ -78,3 +78,132 @@ export function regionBoundaryHalfEdges(mesh: MeshData, tris: ArrayLike<number>,
   }
   return out;
 }
+
+// ---------------------------------------------------------------- marking helpers (triangle selections)
+
+/** Vertex -> incident triangles (CSR). */
+export interface VertexTriangles {
+  start: Uint32Array;
+  list: Uint32Array;
+}
+
+export function vertexTriangles(mesh: MeshData): VertexTriangles {
+  const idx = mesh.indices;
+  const nv = mesh.positions.length / 3;
+  const start = new Uint32Array(nv + 1);
+  for (let i = 0; i < idx.length; i++) start[idx[i] + 1]++;
+  for (let v = 0; v < nv; v++) start[v + 1] += start[v];
+  const fill = start.slice(0, nv);
+  const list = new Uint32Array(idx.length);
+  for (let i = 0; i < idx.length; i++) list[fill[idx[i]]++] = (i / 3) | 0;
+  return { start, list };
+}
+
+/** Add `rings` rings of triangles that share a vertex with the selection. */
+export function growSelection(mesh: MeshData, tris: ArrayLike<number>, rings = 1, vt: VertexTriangles = vertexTriangles(mesh)): Uint32Array {
+  const nt = triangleCount(mesh);
+  const sel = new Uint8Array(nt);
+  let frontier: number[] = [];
+  for (let i = 0; i < tris.length; i++) {
+    if (!sel[tris[i]]) frontier.push(tris[i]);
+    sel[tris[i]] = 1;
+  }
+  const idx = mesh.indices;
+  for (let r = 0; r < rings; r++) {
+    const next: number[] = [];
+    for (const t of frontier)
+      for (let k = 0; k < 3; k++) {
+        const v = idx[t * 3 + k];
+        for (let i = vt.start[v]; i < vt.start[v + 1]; i++) {
+          const u = vt.list[i];
+          if (!sel[u]) {
+            sel[u] = 1;
+            next.push(u);
+          }
+        }
+      }
+    frontier = next;
+  }
+  return selectedIds(sel);
+}
+
+/** Remove the outer ring: triangles that share a vertex with an unselected triangle. */
+export function shrinkSelection(mesh: MeshData, tris: ArrayLike<number>, vt: VertexTriangles = vertexTriangles(mesh)): Uint32Array {
+  const nt = triangleCount(mesh);
+  const sel = new Uint8Array(nt);
+  for (let i = 0; i < tris.length; i++) sel[tris[i]] = 1;
+  const idx = mesh.indices;
+  const keep = new Uint8Array(nt);
+  for (let i = 0; i < tris.length; i++) {
+    const t = tris[i];
+    let inner = true;
+    for (let k = 0; k < 3 && inner; k++) {
+      const v = idx[t * 3 + k];
+      for (let j = vt.start[v]; j < vt.start[v + 1]; j++) if (!sel[vt.list[j]]) inner = false;
+    }
+    if (inner) keep[t] = 1;
+  }
+  return selectedIds(keep);
+}
+
+/** Every triangle not in the selection. */
+export function invertSelection(triangleTotal: number, tris: ArrayLike<number>): Uint32Array {
+  const sel = new Uint8Array(triangleTotal).fill(1);
+  for (let i = 0; i < tris.length; i++) sel[tris[i]] = 0;
+  return selectedIds(sel);
+}
+
+/** All triangles connected to `seed` through shared vertices (its shell). */
+export function shellOfTriangle(mesh: MeshData, seed: number, vt: VertexTriangles = vertexTriangles(mesh)): Uint32Array {
+  const nt = triangleCount(mesh);
+  if (seed < 0 || seed >= nt) return new Uint32Array(0);
+  return growSelection(mesh, [seed], nt, vt);
+}
+
+/**
+ * Brush: triangles connected to `seed` (through shared vertices) with any
+ * corner within `radius` of `center` (local coordinates).
+ */
+export function brushSelect(mesh: MeshData, seed: number, center: Vec3, radius: number, vt: VertexTriangles = vertexTriangles(mesh)): Uint32Array {
+  const nt = triangleCount(mesh);
+  if (seed < 0 || seed >= nt) return new Uint32Array(0);
+  const p = mesh.positions, idx = mesh.indices;
+  const r2 = radius * radius;
+  const near = (t: number) => {
+    for (let k = 0; k < 3; k++) {
+      const o = idx[t * 3 + k] * 3;
+      const dx = p[o] - center[0], dy = p[o + 1] - center[1], dz = p[o + 2] - center[2];
+      if (dx * dx + dy * dy + dz * dz <= r2) return true;
+    }
+    return false;
+  };
+  const seen = new Uint8Array(nt);
+  const out: number[] = [seed];
+  const stack = [seed];
+  seen[seed] = 1;
+  while (stack.length) {
+    const t = stack.pop()!;
+    for (let k = 0; k < 3; k++) {
+      const v = idx[t * 3 + k];
+      for (let i = vt.start[v]; i < vt.start[v + 1]; i++) {
+        const u = vt.list[i];
+        if (seen[u]) continue;
+        seen[u] = 1;
+        if (near(u)) {
+          out.push(u);
+          stack.push(u);
+        }
+      }
+    }
+  }
+  return Uint32Array.from(out);
+}
+
+function selectedIds(sel: Uint8Array): Uint32Array {
+  let n = 0;
+  for (let i = 0; i < sel.length; i++) n += sel[i];
+  const out = new Uint32Array(n);
+  let o = 0;
+  for (let i = 0; i < sel.length; i++) if (sel[i]) out[o++] = i;
+  return out;
+}
