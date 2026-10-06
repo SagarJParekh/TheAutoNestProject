@@ -11,6 +11,7 @@ import { Vector3 } from 'three';
 
 export function TransformPanel({ parts }: { parts: Part[] }) {
   const pickMode = useStore((s) => s.pickMode);
+  const gizmo = useStore((s) => s.gizmo);
   const arr = useStore((s) => s.settings.arrange);
   const al = useStore((s) => s.settings.align2);
   // select raw state; deriving a new array inside the selector would re-render forever
@@ -49,6 +50,20 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
 
   return (
     <Section title="Transform">
+      <Row label="Mouse">
+        <Segmented
+          value={gizmo === 'rotate' ? 'rotate' : gizmo === 'place' ? 'place' : 'translate'}
+          onChange={(g) => setState({ gizmo: g })}
+          options={[
+            { value: 'translate', label: 'Move gizmo' },
+            { value: 'rotate', label: 'Rotate' },
+            { value: 'place', label: 'Pick & place' },
+          ]}
+        />
+      </Row>
+      {gizmo === 'place' && (
+        <Hint>Drag any part with the mouse to move it on the bed. Shift-drag moves it up / down, Ctrl snaps to 1 mm. Drag empty space to orbit.</Hint>
+      )}
       {parts.length === 0 && <Hint>Select a part to transform it.</Hint>}
       {single && (
         <>

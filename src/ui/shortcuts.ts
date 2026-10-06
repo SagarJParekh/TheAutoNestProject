@@ -7,7 +7,7 @@ import { viewerApi } from '../viewer/api';
 import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOL_KEYS: Record<string, ToolId> = {
-  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure', a: 'align', s: 'props', i: 'dimensions', n: 'report',
+  t: 'transform', c: 'clip', x: 'cut', r: 'repair', h: 'hollow', p: 'perforate', e: 'extrude', l: 'label', k: 'texture', d: 'measure', a: 'align', s: 'props', i: 'dimensions', n: 'report', u: 'offset',
 };
 const MODES: DisplayMode[] = ['shaded', 'edges', 'wireframe', 'xray'];
 
@@ -77,6 +77,10 @@ export function useShortcuts(openFile: () => void) {
         case k === 'w':
           setTool('transform');
           setState({ gizmo: 'translate' });
+          break;
+        case k === 'y':
+          setTool('transform');
+          setState({ gizmo: s.gizmo === 'place' && s.tool === 'transform' ? 'translate' : 'place' });
           break;
         case k === 'q':
           setTool('transform');

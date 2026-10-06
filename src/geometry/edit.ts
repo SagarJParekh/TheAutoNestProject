@@ -111,3 +111,94 @@ export function addTriangle(mesh: MeshData, a: number, b: number, c: number): Me
 export function deleteTriangles(mesh: MeshData, tris: ArrayLike<number>): MeshData {
   return removeTriangles(mesh, Uint32Array.from(tris));
 }
+
+/** An open (border) edge as it runs in its triangle: from -> to. */
+export type DirectedEdge = [number, number];
+
+/**
+ * Order directed edges into one chain v0 -> v1 -> ... -> vn.
+ * Throws if they do not form a single connected run.
+ */
+export function chainEdges(edges: DirectedEdge[]): number[] {
+  if (!edges.length) throw new Error('Pick at least one edge on each side');
+  const next = new Map<number, number>();
+  const incoming = new Set<number>();
+  for (const [a, b] of edges) {
+    if (next.has(a)) throw new Error('The picked edges branch; pick a single run of edges per side');
+    next.set(a, b);
+    incoming.add(b);
+  }
+  const starts = [...next.keys()].filter((v) => !incoming.has(v));
+  // a closed loop has no start: begin anywhere
+  const start = starts.length ? starts[0] : edges[0][0];
+  if (starts.length > 1) throw new Error('The picked edges on one side are not connected; pick neighbouring edges');
+  const chain = [start];
+  let v = start;
+  for (let i = 0; i < edges.length; i++) {
+    const w = next.get(v);
+    if (w === undefined) break;
+    chain.push(w);
+    v = w;
+    if (v === start) break;
+  }
+  if (chain.length !== edges.length + 1) throw new Error('The picked edges on one side are not connected; pick neighbouring edges');
+  return chain;
+}
+
+/**
+ * Bridge two runs of open edges with a strip of triangles. Each side is a
+ * list of open edges in their triangle's direction; the new triangles run
+ * against them, so the surface stays consistently oriented. The strip is
+ * triangulated by always taking the shorter diagonal.
+ */
+export function bridgeEdges(mesh: MeshData, sideA: DirectedEdge[], sideB: DirectedEdge[]): { mesh: MeshData; added: number } {
+  const A = chainEdges(sideA), B = chainEdges(sideB);
+  if (A.some((v) => B.includes(v)) && A.length + B.length > 4 && A.filter((v) => B.includes(v)).length > 1)
+    throw new Error('The two sides share edges; pick two separate runs of edges');
+  const p = mesh.positions;
+  const d2 = (a: number, b: number) => (p[a * 3] - p[b * 3]) ** 2 + (p[a * 3 + 1] - p[b * 3 + 1]) ** 2 + (p[a * 3 + 2] - p[b * 3 + 2]) ** 2;
+  const P = A.slice().reverse(); // new triangles use a(i+1) -> a(i)
+  const Q = B; // and b(j+1) -> b(j)
+  const tris: number[] = [];
+  let i = 0, j = 0;
+  while (i < P.length - 1 || j < Q.length - 1) {
+    const canP = i < P.length - 1, canQ = j < Q.length - 1;
+    const useP = canP && (!canQ || d2(P[i + 1], Q[j]) <= d2(P[i], Q[j + 1]));
+    if (useP) {
+      if (P[i] !== Q[j] && P[i + 1] !== Q[j]) tris.push(P[i], P[i + 1], Q[j]);
+      i++;
+    } else {
+      if (P[i] !== Q[j + 1] && P[i] !== Q[j]) tris.push(P[i], Q[j + 1], Q[j]);
+      j++;
+    }
+  }
+  if (!tris.length) throw new Error('Nothing to bridge');
+  const idx = new Uint32Array(mesh.indices.length + tris.length);
+  idx.set(mesh.indices);
+  idx.set(tris, mesh.indices.length);
+  return { mesh: { positions: mesh.positions, indices: idx }, added: tris.length / 3 };
+}
+
+/**
+ * The open edge of triangle `tri` (as a directed edge) closest to a point,
+ * or null when the triangle has no open edge.
+ */
+export function openEdgeOfTriangle(mesh: MeshData, tri: number, point: [number, number, number], topo = buildTopology(mesh)): DirectedEdge | null {
+  const p = mesh.positions, idx = mesh.indices;
+  let best: DirectedEdge | null = null, bd = Infinity;
+  for (let k = 0; k < 3; k++) {
+    const h = tri * 3 + k;
+    if (topo.edgeFaceCount[topo.halfEdgeEdge[h]] !== 1) continue;
+    const a = idx[h], b = idx[tri * 3 + ((k + 1) % 3)];
+    // distance from point to segment a-b
+    const ax = p[a * 3], ay = p[a * 3 + 1], az = p[a * 3 + 2];
+    const ux = p[b * 3] - ax, uy = p[b * 3 + 1] - ay, uz = p[b * 3 + 2] - az;
+    const t = Math.max(0, Math.min(1, ((point[0] - ax) * ux + (point[1] - ay) * uy + (point[2] - az) * uz) / (ux * ux + uy * uy + uz * uz || 1)));
+    const d = Math.hypot(ax + ux * t - point[0], ay + uy * t - point[1], az + uz * t - point[2]);
+    if (d < bd) {
+      bd = d;
+      best = [a, b];
+    }
+  }
+  return best;
+}

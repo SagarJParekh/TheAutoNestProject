@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
-import { getState, setState, setTransform, useStore } from '../state/store';
+import { getState, setState, setTransform, updateParts, useStore } from '../state/store';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
 import { onMeasurePick } from '../state/measureActions';
-import { onBrush, onLassoDone, onPolylineDone, onTrianglePick, onVertexPick, onWindowMark } from '../state/editActions';
+import { onSharpEdgePick } from '../state/modifyActions';
+import { onBridgeEdgePick, onBrush, onLassoDone, onPolylineDone, onTrianglePick, onVertexPick, onWindowMark } from '../state/editActions';
 
 const SLOT_TEXT: Record<string, string> = {
   primary: 'Click a face to select it',
@@ -16,6 +17,7 @@ const SLOT_TEXT: Record<string, string> = {
   propsA: 'Click the face the props start from',
   propsB: 'Click the face or shell the props should reach',
   texture: 'Click the face to texture',
+  offset: 'Click the face to offset',
 };
 
 const POINT_TEXT: Record<string, string> = {
@@ -42,6 +44,7 @@ export function ViewerCanvas() {
   const lassoing = useStore((s) => s.lassoMode);
   const drawing = useStore((s) => s.polyMode);
   const measuring = useStore((s) => s.tool === 'measure');
+  const placing = useStore((s) => s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode);
 
   useEffect(() => {
     const el = ref.current!;
@@ -61,6 +64,14 @@ export function ViewerCanvas() {
         }
         if (s.pickMode === 'triangle') {
           if (info) onTrianglePick(info);
+          return;
+        }
+        if (s.pickMode === 'sharpEdge') {
+          if (info) onSharpEdgePick(info);
+          return;
+        }
+        if (s.pickMode === 'edge') {
+          if (info) onBridgeEdgePick(info);
           return;
         }
         if (s.pickMode === 'vertex') {
@@ -109,6 +120,13 @@ export function ViewerCanvas() {
       onPolyline(points) {
         onPolylineDone(points);
       },
+      onPlaceEnd(moves) {
+        const at = new Map(moves.map((m) => [m.id, m.position]));
+        updateParts(moves.length > 1 ? `Place ${moves.length} parts` : 'Place part', [...at.keys()], (p) => ({
+          ...p,
+          transform: { ...p.transform, position: at.get(p.id)! },
+        }));
+      },
     });
     viewer.edgeRequest = requestEdges;
     viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v), viewer };
@@ -124,7 +142,7 @@ export function ViewerCanvas() {
   }, []);
 
   return (
-    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''}`} ref={ref}>
+    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''} ${placing ? 'placing' : ''}`} ref={ref}>
       {lassoing && (
         <div className="pick-banner">
           Drag around the area to cut out
@@ -155,6 +173,8 @@ export function ViewerCanvas() {
           {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · drag empty space to orbit'}
           {pickMode === 'window' && 'Drag a rectangle to mark · Ctrl-drag to unmark · right-drag to orbit'}
           {pickMode === 'vertex' && 'Click three corners to create a triangle'}
+          {pickMode === 'sharpEdge' && 'Click near sharp edges to fillet / chamfer them (click again to remove)'}
+          {pickMode === 'edge' && 'Click next to open edges to add them to the current side (click again to remove)'}
           <button onClick={() => setState({ pickMode: null })}>Done (Esc)</button>
         </div>
       )}

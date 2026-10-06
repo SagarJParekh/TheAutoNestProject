@@ -91,6 +91,12 @@ export function buildCommands(): Command[] {
     { id: 'disp-xray', label: 'Display: x-ray', group: 'View', keywords: 'transparent see through', run: display('xray') },
     // tools
     { id: 'dimensions', label: 'Dimensions (bounding box on the part + all info)', group: 'Tools', keywords: 'size bounding box info measure', shortcut: 'I', run: tool('dimensions') },
+    { id: 'offset', label: 'Offset part (grow / shrink)', group: 'Tools', keywords: 'shell thicken thin grow shrink global', shortcut: 'U', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'global' } } })); } },
+    { id: 'offset-local', label: 'Offset a face (local)', group: 'Tools', keywords: 'push pull face move surface', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'local' } } })); } },
+    { id: 'fillet', label: 'Fillet edges (round)', group: 'Tools', keywords: 'round radius blend edge', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, blend: { ...s.settings.blend, kind: 'fillet' } } })); } },
+    { id: 'chamfer', label: 'Chamfer edges (bevel)', group: 'Tools', keywords: 'bevel edge', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, blend: { ...s.settings.blend, kind: 'chamfer' } } })); } },
+    { id: 'place', label: 'Pick and place (drag parts with the mouse)', group: 'Transform', keywords: 'move drag hand', shortcut: 'Y', run: () => { setTool('transform'); setState({ gizmo: 'place' }); } },
+    { id: 'bridge', label: 'Bridge two edges (create surface)', group: 'Repair', keywords: 'bridge gap fill surface strip', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'bridge' } }, pickMode: 'edge' }))) },
     { id: 'report', label: 'Parts report (copy to Excel)', group: 'Tools', keywords: 'table volume list export excel csv', shortcut: 'N', run: tool('report') },
     { id: 'orient-colors', label: 'Colour triangles by orientation (normal / inverted)', group: 'Repair', keywords: 'normals inverted flipped back faces colours', run: () => setState((s) => ({ settings: { ...s.settings, normals: { ...s.settings.normals, orientation: !s.settings.normals.orientation } } })) },
     { id: 'clip', label: 'Section clip (inspect inside)', group: 'Tools', keywords: 'section plane cross-section', shortcut: 'C', run: tool('clip') },

@@ -35,3 +35,5 @@ export * from './edit';
 export * from './lasso';
 export * from './simplify';
 export * from './remesh';
+export * from './offset';
+export * from './fillet';

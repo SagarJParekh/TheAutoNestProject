@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import {
-  clearTriSelection, deleteSelectedTriangles, extractMarked, growMarked, hoverShell, invertMarked, liveShellView, loadShells, markAll, previewFixOpenEdges,
+  clearBridge, clearTriSelection, createBridge, deleteSelectedTriangles, extractMarked, growMarked, hoverShell, invertMarked, liveShellView, loadShells, markAll, previewFixOpenEdges,
   previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell,
 } from '../../state/editActions';
 import type { MarkTool, Part } from '../../state/types';
@@ -176,9 +176,12 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
           options={[
             { value: 'mark', label: 'Mark / select' },
             { value: 'create', label: 'Create triangles' },
+            { value: 'bridge', label: 'Bridge' },
           ]}
         />
-        {st.mode === 'mark' ? (
+        {st.mode === 'bridge' ? (
+          <BridgeControls part={part} />
+        ) : st.mode === 'mark' ? (
           <>
             <div className="mark-tools">
               {MARK_TOOLS.map((m) => (
@@ -258,6 +261,44 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
         <Hint>Each delete / create / remesh is one undo step (Ctrl+Z). New triangles are wound to match the neighbouring open edges.</Hint>
       </Section>
       <RemeshSection part={part} marked={marked} />
+    </>
+  );
+}
+
+function BridgeControls({ part }: { part: Part | null }) {
+  const st = useStore((s) => s.settings.triEdit);
+  const te = useStore((s) => s.triEdit);
+  const pickMode = useStore((s) => s.pickMode);
+  const live = te && part && te.partId === part.id && te.mesh === part.mesh ? te : null;
+  const a = live?.bridgeA?.length ?? 0, b = live?.bridgeB?.length ?? 0;
+  const setSide = (bridgeSide: 'A' | 'B') => setState({ settings: { ...getState().settings, triEdit: { ...getState().settings.triEdit, bridgeSide } } });
+  return (
+    <>
+      <div className="bridge-sides">
+        <button className={`bridge-side a ${st.bridgeSide === 'A' ? 'active' : ''}`} onClick={() => setSide('A')}>
+          <b>Side A</b>
+          <span>{a ? `${a} edge${a > 1 ? 's' : ''}` : 'no edges'}</span>
+        </button>
+        <button className={`bridge-side b ${st.bridgeSide === 'B' ? 'active' : ''}`} onClick={() => setSide('B')}>
+          <b>Side B</b>
+          <span>{b ? `${b} edge${b > 1 ? 's' : ''}` : 'no edges'}</span>
+        </button>
+      </div>
+      <button className={`btn wide ${pickMode === 'edge' ? 'primary' : ''}`} disabled={!part} onClick={() => startTriPick('edge')}>
+        {pickMode === 'edge' ? 'Done picking edges' : `Pick edges for side ${st.bridgeSide}…`}
+      </button>
+      <div className="btn-grid two">
+        <button className="btn primary" disabled={!a || !b || !!part?.locked} onClick={createBridge}>
+          Create bridge
+        </button>
+        <button className="btn" disabled={!a && !b} onClick={clearBridge}>
+          Clear
+        </button>
+      </div>
+      <Hint>
+        Pick one open edge (or a run of neighbouring open edges) on each side, e.g. the two borders of a gap or a slot. Click a side to choose where the
+        next edges go. The bridge is a strip of triangles between them, oriented to match the surface.
+      </Hint>
     </>
   );
 }

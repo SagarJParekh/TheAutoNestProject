@@ -18,6 +18,7 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'texture', label: 'Texture', icon: Icon.texture, key: 'K' },
   { id: 'align', label: 'Align', icon: Icon.align, key: 'A' },
   { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
+  { id: 'offset', label: 'Offset', icon: Icon.offset, key: 'U' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
   { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
   { id: 'report', label: 'Report', icon: Icon.report, key: 'N' },
@@ -40,6 +41,7 @@ export function Toolbar() {
 
   return (
     <header className="toolbar">
+      <div className="tb-row">
       <div className="brand">
         {Icon.cube}
         <span>AutoNest&nbsp;Prep</span>
@@ -97,6 +99,16 @@ export function Toolbar() {
           {Icon.move}
         </button>
         <button
+          className={`tb icon ${tool === 'transform' && gizmo === 'place' ? 'active' : ''}`}
+          title="Pick and place: drag parts with the mouse (Y). Shift-drag moves up/down, Ctrl snaps to 1 mm"
+          onClick={() => {
+            setTool('transform');
+            setState({ gizmo: getState().gizmo === 'place' && tool === 'transform' ? 'translate' : 'place' });
+          }}
+        >
+          {Icon.hand}
+        </button>
+        <button
           className={`tb icon ${tool === 'transform' && gizmo === 'rotate' ? 'active' : ''}`}
           title="Rotate gizmo (Q)"
           onClick={() => {
@@ -116,14 +128,6 @@ export function Toolbar() {
         >
           {Icon.layflat}
         </button>
-      </div>
-      <div className="tb-group tools">
-        {TOOLS.filter((t) => t.id !== 'transform').map((t) => (
-          <button key={t.id} className={`tb ${tool === t.id ? 'active' : ''}`} title={`${t.label} (${t.key})`} onClick={() => setTool(tool === t.id ? 'transform' : t.id)}>
-            {t.icon}
-            <span>{t.label}</span>
-          </button>
-        ))}
       </div>
       <div className="tb-spacer" />
       <div className="tb-group">
@@ -160,6 +164,20 @@ export function Toolbar() {
         <button className="tb icon" title="Keyboard shortcuts (?)" onClick={() => setState({ showShortcuts: true })}>
           {Icon.help}
         </button>
+      </div>
+      </div>
+      <div className="tb-row tools-row">
+        {TOOLS.map((t) => (
+          <button
+            key={t.id}
+            className={`tb tool ${tool === t.id ? 'active' : ''}`}
+            title={`${t.label} (${t.key})`}
+            onClick={() => setTool(tool === t.id && t.id !== 'transform' ? 'transform' : t.id)}
+          >
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        ))}
       </div>
     </header>
   );

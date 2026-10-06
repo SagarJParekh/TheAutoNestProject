@@ -10,6 +10,8 @@ export interface AnalysisReport {
   volume: number;
   area: number;
   openEdges: number;
+  /** open edges that run along another open edge within a small gap (closable by stitching) */
+  crackEdges: number;
   nonManifoldEdges: number;
   holes: number;
   /** triangles whose winding disagrees with their shell's outward orientation */
@@ -25,8 +27,10 @@ export interface AnalysisReport {
 }
 
 export interface AnalysisHighlights {
-  /** line segments (xyz xyz) for open edges */
+  /** line segments (xyz xyz) for open edges that border real holes / open surfaces */
   openEdges: Float32Array;
+  /** line segments for open edges that are cracks (stitchable) */
+  crackEdges: Float32Array;
   /** line segments for non-manifold edges */
   nonManifoldEdges: Float32Array;
   flippedTriangles: Uint32Array;
@@ -133,14 +137,14 @@ export function findFlippedTriangles(mesh: MeshData, topo: Topology = buildTopol
   return Uint32Array.from(out);
 }
 
-function edgeSegments(mesh: MeshData, topo: Topology, pred: (count: number) => boolean): Float32Array {
+function edgeSegments(mesh: MeshData, topo: Topology, pred: (count: number, edge: number) => boolean): Float32Array {
   const p = mesh.positions;
   let n = 0;
-  for (let e = 0; e < topo.edgeCount; e++) if (pred(topo.edgeFaceCount[e])) n++;
+  for (let e = 0; e < topo.edgeCount; e++) if (pred(topo.edgeFaceCount[e], e)) n++;
   const out = new Float32Array(n * 6);
   let o = 0;
   for (let e = 0; e < topo.edgeCount; e++) {
-    if (!pred(topo.edgeFaceCount[e])) continue;
+    if (!pred(topo.edgeFaceCount[e], e)) continue;
     const a = topo.edgeV0[e] * 3, b = topo.edgeV1[e] * 3;
     out[o++] = p[a]; out[o++] = p[a + 1]; out[o++] = p[a + 2];
     out[o++] = p[b]; out[o++] = p[b + 1]; out[o++] = p[b + 2];
@@ -162,6 +166,9 @@ export function analyzeMesh(mesh: MeshData): AnalysisReport {
   const flipped = findFlippedTriangles(mesh, topo);
   const { shellCount } = findShells(mesh);
   const loops = open > 0 ? findBoundaryLoops(mesh, topo) : [];
+  const cracks = open > 0 ? findCrackEdges(mesh, topo) : new Uint8Array(0);
+  let crackCount = 0;
+  for (let i = 0; i < cracks.length; i++) crackCount += cracks[i];
   const bounds = computeBounds(mesh.positions);
   return {
     triangles: triangleCount(mesh),
@@ -170,6 +177,7 @@ export function analyzeMesh(mesh: MeshData): AnalysisReport {
     volume: meshVolume(mesh),
     area: meshArea(mesh),
     openEdges: open,
+    crackEdges: crackCount,
     nonManifoldEdges: nonManifold,
     holes: loops.length,
     flippedTriangles: flipped.length,
@@ -179,7 +187,8 @@ export function analyzeMesh(mesh: MeshData): AnalysisReport {
     watertight: open === 0 && nonManifold === 0 && flipped.length === 0 && triangleCount(mesh) > 0,
     loops,
     highlights: {
-      openEdges: edgeSegments(mesh, topo, (c) => c === 1),
+      openEdges: edgeSegments(mesh, topo, (c, e) => c === 1 && !cracks[e]),
+      crackEdges: edgeSegments(mesh, topo, (c, e) => c === 1 && cracks[e] === 1),
       nonManifoldEdges: edgeSegments(mesh, topo, (c) => c > 2),
       flippedTriangles: flipped,
       degenerateTriangles: degenerate,
@@ -198,4 +207,80 @@ export function isWatertight(mesh: MeshData): boolean {
     if (heFrom(mesh, h0) === heFrom(mesh, h1)) return false;
   }
   return true;
+}
+
+/**
+ * Mark open edges that are cracks: their ends and middle all lie within
+ * `tolerance` of other (not adjacent) open edges, i.e. two borders running
+ * side by side that stitching can close. Returns a flag per edge id.
+ */
+export function findCrackEdges(mesh: MeshData, topo: Topology = buildTopology(mesh), tolerance?: number): Uint8Array {
+  const flags = new Uint8Array(topo.edgeCount);
+  const p = mesh.positions;
+  const open: number[] = [];
+  for (let e = 0; e < topo.edgeCount; e++) if (topo.edgeFaceCount[e] === 1) open.push(e);
+  if (open.length < 2 || open.length > 2_000_000) return flags;
+  const b = computeBounds(p);
+  const diag = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  const tol = tolerance ?? Math.max(1e-4, diag * 5e-4);
+  // uniform grid over open-edge boxes
+  let avg = 0;
+  for (const e of open) {
+    const a = topo.edgeV0[e] * 3, c = topo.edgeV1[e] * 3;
+    avg += Math.hypot(p[a] - p[c], p[a + 1] - p[c + 1], p[a + 2] - p[c + 2]);
+  }
+  avg /= open.length;
+  const cell = Math.max(tol * 2, avg);
+  const key = (i: number, j: number, k: number) => (i * 73856093) ^ (j * 19349663) ^ (k * 83492791);
+  const grid = new Map<number, number[]>();
+  for (const e of open) {
+    const a = topo.edgeV0[e] * 3, c = topo.edgeV1[e] * 3;
+    const lo = [0, 1, 2].map((k) => Math.floor((Math.min(p[a + k], p[c + k]) - tol) / cell));
+    const hi = [0, 1, 2].map((k) => Math.floor((Math.max(p[a + k], p[c + k]) + tol) / cell));
+    if ((hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1) > 512) continue; // very long edge: skip indexing
+    for (let i = lo[0]; i <= hi[0]; i++)
+      for (let j = lo[1]; j <= hi[1]; j++)
+        for (let k = lo[2]; k <= hi[2]; k++) {
+          const kk = key(i, j, k);
+          let l = grid.get(kk);
+          if (!l) grid.set(kk, (l = []));
+          l.push(e);
+        }
+  }
+  const segDist = (x: number, y: number, z: number, f: number) => {
+    const a = topo.edgeV0[f] * 3, c = topo.edgeV1[f] * 3;
+    const ux = p[c] - p[a], uy = p[c + 1] - p[a + 1], uz = p[c + 2] - p[a + 2];
+    const t = Math.max(0, Math.min(1, ((x - p[a]) * ux + (y - p[a + 1]) * uy + (z - p[a + 2]) * uz) / (ux * ux + uy * uy + uz * uz || 1)));
+    return Math.hypot(p[a] + ux * t - x, p[a + 1] + uy * t - y, p[a + 2] + uz * t - z);
+  };
+  for (const e of open) {
+    const v0 = topo.edgeV0[e], v1 = topo.edgeV1[e];
+    const a = v0 * 3, c = v1 * 3;
+    const samples = [
+      [p[a], p[a + 1], p[a + 2]],
+      [(p[a] + p[c]) / 2, (p[a + 1] + p[c + 1]) / 2, (p[a + 2] + p[c + 2]) / 2],
+      [p[c], p[c + 1], p[c + 2]],
+    ];
+    let all = true;
+    for (const [x, y, z] of samples) {
+      const l = grid.get(key(Math.floor(x / cell), Math.floor(y / cell), Math.floor(z / cell)));
+      let ok = false;
+      if (l)
+        for (const f of l) {
+          if (f === e) continue;
+          const w0 = topo.edgeV0[f], w1 = topo.edgeV1[f];
+          if (w0 === v0 || w0 === v1 || w1 === v0 || w1 === v1) continue; // neighbours on the same border
+          if (segDist(x, y, z, f) <= tol) {
+            ok = true;
+            break;
+          }
+        }
+      if (!ok) {
+        all = false;
+        break;
+      }
+    }
+    if (all) flags[e] = 1;
+  }
+  return flags;
 }

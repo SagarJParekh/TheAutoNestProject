@@ -6,6 +6,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { analyzePart, previewFillHoles, previewRepair } from '../../state/actions';
 import { previewCleanTriangles, previewFixNonManifold } from '../../state/repairActions';
 import type { Part, RepairTab, ToolSettings } from '../../state/types';
+import { highlightColors } from '../../state/contrast';
 
 export function RepairPanel({ parts }: { parts: Part[] }) {
   const tab = useStore((s) => s.repairTab);
@@ -69,6 +70,7 @@ function FixTab({ parts }: { parts: Part[] }) {
     </>
   );
 
+  const hc = highlightColors(part.color);
   return (
     <>
       <Section
@@ -90,9 +92,10 @@ function FixTab({ parts }: { parts: Part[] }) {
                   : 'Watertight — ready to print'}
             </div>
             <dl className="info">
-              {rowItem('Open edges', report.openEdges, '#ff3b4e')}
+              {rowItem('Open edges (holes / open surfaces)', report.openEdges - (report.crackEdges ?? 0), hc.open)}
+              {rowItem('Stitchable cracks', report.crackEdges ?? 0, hc.crack)}
               {rowItem('Holes', report.holes)}
-              {rowItem('Non-manifold edges', report.nonManifoldEdges, '#ffb020', undefined, { label: 'Fix', run: () => previewFixNonManifold(true) })}
+              {rowItem('Non-manifold edges', report.nonManifoldEdges, hc.nonManifold, undefined, { label: 'Fix', run: () => previewFixNonManifold(true) })}
               {rowItem('Flipped triangles', report.flippedTriangles, '#d040ff')}
               {rowItem('Degenerate triangles', report.degenerateTriangles, '#00e0ff', undefined, { label: 'Remove', run: () => previewCleanTriangles('degenerate') })}
               {rowItem('Duplicate triangles', report.duplicateTriangles, undefined, undefined, { label: 'Remove', run: () => previewCleanTriangles('duplicates') })}

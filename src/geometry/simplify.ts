@@ -222,16 +222,27 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
   };
 
   const heap = new EdgeHeap(topo.edgeCount + 1024);
+  // queue order: quadric error, with a tiny edge-length term so zero-error (flat) areas collapse their
+  // shortest edges first instead of piling everything into one huge vertex fan
+  const queueCost = (a: number, b: number) => {
+    const l2 = (pos[a * 3] - pos[b * 3]) ** 2 + (pos[a * 3 + 1] - pos[b * 3 + 1]) ** 2 + (pos[a * 3 + 2] - pos[b * 3 + 2]) ** 2;
+    return evaluate(a, b) + (W[a] + W[b]) * l2 * 1e-6;
+  };
   // versions only grow, so an unchanged sum means neither endpoint changed since the push
   const edgeStamp = (a: number, b: number) => version[a] + version[b];
   for (let e = 0; e < topo.edgeCount; e++) {
     const a = topo.edgeV0[e], b = topo.edgeV1[e];
-    heap.push(evaluate(a, b), a, b, edgeStamp(a, b));
+    heap.push(queueCost(a, b), a, b, edgeStamp(a, b));
   }
 
   const liveTris = (v: number, out: number[]) => {
     out.length = 0;
     for (let i = vStart[v], e = i + vLen[v]; i < e; i++) if (alive[pool[i]]) out.push(pool[i]);
+    // drop dead entries so lists don't grow during heavy reductions
+    if (out.length < vLen[v]) {
+      for (let i = 0; i < out.length; i++) pool[vStart[v] + i] = out[i];
+      vLen[v] = out.length;
+    }
     return out;
   };
   const neighbours = (v: number, out: Set<number>) => {
@@ -264,6 +275,7 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
     shared.length = 0;
     for (const t of ta) if (tb.includes(t)) shared.push(t);
     if (!shared.length) continue; // no longer an edge
+    if (ta.length + tb.length > 48) continue; // keep vertex fans small
     // link condition: common neighbours must be exactly the opposite vertices of the shared faces
     neighbours(a, nA);
     neighbours(b, nB);
@@ -324,7 +336,7 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
     setList(a, merged);
     version[a]++;
     for (const w of neighbours(a, nA)) {
-      heap.push(evaluate(a, w), a, w, edgeStamp(a, w));
+      heap.push(queueCost(a, w), a, w, edgeStamp(a, w));
     }
     if ((++steps & 4095) === 0) onProgress(Math.min(0.95, (nt - current) / total), 'Simplifying');
   }

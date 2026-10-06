@@ -8,6 +8,10 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { highlightColors } from '../state/contrast';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData, Vec3 } from '../geometry';
 import { faceNormalSegmentsSplit } from '../geometry/props';
@@ -48,6 +52,8 @@ export interface ViewerCallbacks {
   onRect?: (x0: number, y0: number, x1: number, y1: number, erase: boolean) => void;
   /** polyline drawing finished: points in client coordinates */
   onPolyline?: (points: [number, number][]) => void;
+  /** pick & place finished: new positions of the dragged parts */
+  onPlaceEnd?: (moves: { id: string; position: [number, number, number] }[]) => void;
 }
 
 interface PartObject {
@@ -97,6 +103,13 @@ export class Viewer {
   private annotKey: unknown[] = [];
   private zoomRect: { x: number; y: number; div: HTMLDivElement; mark?: boolean; erase?: boolean } | null = null;
   private brushing: { erase: boolean; pending: PointerEvent | null } | null = null;
+  private placing: {
+    plane: Plane;
+    start: Vector3;
+    vertical: boolean;
+    items: { obj: PartObject; from: Vector3 }[];
+    moved: boolean;
+  } | null = null;
   private poly: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement; dots: SVGGElement; cursor: [number, number] | null } | null = null;
   private lasso: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement } | null = null;
   private capsGroup = new Group();
@@ -164,12 +177,14 @@ export class Viewer {
       else if (this.state?.lassoMode && e.button === 0) this.startLasso(e);
       else if (this.state?.pickMode === 'window' && e.button === 0) this.startZoomRect(e, true);
       else if (this.state?.pickMode === 'brush' && e.button === 0) this.startBrush(e);
+      else if (this.placeActive() && e.button === 0) this.startPlace(e);
     });
     el.addEventListener('pointermove', (e) => {
       this.moveZoomRect(e);
       this.moveLasso(e);
       this.moveBrush(e);
       this.movePoly(e);
+      this.movePlace(e);
       this.scheduleHover(e.clientX, e.clientY, e.buttons !== 0);
     });
     el.addEventListener('pointerleave', () => this.clearHover());
@@ -177,6 +192,10 @@ export class Viewer {
       if (this.zoomRect) return this.endZoomRect(e);
       if (this.lasso) return this.endLasso();
       if (this.brushing) return this.endBrush();
+      if (this.placing) {
+        const moved = this.endPlace();
+        if (moved) return;
+      }
       if (this.state?.polyMode) return this.clickPoly(e);
       this.onPointerUp(e);
     });
@@ -218,8 +237,25 @@ export class Viewer {
     this.axis.render(r, this.camera);
   }
 
+  private fatMaterials = new Set<LineMaterial>();
+  /** Screen-space thick lines drawn on top (WebGL lines are always 1 px). */
+  private fatLines(seg: Float32Array, color: string, widthPx: number): LineSegments2 {
+    const g = new LineSegmentsGeometry();
+    g.setPositions(seg);
+    const m = new LineMaterial({ color: new Color(color).getHex(), linewidth: widthPx, depthTest: false, transparent: true });
+    const size = this.renderer.getSize(new Vector2());
+    m.resolution.set(size.x, size.y);
+    this.fatMaterials.add(m);
+    m.addEventListener('dispose', () => this.fatMaterials.delete(m));
+    const l = new LineSegments2(g, m);
+    l.renderOrder = 1000;
+    l.raycast = () => {};
+    return l;
+  }
+
   private resize() {
     const w = Math.max(1, this.container.clientWidth), h = Math.max(1, this.container.clientHeight);
+    for (const m of this.fatMaterials) m.resolution.set(w, h);
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
@@ -413,7 +449,7 @@ export class Viewer {
 
   private updateObject(obj: PartObject, s: AppState, index: number, selected: boolean, ghost: boolean) {
     const { part, group, material } = obj;
-    if (!this.draggingGizmo || this.gizmo.object !== group) this.applyTransform(group, part.transform);
+    if ((!this.draggingGizmo || this.gizmo.object !== group) && !this.placing?.items.some((i) => i.obj === obj)) this.applyTransform(group, part.transform);
     group.visible = part.visible;
 
     // material per display mode
@@ -575,7 +611,7 @@ export class Viewer {
   private syncGizmo(s: AppState) {
     const sel = s.selection.length === 1 ? this.objects.get(s.selection[0]) : undefined;
     const can =
-      sel && !sel.part.locked && sel.part.visible && s.tool === 'transform' && s.gizmo !== 'none' && !s.preview && !s.pickMode;
+      sel && !sel.part.locked && sel.part.visible && s.tool === 'transform' && s.gizmo !== 'none' && s.gizmo !== 'place' && !s.preview && !s.pickMode;
     if (can) {
       if (this.gizmo.object !== sel.group) this.gizmo.attach(sel.group);
       this.gizmo.setMode(s.gizmo === 'rotate' ? 'rotate' : 'translate');
@@ -651,11 +687,13 @@ export class Viewer {
           ((inRepair && s.repairTab === 'fix' && slot === 'flip') ||
             (s.tool === 'align' && slot.startsWith('align')) ||
             (s.tool === 'props' && slot.startsWith('props')) ||
-            (s.tool === 'texture' && slot === 'texture')),
+            (s.tool === 'texture' && slot === 'texture') ||
+            (s.tool === 'offset' && slot === 'offset')),
       );
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') : ''}`;
+      const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}`;
       // isolate: ghost the whole part, the selected shells are drawn as an overlay
       const ghostForShells = !!(sv && sv.isolate && sv.selected.length);
       obj.material.transparent = obj.material.transparent || ghostForShells;
@@ -698,6 +736,14 @@ export class Viewer {
       }
       if (te) {
         if (te.tris.length) obj.overlay.add(triMesh(obj.part.mesh, Uint32Array.from(te.tris), 0xff3bd4));
+        const mp = obj.part.mesh.positions;
+        const segOf = (edges: [number, number][]) => {
+          const out = new Float32Array(edges.length * 6);
+          edges.forEach(([a, b], i) => out.set([mp[a * 3], mp[a * 3 + 1], mp[a * 3 + 2], mp[b * 3], mp[b * 3 + 1], mp[b * 3 + 2]], i * 6));
+          return out;
+        };
+        if (te.bridgeA?.length) obj.overlay.add(this.fatLines(segOf(te.bridgeA), '#ffea00', 5));
+        if (te.bridgeB?.length) obj.overlay.add(this.fatLines(segOf(te.bridgeB), '#00e5ff', 5));
         if (te.verts.length) {
           const pos = te.verts.flatMap((v) => [obj.part.mesh.positions[v * 3], obj.part.mesh.positions[v * 3 + 1], obj.part.mesh.positions[v * 3 + 2]]);
           const pts = new Points(
@@ -722,6 +768,11 @@ export class Viewer {
         if (segs.outward.length) obj.overlay.add(lines(segs.outward, new Color(nset.outColor).getHex(), false));
         if (segs.inward.length) obj.overlay.add(lines(segs.inward, new Color(nset.inColor).getHex(), true));
       }
+      if (blend.length) {
+        const seg = new Float32Array(blend.length * 6);
+        blend.forEach((e, i) => seg.set([...e.a, ...e.b], i * 6));
+        obj.overlay.add(this.fatLines(seg, '#ff9100', 5));
+      }
       for (const [slot, p] of picks) {
         const color = slot === 'flip' ? 0xd040ff : slot.endsWith('Source') || slot.endsWith('A') ? 0xffd23f : 0x22d3ee;
         const m = triMesh(obj.part.mesh, p.tris, color);
@@ -731,8 +782,11 @@ export class Viewer {
       }
       if (analysis) {
         const h = analysis.report.highlights;
-        if (hl.open && h.openEdges.length) obj.overlay.add(lines(h.openEdges, 0xff3b4e, true));
-        if (hl.nonManifold && h.nonManifoldEdges.length) obj.overlay.add(lines(h.nonManifoldEdges, 0xffb020, true));
+        // thick lines in colours picked to contrast with the part and with each other
+        const hc = highlightColors(obj.part.color);
+        if (hl.open && h.openEdges.length) obj.overlay.add(this.fatLines(h.openEdges, hc.open, 3.5));
+        if (hl.open && h.crackEdges?.length) obj.overlay.add(this.fatLines(h.crackEdges, hc.crack, 3.5));
+        if (hl.nonManifold && h.nonManifoldEdges.length) obj.overlay.add(this.fatLines(h.nonManifoldEdges, hc.nonManifold, 3.5));
         if (hl.flipped && h.flippedTriangles.length) obj.overlay.add(triMesh(obj.part.mesh, h.flippedTriangles, 0xd040ff));
         if (h.degenerateTriangles.length) obj.overlay.add(triMesh(obj.part.mesh, h.degenerateTriangles, 0x00e0ff));
         if (hl.holeIndex !== null) {
@@ -1298,6 +1352,76 @@ export class Viewer {
     }
     if (w > 6 && h > 6) this.zoomToRect((z.x + e.clientX) / 2, (z.y + e.clientY) / 2, w, h);
     this.cb.onZoomDone?.();
+  }
+
+  // ------------------------------------------------------------------ pick & place
+
+  private placeActive() {
+    const s = this.state;
+    return !!s && s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode && !s.preview && !s.zoomWindow;
+  }
+
+  private rayFor(clientX: number, clientY: number) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.ray;
+  }
+
+  /** Grab a part under the cursor: drag on a horizontal plane (Shift: vertical, up/down only). */
+  private startPlace(e: PointerEvent) {
+    const info = this.pick(e.clientX, e.clientY);
+    if (!info) return; // empty space: orbit
+    const s = this.state!;
+    const grabbed = this.objects.get(info.partId);
+    if (!grabbed || grabbed.part.locked) return;
+    const ids = s.selection.includes(info.partId) ? s.selection : [info.partId];
+    const items = ids
+      .map((id) => this.objects.get(id))
+      .filter((o): o is PartObject => !!o && !o.part.locked && o.part.visible)
+      .map((obj) => ({ obj, from: obj.group.position.clone() }));
+    const start = new Vector3(...info.point);
+    const vertical = e.shiftKey;
+    let plane: Plane;
+    if (vertical) {
+      // plane through the grab point facing the camera, containing the Z axis
+      const toCam = this.camera.getWorldPosition(new Vector3()).sub(start);
+      toCam.z = 0;
+      if (toCam.lengthSq() < 1e-9) toCam.set(0, -1, 0);
+      plane = new Plane().setFromNormalAndCoplanarPoint(toCam.normalize(), start);
+    } else plane = new Plane().setFromNormalAndCoplanarPoint(new Vector3(0, 0, 1), start);
+    this.placing = { plane, start, vertical, items, moved: false };
+    this.controls.enabled = false;
+    if (!s.selection.includes(info.partId)) this.cb.onPick({ ...info, shift: false, ctrl: false, clientX: e.clientX, clientY: e.clientY }, { shift: false, ctrl: false, clientX: e.clientX, clientY: e.clientY });
+  }
+
+  private movePlace(e: PointerEvent) {
+    const pl = this.placing;
+    if (!pl) return;
+    const hit = this.rayFor(e.clientX, e.clientY).intersectPlane(pl.plane, new Vector3());
+    if (!hit) return;
+    const d = hit.sub(pl.start);
+    if (pl.vertical) d.set(0, 0, d.z);
+    else d.z = 0;
+    // Ctrl / Cmd snaps the move to whole millimetres
+    if (e.ctrlKey || e.metaKey) d.set(Math.round(d.x), Math.round(d.y), Math.round(d.z));
+    if (d.lengthSq() > 1e-12) pl.moved = true;
+    for (const it of pl.items) {
+      it.obj.group.position.copy(it.from).add(d);
+      it.obj.group.updateMatrixWorld(true);
+    }
+    this.requestRender();
+  }
+
+  /** Returns true when the parts were actually moved (so the click is not a pick). */
+  private endPlace(): boolean {
+    const pl = this.placing!;
+    this.placing = null;
+    this.controls.enabled = true;
+    if (!pl.moved) return false;
+    this.pointerDown = null;
+    this.cb.onPlaceEnd?.(pl.items.map((it) => ({ id: it.obj.part.id, position: [round(it.obj.group.position.x), round(it.obj.group.position.y), round(it.obj.group.position.z)] })));
+    return true;
   }
 
   // ------------------------------------------------------------------ brush marking

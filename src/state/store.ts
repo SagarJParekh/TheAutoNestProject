@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, IntersectionEntry, Job, Notice, Part, PickMode, PickSlot, PlaneSettings,
   Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap, ShellView, TriEdit,
+  BlendEdgePick,
 } from './types';
 import type { MeshData } from '../geometry';
 
@@ -29,6 +30,8 @@ export interface AppState {
   faceSelection: FaceSelection | null;
   /** face picks used by the repair tabs (normals, align, props) */
   facePicks: Partial<Record<Exclude<PickSlot, 'primary'>, FaceSelection>>;
+  /** edges picked for fillet / chamfer */
+  blendEdges: BlendEdgePick[];
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
@@ -77,6 +80,7 @@ export const useStore = create<AppState>(() => ({
   pickSlot: 'primary',
   faceSelection: null,
   facePicks: {},
+  blendEdges: [],
   repairTab: 'fix',
   intersections: {},
   pointSlot: 'label',
@@ -126,8 +130,10 @@ export const useStore = create<AppState>(() => ({
     align2: { location: 'center', axis: 'both', beside: false, distance: 5 },
     perforateExtra: { keepPlugs: false },
     openEdges: { maxPerimeter: 20 },
-    triEdit: { mode: 'mark', markTool: 'triangle', angle: 20, planeAngle: 2, brushRadius: 3, windowThrough: false },
+    triEdit: { mode: 'mark', bridgeSide: 'A', markTool: 'triangle', angle: 20, planeAngle: 2, brushRadius: 3, windowThrough: false },
     remesh: { edgeLength: 1, iterations: 5, featureAngle: 35 },
+    offset: { mode: 'global', distance: 1, voxel: 0, asCopy: false, smooth: true, angle: 20 },
+    blend: { kind: 'fillet', size: 2 },
     cutMode: 'plane',
   },
   jobs: [],

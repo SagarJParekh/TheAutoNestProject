@@ -4,7 +4,7 @@
  */
 import { Matrix4, Vector3 } from 'three';
 import {
-  addTriangle, brushSelect, polylineToOutline, compactMesh, deleteTriangles, estimateRemeshTriangles, growSelection, invertSelection, meanEdgeLength, shellOfTriangle,
+  addTriangle, bridgeEdges, brushSelect, openEdgeOfTriangle, polylineToOutline, buildTopology, compactMesh, deleteTriangles, estimateRemeshTriangles, growSelection, invertSelection, meanEdgeLength, shellOfTriangle,
   shrinkSelection, subsetTriangles, vertexTriangles,
 } from '../geometry';
 import type { VertexTriangles } from '../geometry';
@@ -178,7 +178,7 @@ function liveTriEdit(partId: string) {
   return te && te.partId === partId && te.mesh === part.mesh ? te : { partId, mesh: part.mesh, tris: [], verts: [] };
 }
 
-export function startTriPick(mode: 'triangle' | 'vertex' | 'brush' | 'window') {
+export function startTriPick(mode: 'triangle' | 'vertex' | 'brush' | 'window' | 'edge') {
   const s = getState();
   const same = s.pickMode === mode;
   setState({ pickMode: same ? null : mode, preview: null });
@@ -470,4 +470,55 @@ async function cutWithOutline(outline: [number, number][], label: string, names:
   });
   void partFromWorld;
   void commit;
+}
+
+// ---------------------------------------------------------------- bridge
+
+const topoCache = new WeakMap<MeshData, ReturnType<typeof buildTopology>>();
+const topoOf = (mesh: MeshData) => {
+  let t = topoCache.get(mesh);
+  if (!t) topoCache.set(mesh, (t = buildTopology(mesh)));
+  return t;
+};
+
+/** Click near an open edge: add it to (or remove it from) the current bridge side. */
+export function onBridgeEdgePick(info: PickInfo) {
+  const part = partById(info.partId);
+  if (!part) return;
+  const te = liveTriEdit(part.id)!;
+  const inv = new Matrix4().copy(matrixOf(part.transform)).invert();
+  const lp = new Vector3(...info.point).applyMatrix4(inv);
+  const edge = openEdgeOfTriangle(part.mesh, info.faceIndex, [lp.x, lp.y, lp.z], topoOf(part.mesh));
+  if (!edge) return notify('info', 'Click right next to an open edge (a border of the surface)');
+  const side = getState().settings.triEdit.bridgeSide;
+  const same = (e: [number, number]) => e[0] === edge[0] && e[1] === edge[1];
+  let A = te.bridgeA ?? [], B = te.bridgeB ?? [];
+  if (A.some(same)) A = A.filter((e) => !same(e));
+  else if (B.some(same)) B = B.filter((e) => !same(e));
+  else if (side === 'A') A = [...A, edge];
+  else B = [...B, edge];
+  setState({ triEdit: { ...te, bridgeA: A, bridgeB: B }, selection: [part.id] });
+}
+
+export function clearBridge() {
+  const te = getState().triEdit;
+  if (te) setState({ triEdit: { ...te, bridgeA: [], bridgeB: [] } });
+}
+
+export function createBridge() {
+  const te = getState().triEdit;
+  const part = te && partById(te.partId);
+  if (!te || !part || part.mesh !== te.mesh) return notify('warning', 'Pick the edges on both sides first');
+  if (!te.bridgeA?.length || !te.bridgeB?.length) return notify('warning', 'Pick at least one open edge on side A and one on side B');
+  if (part.locked) return notify('warning', `${part.name} is locked`);
+  try {
+    const r = bridgeEdges(part.mesh, te.bridgeA, te.bridgeB);
+    prepareMesh(r.mesh);
+    afterLocalChange(`Bridge (${r.added} triangles)`, part, r.mesh);
+    setState({ triEdit: { partId: part.id, mesh: r.mesh, tris: [], verts: [], bridgeA: [], bridgeB: [] } });
+    setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, bridgeSide: 'A' } } }));
+    notify('success', `Bridged with ${r.added} triangles`);
+  } catch (e) {
+    notify('warning', (e as Error).message);
+  }
 }

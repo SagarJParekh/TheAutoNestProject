@@ -27,7 +27,15 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report';
+  | 'dimensions' | 'report' | 'offset';
+
+/** An edge picked for fillet / chamfer, stored in the part's local space. */
+export interface BlendEdgePick {
+  partId: string;
+  mesh: MeshData;
+  a: Vec3;
+  b: Vec3;
+}
 
 /** Shell browser state for one part (shell ids index `shells`). */
 export interface ShellView {
@@ -47,9 +55,12 @@ export interface TriEdit {
   mesh: MeshData;
   tris: number[];
   verts: number[];
+  /** bridge: open edges (in their triangle's direction) on each side */
+  bridgeA?: [number, number][];
+  bridgeB?: [number, number][];
 }
 export type DisplayMode = 'shaded' | 'edges' | 'wireframe' | 'xray';
-export type GizmoMode = 'translate' | 'rotate' | 'none';
+export type GizmoMode = 'translate' | 'rotate' | 'place' | 'none';
 export type ViewName = 'top' | 'front' | 'side' | 'iso' | 'bottom' | 'back';
 
 export interface PlaneSettings {
@@ -121,13 +132,13 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge';
 
 /** How a click / drag marks triangles in Repair → Edit. */
 export type MarkTool = 'triangle' | 'plane' | 'surface' | 'shell' | 'brush' | 'window';
 
 /** Which face slot a 'face' pick fills: the extrude/perforate selection or one of the repair picks. */
-export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip' | 'texture';
+export type PickSlot = 'primary' | 'alignSource' | 'alignTarget' | 'propsA' | 'propsB' | 'flip' | 'texture' | 'offset';
 
 /** A point picked on a part surface, stored in the part's local space so it follows the part. */
 export interface PointPick {
@@ -205,7 +216,9 @@ export interface ToolSettings {
   perforateExtra: { keepPlugs: boolean };
   openEdges: { maxPerimeter: number };
   triEdit: {
-    mode: 'mark' | 'create';
+    mode: 'mark' | 'create' | 'bridge';
+    /** which side of the bridge the next picked edge goes to */
+    bridgeSide: 'A' | 'B';
     markTool: MarkTool;
     /** max crease between neighbours for "mark surface", degrees */
     angle: number;
@@ -217,6 +230,19 @@ export interface ToolSettings {
     windowThrough: boolean;
   };
   remesh: { edgeLength: number; iterations: number; featureAngle: number };
+  offset: {
+    mode: 'global' | 'local';
+    /** mm; positive grows the part / pushes the surface out */
+    distance: number;
+    /** global: voxel size in mm, 0 = automatic */
+    voxel: number;
+    /** global: keep the original and add the offset as a new part */
+    asCopy: boolean;
+    /** local: grow the picked face across smooth curvature */
+    smooth: boolean;
+    angle: number;
+  };
+  blend: { kind: 'fillet' | 'chamfer'; size: number };
   cutMode: 'plane' | 'lasso' | 'polyline';
 }
 

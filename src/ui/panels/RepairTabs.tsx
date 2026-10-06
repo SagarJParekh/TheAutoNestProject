@@ -16,7 +16,7 @@ export function useSetting<K extends Key>(k: K) {
 }
 
 /** Button that arms a face pick, plus what was picked. */
-function PickButton({ slot, label }: { slot: Exclude<PickSlot, 'primary'>; label: string }) {
+export function PickButton({ slot, label }: { slot: Exclude<PickSlot, 'primary'>; label: string }) {
   const armed = useStore((s) => s.pickMode === 'face' && s.pickSlot === slot);
   const pick = useStore((s) => s.facePicks[slot]);
   const part = useStore((s) => (pick ? s.parts.find((p) => p.id === pick.partId) : undefined));

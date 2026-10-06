@@ -39,6 +39,8 @@ export const Icon = {
   props: P(<><path d="M3 4h18M3 20h18" /><path d="M7 4v16M12 4v16M17 4v16" /></>),
   dimensions: P(<><rect x="6" y="6" width="12" height="12" rx="1" /><path d="M6 3v2M18 3v2M6 4h12M21 6h-2M21 18h-2M20 6v12" /></>),
   report: P(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M3 14h18M9 9v11M15 9v11" /></>),
+  hand: P(<><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12" /><path d="M11 11V4a1.5 1.5 0 0 1 3 0v7" /><path d="M14 11V5.5a1.5 1.5 0 0 1 3 0V13" /><path d="M8 13V9.5a1.5 1.5 0 0 0-3 0V14a7 7 0 0 0 7 7h1a6 6 0 0 0 6-6v-5a1.5 1.5 0 0 0-3 0" /></>),
+  offset: P(<><path d="M4 20V10a6 6 0 0 1 6-6h10" /><path d="M8 20v-9a3 3 0 0 1 3-3h9" strokeDasharray="2 2" /></>),
   search: P(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>),
   cube: P(<><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="M3 7l9 5 9-5M12 12v10" /></>),
 };

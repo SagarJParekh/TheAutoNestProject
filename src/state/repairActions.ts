@@ -44,7 +44,13 @@ export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number)
   const p = partById(partId);
   if (!p) return;
   const tex = getState().settings.texture;
-  const grow = slot === 'texture' ? { angle: tex.angleTolerance, smooth: tex.smooth } : { angle: 2, smooth: false };
+  const off = getState().settings.offset;
+  const grow =
+    slot === 'texture'
+      ? { angle: tex.angleTolerance, smooth: tex.smooth }
+      : slot === 'offset'
+        ? { angle: off.smooth ? off.angle : 2, smooth: off.smooth }
+        : { angle: 2, smooth: false };
   const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, ...grow }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
   const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };

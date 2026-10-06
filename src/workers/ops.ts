@@ -339,6 +339,33 @@ export const ops = {
     return { result: r, transfer: meshBuffers(r.mesh) };
   },
 
+  async offset(args: { mesh: MeshData; distance: number; voxelSize?: number }, progress: Progress): Promise<Result<{ mesh: MeshData; voxelSize: number }>> {
+    const r = G.offsetMesh(args.mesh, args.distance, { voxelSize: args.voxelSize || undefined }, progress);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async offsetRegion(args: { mesh: MeshData; tris: Uint32Array; distance: number }, progress: Progress): Promise<Result<MeshData>> {
+    progress(0.3, 'Offsetting surface');
+    const r = G.offsetRegion(args.mesh, args.tris, args.distance);
+    return { result: r, transfer: meshBuffers(r) };
+  },
+
+  async blend(
+    args: { mesh: MeshData; edges: [Vec3, Vec3][]; kind: 'fillet' | 'chamfer'; size: number },
+    progress: Progress,
+  ): Promise<Result<{ mesh: MeshData; edges: G.SharpEdge[] }>> {
+    progress(0.1, 'Finding edges');
+    const edges = args.edges.map(([a, b]) => G.findSharpEdge(args.mesh, a, b));
+    // the same straight edge picked twice (e.g. two segments of one run) is blended once
+    const uniq = edges.filter(
+      (e, i) =>
+        edges.findIndex((f) => Math.hypot(f.p0[0] - e.p0[0], f.p0[1] - e.p0[1], f.p0[2] - e.p0[2]) + Math.hypot(f.p1[0] - e.p1[0], f.p1[1] - e.p1[1], f.p1[2] - e.p1[2]) < 1e-6) === i,
+    );
+    progress(0.4, args.kind === 'fillet' ? 'Rounding edges' : 'Bevelling edges');
+    const mesh = await G.blendEdges(args.mesh, uniq, args.kind, args.size);
+    return { result: { mesh, edges: uniq }, transfer: meshBuffers(mesh) };
+  },
+
   async export(
     args: { format: ExportFormat; items: ExportItem[]; zip: boolean; quality?: number; options?: ExportOptions },
     progress: Progress,
