@@ -171,6 +171,10 @@ describe('normals and report', () => {
     expect(tsv[0]).toBe('Part Name\tQuantity\tVolume (mm³)\tX (mm)\tY (mm)\tZ (mm)');
     expect(tsv[1]).toBe('Bracket, left\t\t12345.68\t10.00\t20.50\t3.25');
     expect(tsv[2].split('\t').length).toBe(6);
+    // copying leaves out the heading row
+    const rowsOnly = reportTSV(rows, false).split('\r\n');
+    expect(rowsOnly[0]).toBe('Bracket, left\t\t12345.68\t10.00\t20.50\t3.25');
+    expect(rowsOnly.filter(Boolean).length).toBe(2);
     expect(reportCSV(rows)).toContain('"Bracket, left",,12345.68,10.00,20.50,3.25');
   });
 });

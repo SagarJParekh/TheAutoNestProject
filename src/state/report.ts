@@ -47,9 +47,9 @@ export const REPORT_HEADER = ['Part Name', 'Quantity', 'Volume (mm³)', 'X (mm)'
 const num = (v: number, d: number) => (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v).toFixed(d);
 
 /** Tab-separated rows: pastes straight into Excel / Google Sheets cells. Quantity is left blank. */
-export function reportTSV(rows: ReportRow[]): string {
+export function reportTSV(rows: ReportRow[], header = true): string {
   const clean = (s: string) => s.replace(/[\t\r\n]+/g, ' ');
-  const lines = [REPORT_HEADER.join('\t'), ...rows.map((r) => [clean(r.name), '', num(r.volume, 2), num(r.x, 2), num(r.y, 2), num(r.z, 2)].join('\t'))];
+  const lines = [...(header ? [REPORT_HEADER.join('\t')] : []), ...rows.map((r) => [clean(r.name), '', num(r.volume, 2), num(r.x, 2), num(r.y, 2), num(r.z, 2)].join('\t'))];
   return lines.join('\r\n') + '\r\n';
 }
 
@@ -60,20 +60,20 @@ export function reportCSV(rows: ReportRow[]): string {
 }
 
 /** HTML table version of the report: keeps columns when pasted into spreadsheets that prefer HTML. */
-export function reportHTML(rows: ReportRow[]): string {
+export function reportHTML(rows: ReportRow[], header = true): string {
   const esc = (s: string) => s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c]!);
-  const head = `<tr>${REPORT_HEADER.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>`;
+  const head = header ? `<tr>${REPORT_HEADER.map((h) => `<th>${esc(h)}</th>`).join('')}</tr>` : '';
   const body = rows.map((r) => `<tr><td>${esc(r.name)}</td><td></td><td>${num(r.volume, 2)}</td><td>${num(r.x, 2)}</td><td>${num(r.y, 2)}</td><td>${num(r.z, 2)}</td></tr>`).join('');
   return `<table>${head}${body}</table>`;
 }
 
-/** Copy the report to the clipboard as TSV (+ HTML where supported). */
+/** Copy the part rows (no heading row) to the clipboard as TSV (+ HTML where supported). */
 export async function copyReport(rows: ReportRow[]): Promise<boolean> {
-  const tsv = reportTSV(rows);
+  const tsv = reportTSV(rows, false);
   try {
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
       await navigator.clipboard.write([
-        new ClipboardItem({ 'text/plain': new Blob([tsv], { type: 'text/plain' }), 'text/html': new Blob([reportHTML(rows)], { type: 'text/html' }) }),
+        new ClipboardItem({ 'text/plain': new Blob([tsv], { type: 'text/plain' }), 'text/html': new Blob([reportHTML(rows, false)], { type: 'text/html' }) }),
       ]);
       return true;
     }

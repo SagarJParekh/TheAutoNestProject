@@ -39,7 +39,7 @@ export function ReportPanel() {
         ]}
       />
       <div className="report-actions">
-        <button className="btn primary" disabled={!rows.length} onClick={copy} title="Copy as a table; paste into Excel with Ctrl+V">
+        <button className="btn primary" disabled={!rows.length} onClick={copy} title="Copy the part rows (without the headings); paste into Excel with Ctrl+V">
           {copied ? '✓ Copied' : 'Copy for Excel'}
         </button>
         <button className="btn" disabled={!rows.length} onClick={download}>
@@ -77,7 +77,7 @@ export function ReportPanel() {
       {!rows.length && <Hint>Open some parts to build the report.</Hint>}
       <Hint>
         Volume in mm³, X / Y / Z are the bounding-box sizes in mm (as placed, transforms included). Quantity is left blank to fill in. “Copy for Excel”
-        copies the header and all rows; paste into the first cell. The volume is exact only for watertight parts.
+        copies only the part rows (no headings), so you can paste them under your own sheet's headings. The CSV download includes the headings. The volume is exact only for watertight parts.
       </Hint>
     </Section>
   );
