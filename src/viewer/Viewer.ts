@@ -12,6 +12,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { highlightColors } from '../state/contrast';
+import { viewportBackground } from '../state/theme';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData, Vec3 } from '../geometry';
 import { faceNormalSegmentsSplit } from '../geometry/props';
@@ -129,10 +130,11 @@ export class Viewer {
   private unsubMesh: () => void;
 
   constructor(private container: HTMLElement, private cb: ViewerCallbacks) {
-    this.renderer = new WebGLRenderer({ antialias: true, stencil: true, powerPreference: 'high-performance' });
+    // transparent canvas: the viewport background (colour or gradient) is set with CSS on the container
+    this.renderer = new WebGLRenderer({ antialias: true, stencil: true, alpha: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.localClippingEnabled = true;
-    this.renderer.setClearColor(0x1b1e24);
+    this.renderer.setClearColor(0x000000, 0);
     this.renderer.autoClear = false;
     container.appendChild(this.renderer.domElement);
 
@@ -278,12 +280,16 @@ export class Viewer {
 
   // ------------------------------------------------------------------ grid
 
+  private gridLight = false;
+  private lastGridSize = 200;
   private buildGrid(size: number) {
+    this.lastGridSize = size;
     if (size === this.gridSize) return;
     this.gridSize = size;
     this.gridGroup.clear();
-    const minor = new GridHelper(size, size / 10, 0x2c313a, 0x2c313a);
-    const major = new GridHelper(size, size / 50, 0x3a414d, 0x3a414d);
+    const [cMinor, cMajor] = this.gridLight ? [0xb4bac4, 0x8c94a1] : [0x2c313a, 0x3a414d];
+    const minor = new GridHelper(size, size / 10, cMinor, cMinor);
+    const major = new GridHelper(size, size / 50, cMajor, cMajor);
     for (const g of [minor, major]) {
       g.rotation.x = Math.PI / 2;
       (g.material as Material).depthWrite = false;
@@ -360,6 +366,15 @@ export class Viewer {
     const prev = this.state;
     this.state = s;
     if (!s.polyMode && this.poly) this.cancelPolyline();
+    if (!prev || prev.appearance !== s.appearance) {
+      const bg = viewportBackground(s.appearance);
+      this.container.style.background = bg.css;
+      if (this.gridLight !== bg.light) {
+        this.gridLight = bg.light;
+        this.gridSize = 0; // rebuild with matching line colours
+        this.buildGrid(this.lastGridSize);
+      }
+    }
     const ns = s.settings.normals;
     orientationUniforms.uOrient.value = ns.orientation ? 1 : 0;
     orientationUniforms.uFrontColor.value.set(ns.frontColor);

@@ -41,6 +41,7 @@ export const Icon = {
   report: P(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M3 14h18M9 9v11M15 9v11" /></>),
   hand: P(<><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12" /><path d="M11 11V4a1.5 1.5 0 0 1 3 0v7" /><path d="M14 11V5.5a1.5 1.5 0 0 1 3 0V13" /><path d="M8 13V9.5a1.5 1.5 0 0 0-3 0V14a7 7 0 0 0 7 7h1a6 6 0 0 0 6-6v-5a1.5 1.5 0 0 0-3 0" /></>),
   offset: P(<><path d="M4 20V10a6 6 0 0 1 6-6h10" /><path d="M8 20v-9a3 3 0 0 1 3-3h9" strokeDasharray="2 2" /></>),
+  theme: P(<><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.5-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z" /><circle cx="7.5" cy="11" r="1.2" /><circle cx="10" cy="7" r="1.2" /><circle cx="15" cy="7.5" r="1.2" /></>),
   search: P(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>),
   cube: P(<><path d="M12 2 3 7v10l9 5 9-5V7z" /><path d="M3 7l9 5 9-5M12 12v10" /></>),
 };

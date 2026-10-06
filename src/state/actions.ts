@@ -8,6 +8,7 @@ import '../loaders/index';
 import {
   commit, getState, notify, partById, selectedParts, setState, startJob, updateParts,
 } from './store';
+import { applyUiTheme, saveAppearance } from './theme';
 import { nextColor } from './palette';
 import type { Part, Preview, ToolId } from './types';
 import { meshEntry, updateMeshEntry } from './meshCache';
@@ -681,4 +682,12 @@ export function cancelTool() {
     settings: tool === 'hollow' ? { ...s.settings, hollow: { ...s.settings.hollow, drainHoles: [] } } : s.settings,
     tool: 'transform',
   });
+}
+
+/** Change the interface theme or viewport background (remembered in this browser). */
+export function setAppearance(patch: Partial<import('./theme').Appearance>) {
+  const appearance = { ...getState().appearance, ...patch };
+  setState({ appearance });
+  saveAppearance(appearance);
+  applyUiTheme(appearance);
 }

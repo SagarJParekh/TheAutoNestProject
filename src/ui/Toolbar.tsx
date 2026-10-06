@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { Icon } from './icons';
+import { ThemeMenu } from './ThemeMenu';
 import { getState, redo, setState, undo, useStore } from '../state/store';
 import { importFiles, setImportQuality, setTool } from '../state/actions';
 import { viewerApi } from '../viewer/api';
@@ -158,6 +159,7 @@ export function Toolbar() {
         <button className={`tb icon ${grid ? 'active' : ''}`} title="Toggle grid (G)" onClick={() => setState({ showGrid: !grid })}>
           {Icon.grid}
         </button>
+        <ThemeMenu />
         <button className="tb icon" title="Search functions (Ctrl+K or /)" onClick={() => setState({ showSearch: true })}>
           {Icon.search}
         </button>

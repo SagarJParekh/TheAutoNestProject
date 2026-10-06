@@ -5,6 +5,7 @@ import type {
   BlendEdgePick,
 } from './types';
 import type { MeshData } from '../geometry';
+import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
   label: string;
@@ -32,6 +33,8 @@ export interface AppState {
   facePicks: Partial<Record<Exclude<PickSlot, 'primary'>, FaceSelection>>;
   /** edges picked for fillet / chamfer */
   blendEdges: BlendEdgePick[];
+  /** interface theme and viewport background (remembered per browser) */
+  appearance: Appearance;
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
@@ -81,6 +84,7 @@ export const useStore = create<AppState>(() => ({
   faceSelection: null,
   facePicks: {},
   blendEdges: [],
+  appearance: typeof localStorage === 'undefined' ? DEFAULT_APPEARANCE : loadAppearance(),
   repairTab: 'fix',
   intersections: {},
   pointSlot: 'label',

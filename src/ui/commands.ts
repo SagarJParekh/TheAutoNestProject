@@ -6,6 +6,7 @@ import { getState, redo, setState, undo } from '../state/store';
 import {
   analyzePart, cancelTool, centerOnOrigin, deleteParts, dropToBed, duplicateParts, mirrorParts, previewFillHoles, previewRepair,
   selectAll, setImportQuality, setTool,
+  setAppearance,
 } from '../state/actions';
 import {
   checkIntersections, flipAllNormals, mergeSelectedParts, previewMakeSolid, previewRemoveOverlaps, previewStitch, previewUnifyShells,
@@ -13,6 +14,7 @@ import {
 } from '../state/repairActions';
 import { alignToReference, arrangeOnBed, arrayParts } from '../state/featureActions';
 import { growMarked, invertMarked, loadShells, previewFixOpenEdges, previewRemesh, startLasso, startPolyline } from '../state/editActions';
+import { BACKGROUNDS } from '../state/theme';
 import { viewerApi } from '../viewer/api';
 import type { DisplayMode, MeasureMode, RepairTab, ToolId } from '../state/types';
 
@@ -97,6 +99,9 @@ export function buildCommands(): Command[] {
     { id: 'chamfer', label: 'Chamfer edges (bevel)', group: 'Tools', keywords: 'bevel edge', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, blend: { ...s.settings.blend, kind: 'chamfer' } } })); } },
     { id: 'place', label: 'Pick and place (drag parts with the mouse)', group: 'Transform', keywords: 'move drag hand', shortcut: 'Y', run: () => { setTool('transform'); setState({ gizmo: 'place' }); } },
     { id: 'bridge', label: 'Bridge two edges (create surface)', group: 'Repair', keywords: 'bridge gap fill surface strip', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'bridge' } }, pickMode: 'edge' }))) },
+    { id: 'theme-light', label: 'Light interface theme', group: 'View', keywords: 'theme appearance colours white', run: () => setAppearance({ ui: 'light' }) },
+    { id: 'theme-dark', label: 'Dark interface theme', group: 'View', keywords: 'theme appearance colours black night', run: () => setAppearance({ ui: 'dark' }) },
+    ...BACKGROUNDS.map((b) => ({ id: `bg-${b.id}`, label: `Viewport background: ${b.label}`, group: 'View', keywords: 'background theme colour gradient', run: () => setAppearance({ background: b.id }) })),
     { id: 'report', label: 'Parts report (copy to Excel)', group: 'Tools', keywords: 'table volume list export excel csv', shortcut: 'N', run: tool('report') },
     { id: 'orient-colors', label: 'Colour triangles by orientation (normal / inverted)', group: 'Repair', keywords: 'normals inverted flipped back faces colours', run: () => setState((s) => ({ settings: { ...s.settings, normals: { ...s.settings.normals, orientation: !s.settings.normals.orientation } } })) },
     { id: 'clip', label: 'Section clip (inspect inside)', group: 'Tools', keywords: 'section plane cross-section', shortcut: 'C', run: tool('clip') },
