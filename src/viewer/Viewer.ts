@@ -6,7 +6,7 @@ import {
   Sphere, Vector2, Vector3, WebGLRenderer, AlwaysStencilFunc, Material, Line, Line3, Points, PointsMaterial, Sprite, SpriteMaterial,
   CanvasTexture, SRGBColorSpace,
 } from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { FreeOrbitControls } from './freeOrbit';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
@@ -88,7 +88,7 @@ export class Viewer {
   private perspective: PerspectiveCamera;
   private ortho: OrthographicCamera;
   camera: PerspectiveCamera | OrthographicCamera;
-  private controls: OrbitControls;
+  private controls: FreeOrbitControls;
   private gizmo: TransformControls;
   private gizmoHelper: Object3D;
   private headlight = new DirectionalLight(0xffffff, 1.6);
@@ -150,7 +150,7 @@ export class Viewer {
     this.scene.add(new AmbientLight(0xffffff, 0.35));
     this.scene.add(new HemisphereLight(0xdde6ff, 0x30281e, 0.9));
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = new FreeOrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 0, 20);
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true;
@@ -910,6 +910,7 @@ export class Viewer {
       this.updateOrthoFrustum();
       this.ortho.position.copy(this.perspective.position);
       this.ortho.quaternion.copy(this.perspective.quaternion);
+      this.ortho.up.copy(this.perspective.up);
       this.ortho.zoom = 1;
       this.ortho.updateProjectionMatrix();
       this.camera = this.ortho;
@@ -920,6 +921,7 @@ export class Viewer {
       const halfH = (this.ortho.top - this.ortho.bottom) / 2 / this.ortho.zoom;
       const dist = halfH / Math.tan((this.perspective.fov * D2R) / 2);
       this.perspective.position.copy(target).addScaledVector(dir, dist);
+      this.perspective.up.copy(this.ortho.up);
       this.camera = this.perspective;
       this.perspective.add(this.headlight);
     }
@@ -946,7 +948,7 @@ export class Viewer {
     const sphere = this.visibleBounds(selectionOnly).getBoundingSphere(new Sphere());
     const dir = new Vector3().subVectors(this.camera.position, this.controls.target).normalize();
     if (dir.lengthSq() === 0) dir.set(1, -1, 1).normalize();
-    this.frame(sphere, dir);
+    this.frame(sphere, dir, true);
   }
 
   setView(v: ViewName) {
@@ -962,17 +964,22 @@ export class Viewer {
     this.frame(sphere, dirs[v].normalize());
   }
 
-  private frame(sphere: Sphere, dir: Vector3) {
+  private frame(sphere: Sphere, dir: Vector3, keepUp = false) {
     const r = Math.max(sphere.radius, 1);
     const dist = (r / Math.sin((this.perspective.fov * D2R) / 2)) * 1.08;
     this.controls.target.copy(sphere.center);
     this.perspective.position.copy(sphere.center).addScaledVector(dir, dist);
+    // standard views are upright (Z up; top / bottom look along Z with Y up); fitting keeps the current roll
+    if (keepUp) this.perspective.up.copy(this.camera.up);
+    else if (Math.abs(dir.z) > 0.999) this.perspective.up.set(0, dir.z > 0 ? 1 : -1, 0);
+    else this.perspective.up.set(0, 0, 1);
     this.perspective.lookAt(sphere.center);
     this.perspective.near = Math.max(0.01, dist / 1000);
     this.perspective.far = dist * 100;
     this.perspective.updateProjectionMatrix();
     if (this.camera === this.ortho) {
       this.ortho.position.copy(this.perspective.position);
+      this.ortho.up.copy(this.perspective.up);
       this.ortho.quaternion.copy(this.perspective.quaternion);
       this.ortho.zoom = 1;
       this.updateOrthoFrustum();
