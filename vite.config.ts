@@ -6,6 +6,8 @@ const isTest = !!process.env.VITEST;
 const stub = fileURLToPath(new URL('./src/stubs/empty.ts', import.meta.url));
 
 export default defineConfig({
+  // relative asset URLs, so the built site works from any folder (e.g. GitHub Pages /repo/)
+  base: './',
   plugins: [react()],
   resolve: {
     // rhino3dm's Emscripten glue references `ws` for Node pthreads; it is never loaded in browsers
