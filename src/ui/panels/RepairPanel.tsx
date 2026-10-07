@@ -3,7 +3,7 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { CombineTab, FixExtras } from './RepairTabs';
 import { ShellsTab, TriEditTab, OpenEdgesSection } from './EditTabs';
 import { getState, setState, useStore } from '../../state/store';
-import { analyzePart, previewFillHoles, previewRepair } from '../../state/actions';
+import { analyzePart, previewFillHoles, previewRepair, repairParts } from '../../state/actions';
 import { previewCleanTriangles, previewFixNonManifold } from '../../state/repairActions';
 import type { Part, RepairTab, ToolSettings } from '../../state/types';
 import { highlightColors } from '../../state/contrast';
@@ -51,7 +51,15 @@ function FixTab({ parts }: { parts: Part[] }) {
   const setHl = (patch: Partial<ToolSettings['highlight']>) =>
     setState({ settings: { ...getState().settings, highlight: { ...getState().settings.highlight, ...patch } } });
 
-  if (!part) return <Section title="Repair"><Hint>Select one part to analyse and repair.</Hint></Section>;
+  if (!part)
+    return (
+      <>
+        <RepairManySection />
+        <Section title="Repair">
+          <Hint>Select one part to analyse it and see its problems in detail.</Hint>
+        </Section>
+      </>
+    );
 
   const rowItem = (label: string, value: number, color?: string, bad = value > 0, fix?: { label: string; run: () => void }) => (
     <>
@@ -73,6 +81,7 @@ function FixTab({ parts }: { parts: Part[] }) {
   const hc = highlightColors(part.color);
   return (
     <>
+      <RepairManySection />
       <Section
         title="Analysis"
         actions={
@@ -184,5 +193,25 @@ function FixTab({ parts }: { parts: Part[] }) {
       </Section>
       <FixExtras part={part} />
     </>
+  );
+}
+
+/** Repair several parts at once with the settings below (selected parts, or all). */
+function RepairManySection() {
+  const selection = useStore((s) => s.selection);
+  const total = useStore((s) => s.parts.filter((p) => !p.locked).length);
+  const preview = useStore((s) => s.preview);
+  return (
+    <Section title="Repair several parts">
+      <div className="btn-grid two">
+        <button className="btn" disabled={!selection.length || !!preview} onClick={() => repairParts('selected')}>
+          Repair selected ({selection.length})
+        </button>
+        <button className="btn primary" disabled={!total || !!preview} onClick={() => repairParts('all')}>
+          Repair all ({total})
+        </button>
+      </div>
+      <Hint>Runs the auto repair (with the options of the Auto repair section) on every part together: one preview, one undo step.</Hint>
+    </Section>
   );
 }

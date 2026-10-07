@@ -430,6 +430,62 @@ export async function previewRepair() {
   });
 }
 
+/**
+ * Auto repair several parts at once (the selected ones, or every part), with
+ * the repair settings of the Repair tool. Shows one preview for all of them;
+ * Apply replaces them together as a single undo step.
+ */
+export async function repairParts(scope: 'selected' | 'all') {
+  const s = getState();
+  const pool = scope === 'all' ? s.parts : s.parts.filter((p) => s.selection.includes(p.id));
+  const parts = pool.filter((p) => !p.locked);
+  if (!parts.length) return notify('warning', scope === 'all' ? 'There are no unlocked parts to repair' : 'Select the parts to repair');
+  const st = s.settings.repair;
+  const options = {
+    removeSmallShells: st.removeSmallShells,
+    smallShellRatio: st.smallShellRatio,
+    weldTolerance: st.weldTolerance > 0 ? st.weldTolerance : undefined,
+    fillHoles: st.fillHoles,
+    stitch: st.stitch,
+    stitchTolerance: s.settings.stitch.tolerance > 0 ? s.settings.stitch.tolerance : undefined,
+  };
+  const results = await Promise.all(parts.map((p) => runJob(`Repairing ${p.name}`, 'repair', { mesh: p.mesh, options }, { silent: parts.length > 1 })));
+  if (results.some((r) => !r)) return; // cancelled
+  const done = parts.map((p, i) => ({ part: p, r: results[i]! }));
+  const fixed = done.filter((d) => d.r.summary.after.watertight).length;
+  const wasOk = done.filter((d) => d.r.summary.before.watertight).length;
+  const yn = (v: boolean) => (v ? 'watertight' : 'not watertight');
+  const summary = [
+    `${parts.length} part${parts.length > 1 ? 's' : ''} repaired: ${fixed} watertight after (${wasOk} before)`,
+    '—',
+    ...done.slice(0, 40).map(
+      ({ part, r }) =>
+        `${part.name}: open edges ${r.summary.before.openEdges} → ${r.summary.after.openEdges}, ${yn(r.summary.before.watertight)} → ${yn(r.summary.after.watertight)}`,
+    ),
+    ...(done.length > 40 ? [`… and ${done.length - 40} more`] : []),
+  ];
+  setPreview({
+    tool: getState().tool,
+    label: `Repair ${scope === 'all' ? 'all' : 'selected'} parts (${parts.length})`,
+    replaces: parts.map((p) => p.id),
+    meshes: done.map(({ part, r }) => ({ name: part.name, mesh: worldMeshFor(part, r.mesh), color: part.color })),
+    summary,
+    apply: () => {
+      const byId = new Map(done.map(({ part, r }) => [part.id, r.mesh]));
+      for (const m of byId.values()) prepareMesh(m);
+      updateParts(`Repair ${parts.length} part${parts.length > 1 ? 's' : ''}`, [...byId.keys()], (p) => ({ ...p, mesh: byId.get(p.id) ?? p.mesh }));
+      setState((x) => {
+        const a = { ...x.analysis };
+        for (const id of byId.keys()) delete a[id];
+        return { analysis: a };
+      });
+      const sel = getState().selection;
+      if (sel.length === 1 && byId.has(sel[0])) analyzePart(sel[0]);
+      notify('success', `Repaired ${parts.length} part${parts.length > 1 ? 's' : ''}: ${fixed} watertight`);
+    },
+  });
+}
+
 function fmtVal(v: number | boolean) {
   return typeof v === 'boolean' ? (v ? 'yes' : 'no') : v.toLocaleString();
 }

@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { Icon } from './icons';
 import { useStore } from '../state/store';
 import {
-  deleteParts, duplicateParts, renamePart, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
+  deleteParts, duplicateParts, renamePart, repairParts, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
 } from '../state/actions';
+import { sendPartsToBuild } from '../state/buildActions';
 import type { Part } from '../state/types';
 
 export function PartsPanel() {
   const parts = useStore((s) => s.parts);
   const selection = useStore((s) => s.selection);
+  const preview = useStore((s) => s.preview);
   const sel = new Set(selection);
   return (
     <aside className="panel left">
@@ -34,14 +36,31 @@ export function PartsPanel() {
           <PartRow key={p.id} part={p} selected={sel.has(p.id)} />
         ))}
       </div>
-      {selection.length > 0 && (
-        <footer className="panel-foot">
-          <button className="btn" onClick={() => duplicateParts()} title="Duplicate (Ctrl+D)">
-            {Icon.copy} Duplicate
-          </button>
-          <button className="btn danger" onClick={() => deleteParts()} title="Delete (Del)">
-            {Icon.trash} Delete
-          </button>
+      {parts.length > 0 && (
+        <footer className="panel-foot parts-foot">
+          {selection.length > 0 && (
+            <div className="foot-row">
+              <button className="btn" onClick={() => duplicateParts()} title="Duplicate (Ctrl+D)">
+                {Icon.copy} Duplicate
+              </button>
+              <button className="btn danger" onClick={() => deleteParts()} title="Delete (Del)">
+                {Icon.trash} Delete
+              </button>
+            </div>
+          )}
+          <div className="foot-row">
+            <button
+              className="btn"
+              disabled={!!preview}
+              onClick={() => repairParts(selection.length ? 'selected' : 'all')}
+              title={selection.length ? 'Auto repair the selected parts together (one preview, one undo step)' : 'Auto repair every part together (one preview, one undo step)'}
+            >
+              {Icon.repair} {selection.length ? `Repair ${selection.length} selected` : 'Repair all'}
+            </button>
+            <button className="btn primary" onClick={sendPartsToBuild} title={selection.length ? 'Send the selected parts to Build generation' : 'Send all parts to Build generation'}>
+              {Icon.export} {selection.length ? 'Send to Build' : 'Send all to Build'}
+            </button>
+          </div>
         </footer>
       )}
     </aside>

@@ -310,3 +310,11 @@ export function openBuildInPrep(i: number) {
 }
 
 export type { Quat };
+
+/** Mesh prep → Build generation: copy the selected (or all) parts and open the build unit. */
+export function sendPartsToBuild() {
+  const s = getState();
+  if (!s.parts.some((p) => p.visible)) return notify('warning', 'There are no parts to send');
+  addPartsFromPrep();
+  setWorkspace('build');
+}

@@ -6,8 +6,9 @@ import { getState, redo, setState, undo } from '../state/store';
 import {
   analyzePart, cancelTool, centerOnOrigin, deleteParts, dropToBed, duplicateParts, mirrorParts, previewFillHoles, previewRepair,
   selectAll, setImportQuality, setTool,
-  setAppearance,
+  setAppearance, repairParts,
 } from '../state/actions';
+import { sendPartsToBuild } from '../state/buildActions';
 import {
   checkIntersections, flipAllNormals, mergeSelectedParts, previewMakeSolid, previewRemoveOverlaps, previewStitch, previewUnifyShells,
   splitShellsToParts, unifyNormals, previewCleanTriangles, previewFixNonManifold,
@@ -67,6 +68,9 @@ export function buildCommands(): Command[] {
     ...([0, 1, 2] as const).map((a) => ({ id: `mirror-${a}`, label: `Mirror ${'XYZ'[a]}`, group: 'Transform', keywords: 'flip reflect', run: () => mirrorParts(a) })),
     { id: 'align-part', label: 'Align parts to a reference part', group: 'Transform', keywords: 'left right front back centre distance', run: () => { setTool('transform'); alignToReference(); } },
     { id: 'array', label: 'Create 2D array of copies', group: 'Transform', keywords: 'grid pattern copies duplicate', run: () => { setTool('transform'); arrayParts(); } },
+    { id: 'repair-all', label: 'Repair all parts', group: 'Repair', keywords: 'auto fix batch every', run: () => repairParts('all') },
+    { id: 'repair-selected', label: 'Repair selected parts', group: 'Repair', keywords: 'auto fix batch', run: () => repairParts('selected') },
+    { id: 'send-build', label: 'Send parts to Build generation', group: 'File', keywords: 'build platform printer nest pack', run: sendPartsToBuild },
     { id: 'auto-arrange', label: 'Auto arrange (flattest face down, arrange in X / Y)', group: 'Transform', keywords: 'orient lay flat nest pack bed bottom', run: autoArrange },
     { id: 'arrange', label: 'Arrange parts on bed', group: 'Transform', keywords: 'layout pack nest 2d', run: arrangeOnBed },
     ...(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'] as const).map((ax) => ({
