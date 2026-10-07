@@ -3,8 +3,8 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, currentPrinter, exportBuilds, openBuildInPrep, partOfKey, removeBuildPart, setActiveBuild, setPartQuantity,
-  setPartTilt, updateBuildSettings,
+  addPartsFromPrep, clearBuildParts, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
 import { importableExtensions } from '../../loaders/registry';
@@ -201,12 +201,71 @@ export function BuildSetupPanel() {
             everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.
           </Hint>
         </Section>
-        <Section title="Tilt (all parts)">
-          <TiltControls tilt={g.tilt} onChange={(tilt) => updateBuildSettings({ tilt })} />
-          <Hint>Parts can also be tilted one by one in the parts list. A part that no longer fits after tilting moves to another build.</Hint>
-        </Section>
+        <TiltSection />
       </div>
     </aside>
+  );
+}
+
+/** Tilt for all parts, or only for the selected parts (they get their own tilt). */
+function TiltSection() {
+  const g = useStore((s) => s.buildGen);
+  const selection = useStore((s) => s.selection);
+  const ids = selectedBuildPartIds(selection);
+  const [target, setTarget] = useState<'all' | 'selected'>('all');
+  // picking parts switches to "selected"; clearing the selection goes back to "all"
+  const [lastCount, setLastCount] = useState(ids.length);
+  if (ids.length !== lastCount) {
+    setLastCount(ids.length);
+    setTarget(ids.length ? 'selected' : 'all');
+  }
+  const own = g.parts.filter((p) => p.tilt);
+  const first = g.parts.find((p) => p.id === ids[0]);
+  const selTilt = first?.tilt ?? g.tilt;
+  return (
+    <Section title="Tilt">
+      <Segmented
+        value={target}
+        onChange={setTarget}
+        options={[
+          { value: 'all', label: 'All parts' },
+          { value: 'selected', label: `Selected (${ids.length})` },
+        ]}
+      />
+      {target === 'all' ? (
+        <>
+          <TiltControls tilt={g.tilt} onChange={(tilt) => updateBuildSettings({ tilt })} />
+          {own.length > 0 && (
+            <div className="pick-row">
+              <span className="muted small">
+                {own.length} part{own.length > 1 ? 's have' : ' has'} its own tilt
+              </span>
+              <button className="mini" onClick={() => setTiltFor(own.map((p) => p.id), null)}>
+                Use this tilt for all
+              </button>
+            </div>
+          )}
+        </>
+      ) : ids.length === 0 ? (
+        <Hint>Click parts in the view (Ctrl / Shift-click for more) or in the parts list to tilt only those.</Hint>
+      ) : (
+        <>
+          <TiltControls tilt={selTilt} onChange={(t) => setTiltFor(ids, t)} />
+          <div className="pick-row">
+            <span className="muted small">
+              {ids.length === 1 ? first?.name : `${ids.length} parts`}
+              {first?.tilt ? ' · own tilt' : ' · following all parts'}
+            </span>
+            {ids.some((id) => g.parts.find((p) => p.id === id)?.tilt) && (
+              <button className="mini" onClick={() => setTiltFor(ids, null)} title="Remove their own tilt so they follow the tilt for all parts">
+                Reset
+              </button>
+            )}
+          </div>
+        </>
+      )}
+      <Hint>A part that no longer fits its build after tilting moves to another build.</Hint>
+    </Section>
   );
 }
 
@@ -221,8 +280,8 @@ function partStatus(p: BuildPart, builds: { name: string; placements: { partId: 
 export function BuildsPanel() {
   const g = useStore((s) => s.buildGen);
   const selection = useStore((s) => s.selection);
-  const selectedPart = selection.length ? partOfKey(selection[0]) : null;
-  const sel = g.parts.find((p) => p.id === selectedPart) ?? null;
+  const selIds = selectedBuildPartIds(selection);
+  const sel = selIds.length === 1 ? (g.parts.find((p) => p.id === selIds[0]) ?? null) : null;
   const active = g.builds[g.active];
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
   return (
@@ -280,9 +339,14 @@ export function BuildsPanel() {
           title={`Parts (${g.parts.length})`}
           actions={
             g.parts.length > 0 && (
-              <button className="mini" onClick={clearBuildParts}>
-                Clear
-              </button>
+              <>
+                <button className="mini" onClick={selectAllBuildParts} title="Select every part">
+                  All
+                </button>
+                <button className="mini" onClick={clearBuildParts}>
+                  Clear
+                </button>
+              </>
             )
           }
         >
@@ -291,7 +355,7 @@ export function BuildsPanel() {
             {g.parts.map((p) => {
               const st = partStatus(p, g.builds, g.unplaced);
               return (
-                <li key={p.id} className={sel?.id === p.id ? 'selected' : ''} onClick={() => useStore.setState({ selection: [`${p.id}#0`] })}>
+                <li key={p.id} className={selIds.includes(p.id) ? 'selected' : ''} onClick={(e) => selectBuildPart(p.id, e.ctrlKey || e.metaKey || e.shiftKey)}>
                   <i className="dot" style={{ background: p.color }} />
                   <span className="name" title={p.name}>
                     {p.name}
@@ -310,6 +374,18 @@ export function BuildsPanel() {
             })}
           </ul>
         </Section>
+        {selIds.length > 1 && (
+          <Section
+            title={`${selIds.length} parts selected`}
+            actions={
+              <button className="mini" onClick={() => selIds.forEach((id) => removeBuildPart(id))}>
+                Remove
+              </button>
+            }
+          >
+            <Hint>Tilt them together under Tilt → Selected on the left. Click empty space in the view to clear the selection.</Hint>
+          </Section>
+        )}
         {sel && (
           <Section
             title={sel.name}
@@ -319,11 +395,10 @@ export function BuildsPanel() {
               </button>
             }
           >
-            <Check checked={!!sel.tilt} onChange={(own) => setPartTilt(sel.id, own ? { ...g.tilt, angle: g.tilt.angle || 15 } : null)}>
-              Own tilt for this part
-            </Check>
             {sel.tilt ? (
-              <TiltControls tilt={sel.tilt} onChange={(t) => setPartTilt(sel.id, t)} />
+              <Hint>
+                Own tilt {sel.tilt.angle}° (change it under Tilt → Selected on the left).
+              </Hint>
             ) : g.autoTilts[sel.id] ? (
               <Hint>
                 {g.autoTilts[sel.id].angle

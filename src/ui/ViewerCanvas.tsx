@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
-import { buildDisplayParts, currentPrinter } from '../state/buildActions';
+import { buildDisplayParts, currentPrinter, partOfKey, selectBuildPart } from '../state/buildActions';
 import type { Part } from '../state/types';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
@@ -56,6 +56,10 @@ function viewState(s: AppState): AppState {
     tool: 'build',
     pickMode: null,
     preview: null,
+    selection: (() => {
+      const ids = new Set(s.selection.map(partOfKey));
+      return lastBuild.parts.filter((p) => ids.has(partOfKey(p.id))).map((p) => p.id);
+    })(),
     clipEnabled: false,
     zoomWindow: false,
     lassoMode: false,
@@ -80,6 +84,11 @@ export function ViewerCanvas() {
     const viewer = new Viewer(el, {
       onPick(info, mods) {
         const s = getState();
+        if (s.workspace === 'build') {
+          // Build generation: clicks only select parts (Ctrl / Shift toggles)
+          selectBuildPart(info?.partId ?? null, mods.ctrl || mods.shift);
+          return;
+        }
         if (s.pickMode === 'layflat') {
           if (info) layFlat(info.partId, info.normal);
           return;

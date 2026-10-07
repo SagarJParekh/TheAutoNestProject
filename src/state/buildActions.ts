@@ -318,3 +318,33 @@ export function sendPartsToBuild() {
   addPartsFromPrep();
   setWorkspace('build');
 }
+
+// ---------------------------------------------------------------- selection and tilt of several parts
+
+/** Ids of the build parts that are selected (a selection holds placement keys "partId#copy"). */
+export function selectedBuildPartIds(selection = getState().selection): string[] {
+  const ids = new Set(bg().parts.map((p) => p.id));
+  return [...new Set(selection.map(partOfKey))].filter((id) => ids.has(id));
+}
+
+/** Click on a part (viewport or list): replace the selection, or with Ctrl / Shift toggle it. */
+export function selectBuildPart(partId: string | null, toggle = false) {
+  if (!partId) return toggle ? undefined : setState({ selection: [] });
+  const key = `${partOfKey(partId)}#0`;
+  const cur = selectedBuildPartIds();
+  if (!toggle) return setState({ selection: [key] });
+  const id = partOfKey(partId);
+  setState({ selection: cur.includes(id) ? cur.filter((x) => x !== id).map((x) => `${x}#0`) : [...cur.map((x) => `${x}#0`), key] });
+}
+
+export function selectAllBuildParts() {
+  setState({ selection: bg().parts.map((p) => `${p.id}#0`) });
+}
+
+/** Give several parts their own tilt (null = follow the tilt for all parts again). */
+export function setTiltFor(ids: string[], tilt: Tilt | null) {
+  if (!ids.length) return;
+  const set = new Set(ids);
+  setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p)) });
+  scheduleRegenerate();
+}

@@ -50,7 +50,7 @@ A separate unit (switch **Mesh prep / Build generation** at the top left). Pick 
 
 Add files (or take parts from Mesh prep) and builds are generated automatically:
 
-- every part is put down on its largest flat face, optionally tilted (all parts or per part: 15°, 30°, 45° or a custom angle, in a chosen direction);
+- every part is put down on its largest flat face, optionally tilted: **all parts** or only the **selected parts** (15°, 30°, 45° or a custom angle, in a chosen direction); select parts by clicking them in the view or the list (Ctrl / Shift-click for several, click empty space to clear);
 - parts are packed in X and Y only (never stacked for SLA / DLP and DMLS; powder-bed printers can optionally stack in Z), with clearance between parts, a margin at the platform edges and a distance from the platform;
 - each build is filled completely before the next one is started (Build 1, Build 2, …); parts are placed tallest first, so similar heights end up together, and when everything fits one platform it stays one build;
 - parts that are too tall or too big for the printer are turned corner to corner or tilted automatically (smallest angle first) until they fit;
