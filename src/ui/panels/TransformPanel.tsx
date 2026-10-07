@@ -2,7 +2,7 @@ import { Icon } from '../icons';
 import { Check, Hint, NumberField, Row, Section, Segmented, VecRow } from '../controls';
 import { getState, setState, updateParts, useStore } from '../../state/store';
 import { centerOnOrigin, dropToBed, mirrorParts } from '../../state/actions';
-import { alignToReference, arrangeOnBed, arrayParts, mirrorCopies } from '../../state/featureActions';
+import { alignToReference, arrangeOnBed, arrayParts, autoArrange, mirrorCopies } from '../../state/featureActions';
 import { localBounds } from '../../state/math';
 import type { Part, Transform } from '../../state/types';
 import type { Vec3 } from '../../geometry';
@@ -233,6 +233,17 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       <button className="btn wide" disabled={parts.length !== 1 || !!parts[0]?.locked} onClick={arrayParts} title="Copies of the selected part in a grid on the bed">
         Create {arr.cols}×{arr.rows} array
       </button>
+      <h4>Auto arrange</h4>
+      <button className="btn primary wide" onClick={autoArrange} title="Lay every part (selected, or all) on its largest flat face and arrange them on the bed in X and Y">
+        Auto arrange {parts.length ? `${parts.length} selected` : 'all parts'}
+      </button>
+      <Check checked={arr.autoAlignXY} onChange={(autoAlignXY) => setArr({ autoAlignXY })}>
+        Turn parts to line up with X / Y
+      </Check>
+      <Hint>
+        Finds each part's largest flat face it can stand on (coplanar faces like the bottoms of feet count together), puts it down on the bed, then lays
+        the parts out in X and Y within the bed size below, without stacking. Parts with no flat face keep their tilt.
+      </Hint>
       <h4>Arrange on bed</h4>
       <Row label="Directions">
         <div className="btn-row axis-toggles">

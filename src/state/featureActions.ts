@@ -2,12 +2,12 @@
  * Actions for point picks, single props, point/tapered perforation, labels,
  * texturing, 2D arrays/arrangement and mirror copies.
  */
-import { Matrix3, Matrix4, Vector3 } from 'three';
+import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { arrangeBoxes, cylinderMesh, gridArrayOffsets, mirrorMesh, pointHoleOutlines } from '../geometry';
 import type { Heightmap, MeshData, Vec3 } from '../geometry';
 import { commit, getState, notify, partById, selectedParts, setState } from './store';
 import type { FaceSelection, Part, PointPick, PointSlot } from './types';
-import { IDENTITY_TRANSFORM, matrixOf, recenter, worldBounds, worldMesh } from './math';
+import { IDENTITY_TRANSFORM, eulerDegFromQuaternion, matrixOf, quaternionOf, recenter, worldBounds, worldMesh } from './math';
 import { newId, partFromWorld, prepareMesh, replaceWithWorldMeshes, runJob, setPreview } from './actions';
 import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
@@ -335,6 +335,65 @@ export function arrangeOnBed() {
   viewerApi.current?.fitView();
   const dims = size.map((v) => v.toFixed(0)).join(' × ');
   notify(overflow ? 'warning' : 'info', `Arranged ${parts.length} parts in ${dims} mm${overflow ? ' — larger than the bed' : ''}`);
+}
+
+/**
+ * Auto arrange: every part is laid on its largest flat face, turned so its
+ * footprint lines up with X / Y, dropped to the bed and laid out in X and Y.
+ */
+export async function autoArrange() {
+  const s = getState();
+  const sel = selectedParts();
+  const parts = (sel.length ? sel : s.parts).filter((p) => !p.locked && p.visible);
+  if (!parts.length) return notify('warning', 'Nothing to arrange');
+  const { bedWidth, bedDepth, bedHeight, gap, autoAlignXY } = s.settings.arrange;
+  const results = await Promise.all(
+    parts.map((p) => {
+      const q = quaternionOf(p.transform);
+      return runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [q.x, q.y, q.z, q.w], alignXY: autoAlignXY }, { silent: parts.length > 1 });
+    }),
+  );
+  if (results.some((r) => !r)) return;
+  let flat = 0;
+  const oriented = parts.map((p, i) => {
+    const r = results[i]!;
+    if (r.face?.supporting) flat++;
+    const [x, y, z, w] = r.quaternion;
+    const rotation = eulerDegFromQuaternion(new Quaternion(x, y, z, w));
+    return { ...p, transform: { ...p.transform, rotation } };
+  });
+  const boxes = new Map(oriented.map((p) => [p.id, worldBounds(p)]));
+  const { placements, size, overflow } = arrangeBoxes(
+    oriented.map((p) => {
+      const b = boxes.get(p.id)!;
+      return { id: p.id, size: [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z] as [number, number, number] };
+    }),
+    ['x', 'y'],
+    [bedWidth, bedDepth, bedHeight],
+    gap,
+  );
+  const at = new Map(placements.map((pl) => [pl.id, pl.min]));
+  const byId = new Map(oriented.map((p) => [p.id, p]));
+  commit(
+    `Auto arrange ${parts.length} part${parts.length > 1 ? 's' : ''}`,
+    getState().parts.map((p) => {
+      const o = byId.get(p.id);
+      const m = at.get(p.id);
+      if (!o || !m) return p;
+      const b = boxes.get(p.id)!;
+      const pos = o.transform.position;
+      return { ...o, transform: { ...o.transform, position: [pos[0] + m[0] - b.min.x, pos[1] + m[1] - b.min.y, pos[2] - b.min.z] as Vec3 } };
+    }),
+  );
+  viewerApi.current?.fitView();
+  const dims = size.slice(0, 2).map((v) => v.toFixed(0)).join(' × ');
+  const noFlat = parts.length - flat;
+  notify(
+    overflow ? 'warning' : 'success',
+    `Auto arranged ${parts.length} part${parts.length > 1 ? 's' : ''} in ${dims} mm` +
+      (noFlat ? ` · ${noFlat} without a flat face kept their tilt` : '') +
+      (overflow ? ' — larger than the bed' : ''),
+  );
 }
 
 /** Mirrored copies placed next to the originals along the mirror axis. */

@@ -209,7 +209,7 @@ export interface ToolSettings {
   props: PropParams & { merge: boolean; mode: 'single' | 'array' };
   label: Omit<LabelParams, 'curveSegments'> & { font: string };
   texture: Omit<TextureParams, 'heightmap'> & { scope: 'face' | 'part'; smooth: boolean; angleTolerance: number };
-  arrange: { bedWidth: number; bedDepth: number; bedHeight: number; axes: ('x' | 'y' | 'z')[]; gap: number; cols: number; rows: number; mirrorCopy: boolean };
+  arrange: { autoAlignXY: boolean; bedWidth: number; bedDepth: number; bedHeight: number; axes: ('x' | 'y' | 'z')[]; gap: number; cols: number; rows: number; mirrorCopy: boolean };
   measure: { mode: MeasureMode; pickAs: MeasurePickAs; ortho: boolean };
   importQuality: 'draft' | 'normal' | 'fine' | 'ultra';
   align2: { location: 'center' | 'left' | 'right' | 'front' | 'back'; axis: 'x' | 'y' | 'both'; beside: boolean; distance: number };

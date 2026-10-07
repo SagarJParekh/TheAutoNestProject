@@ -37,3 +37,4 @@ export * from './simplify';
 export * from './remesh';
 export * from './offset';
 export * from './fillet';
+export * from './orient';

@@ -366,6 +366,14 @@ export const ops = {
     return { result: { mesh, edges: uniq }, transfer: meshBuffers(mesh) };
   },
 
+  async autoOrient(
+    args: { mesh: MeshData; quaternion: [number, number, number, number]; alignXY: boolean },
+    progress: Progress,
+  ): Promise<Result<G.AutoOrientResult>> {
+    progress(0.3, 'Finding the flattest face');
+    return { result: G.autoOrient(args.mesh, args.quaternion, args.alignXY) };
+  },
+
   async export(
     args: { format: ExportFormat; items: ExportItem[]; zip: boolean; quality?: number; options?: ExportOptions },
     progress: Progress,

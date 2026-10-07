@@ -120,7 +120,7 @@ export const useStore = create<AppState>(() => ({
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
       scope: 'face', smooth: false, angleTolerance: 2, imageFit: 'fit',
     },
-    arrange: { bedWidth: 220, bedDepth: 220, bedHeight: 250, axes: ['x', 'y'], gap: 5, cols: 2, rows: 2, mirrorCopy: false },
+    arrange: { autoAlignXY: true, bedWidth: 220, bedDepth: 220, bedHeight: 250, axes: ['x', 'y'], gap: 5, cols: 2, rows: 2, mirrorCopy: false },
     measure: { mode: 'distance', pickAs: 'point', ortho: true },
     importQuality: (() => {
       try {
