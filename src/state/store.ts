@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type {
   AnalysisEntry, DisplayMode, FaceSelection, GizmoMode, IntersectionEntry, Job, Notice, Part, PickMode, PickSlot, PlaneSettings,
   Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap, ShellView, TriEdit,
-  BlendEdgePick,
+  BlendEdgePick, BuildGenState,
 } from './types';
 import type { MeshData } from '../geometry';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
@@ -35,6 +35,11 @@ export interface AppState {
   blendEdges: BlendEdgePick[];
   /** interface theme and viewport background (remembered per browser) */
   appearance: Appearance;
+  /** which unit is shown: mesh preparation or build generation */
+  workspace: 'prep' | 'build';
+  buildGen: BuildGenState;
+  /** set only on the view state handed to the viewer in the build workspace */
+  buildView?: { volume: [number, number, number]; margin: number; zOffset: number };
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
@@ -85,6 +90,25 @@ export const useStore = create<AppState>(() => ({
   facePicks: {},
   blendEdges: [],
   appearance: typeof localStorage === 'undefined' ? DEFAULT_APPEARANCE : loadAppearance(),
+  workspace: 'prep',
+  buildGen: {
+    printerId: 'form3l',
+    customVolumes: {},
+    margin: 5,
+    gap: 3,
+    zOffset: 5,
+    groupHeights: true,
+    heightTolerance: 20,
+    autoOrient: true,
+    allowRotate: true,
+    stack: false,
+    tilt: { angle: 0, azimuth: 0 },
+    parts: [],
+    builds: [],
+    unplaced: [],
+    active: 0,
+    busy: false,
+  },
   repairTab: 'fix',
   intersections: {},
   pointSlot: 'label',

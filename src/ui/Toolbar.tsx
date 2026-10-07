@@ -1,6 +1,8 @@
 import { useRef, type ReactNode } from 'react';
 import { Icon } from './icons';
 import { ThemeMenu } from './ThemeMenu';
+import { BuildTabs } from './build/BuildPanels';
+import { setWorkspace } from '../state/buildActions';
 import { getState, redo, setState, undo, useStore } from '../state/store';
 import { importFiles, setImportQuality, setTool } from '../state/actions';
 import { viewerApi } from '../viewer/api';
@@ -28,6 +30,7 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
 export function Toolbar() {
   const fileRef = useRef<HTMLInputElement>(null);
   const tool = useStore((s) => s.tool);
+  const workspace = useStore((s) => s.workspace);
   const gizmo = useStore((s) => s.gizmo);
   const display = useStore((s) => s.display);
   const ortho = useStore((s) => s.orthographic);
@@ -45,7 +48,15 @@ export function Toolbar() {
       <div className="tb-row">
       <div className="brand">
         {Icon.cube}
-        <span>AutoNest&nbsp;Prep</span>
+        <span>AutoNest</span>
+      </div>
+      <div className="workspace-switch" role="tablist" aria-label="Unit">
+        <button role="tab" aria-selected={workspace === 'prep'} className={workspace === 'prep' ? 'active' : ''} onClick={() => setWorkspace('prep')}>
+          Mesh prep
+        </button>
+        <button role="tab" aria-selected={workspace === 'build'} className={workspace === 'build' ? 'active' : ''} onClick={() => setWorkspace('build')}>
+          Build generation
+        </button>
       </div>
       <div className="tb-group">
         <button className="tb" title="Open files (Ctrl+O)" onClick={() => fileRef.current?.click()}>
@@ -63,10 +74,12 @@ export function Toolbar() {
           <option value="fine">CAD: Fine</option>
           <option value="ultra">CAD: Ultra</option>
         </select>
-        <button className="tb" title="Export (Ctrl+E)" onClick={() => setState({ showExport: true })}>
-          {Icon.export}
-          <span>Export</span>
-        </button>
+        {workspace === 'prep' && (
+          <button className="tb" title="Export (Ctrl+E)" onClick={() => setState({ showExport: true })}>
+            {Icon.export}
+            <span>Export</span>
+          </button>
+        )}
         <input
           ref={fileRef}
           type="file"
@@ -80,6 +93,8 @@ export function Toolbar() {
           }}
         />
       </div>
+      {workspace === 'prep' && (
+      <>
       <div className="tb-group">
         <button className="tb icon" disabled={!canUndo} title={`Undo ${undoLabel ?? ''} (Ctrl+Z)`} onClick={undo}>
           {Icon.undo}
@@ -130,6 +145,8 @@ export function Toolbar() {
           {Icon.layflat}
         </button>
       </div>
+      </>
+      )}
       <div className="tb-spacer" />
       <div className="tb-group">
         <button className="tb icon" title="Fit to view (Home)" onClick={() => viewerApi.current?.fitView()}>
@@ -168,6 +185,9 @@ export function Toolbar() {
         </button>
       </div>
       </div>
+      {workspace === 'build' ? (
+        <BuildTabs />
+      ) : (
       <div className="tb-row tools-row">
         {TOOLS.map((t) => (
           <button
@@ -181,6 +201,7 @@ export function Toolbar() {
           </button>
         ))}
       </div>
+      )}
     </header>
   );
 }

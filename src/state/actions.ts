@@ -119,6 +119,13 @@ export async function importFiles(files: File[]) {
     if (!r) return;
     if (CAD_EXTENSIONS.has(ext)) sourceFiles.set(file.name, file);
     r.warnings.forEach((w) => notify('warning', w, 10000));
+    if (getState().workspace === 'build') {
+      // Build Generation: files go straight into the build pool and builds regenerate
+      const { addBuildParts } = await import('./buildActions');
+      addBuildParts(r.bodies.map((b) => ({ name: r.bodies.length > 1 ? b.name : b.name || file.name, mesh: b.mesh })));
+      notify('success', `Added ${file.name} to Build Generation (${r.bodies.length} part${r.bodies.length > 1 ? 's' : ''})`);
+      return;
+    }
     const parts = r.bodies.map((b) => ({
       ...makePart(r.bodies.length > 1 ? b.name : b.name || file.name, b.mesh, b.center, file.name),
       importCenter: b.center,

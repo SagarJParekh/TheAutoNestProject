@@ -33,6 +33,7 @@ const TITLES = {
   dimensions: 'Dimensions',
   report: 'Report',
   offset: 'Offset & fillet',
+  build: 'Build',
 };
 
 export function PropertiesPanel() {

@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
-import { getState, setState, setTransform, updateParts, useStore } from '../state/store';
+import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
+import { buildDisplayParts, currentPrinter } from '../state/buildActions';
+import type { Part } from '../state/types';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
@@ -35,6 +37,33 @@ function PointBanner() {
 function FaceBanner() {
   const slot = useStore((s) => s.pickSlot);
   return <>{SLOT_TEXT[slot]}</>;
+}
+
+/**
+ * What the viewer shows: the Prep parts, or in Build Generation the parts of
+ * the active build inside the printer's build volume (no editing tools).
+ */
+let lastBuild: { gen: AppState['buildGen']; parts: Part[] } | null = null;
+let lastView: { src: AppState; view: AppState } | null = null;
+function viewState(s: AppState): AppState {
+  if (s.workspace !== 'build') return s;
+  if (lastView && lastView.src === s) return lastView.view;
+  if (!lastBuild || lastBuild.gen !== s.buildGen) lastBuild = { gen: s.buildGen, parts: buildDisplayParts(s.buildGen) };
+  const printer = currentPrinter(s.buildGen);
+  const view: AppState = {
+    ...s,
+    parts: lastBuild.parts,
+    tool: 'build',
+    pickMode: null,
+    preview: null,
+    clipEnabled: false,
+    zoomWindow: false,
+    lassoMode: false,
+    polyMode: false,
+    buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset },
+  };
+  lastView = { src: s, view };
+  return view;
 }
 
 export function ViewerCanvas() {
@@ -130,8 +159,8 @@ export function ViewerCanvas() {
     });
     viewer.edgeRequest = requestEdges;
     viewerApi.current = { fitView: (sel) => viewer.fitView(sel), setView: (v) => viewer.setView(v), viewer };
-    viewer.sync(getState());
-    const unsub = useStore.subscribe((s) => viewer.sync(s));
+    viewer.sync(viewState(getState()));
+    const unsub = useStore.subscribe((s) => viewer.sync(viewState(s)));
     (window as unknown as { __viewer: Viewer; __store: typeof useStore }).__viewer = viewer;
     (window as unknown as { __store: typeof useStore }).__store = useStore;
     return () => {

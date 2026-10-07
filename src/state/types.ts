@@ -27,7 +27,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset';
+  | 'dimensions' | 'report' | 'offset' | 'build';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -247,3 +247,62 @@ export interface ToolSettings {
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };
+
+// ---------------------------------------------------------------- build generation
+
+/** Tilt of a part on the platform: lean by `angle` degrees towards `azimuth` (0 = +X, 90 = +Y). */
+export interface Tilt {
+  angle: number;
+  azimuth: number;
+}
+
+export interface BuildPart {
+  id: string;
+  name: string;
+  color: string;
+  /** mesh centred on its bounding box, in its original orientation */
+  mesh: MeshData;
+  quantity: number;
+  /** per-part tilt; null = use the global tilt */
+  tilt: Tilt | null;
+  /** cached "largest flat face down" orientation for this mesh */
+  orient?: { mesh: MeshData; q: [number, number, number, number] };
+}
+
+export interface BuildPlacement {
+  /** partId#copy */
+  key: string;
+  partId: string;
+  copy: number;
+  position: Vec3;
+  quaternion: [number, number, number, number];
+}
+
+export interface Build {
+  name: string;
+  placements: BuildPlacement[];
+  /** tallest point above the platform, mm */
+  height: number;
+  /** platform area covered, 0..1 */
+  utilization: number;
+}
+
+export interface BuildGenState {
+  printerId: string;
+  /** sizes entered for the Custom printers, by printer id */
+  customVolumes: Record<string, [number, number, number]>;
+  margin: number;
+  gap: number;
+  zOffset: number;
+  groupHeights: boolean;
+  heightTolerance: number;
+  autoOrient: boolean;
+  allowRotate: boolean;
+  stack: boolean;
+  tilt: Tilt;
+  parts: BuildPart[];
+  builds: Build[];
+  unplaced: { partId: string; copy: number; reason: string }[];
+  active: number;
+  busy: boolean;
+}

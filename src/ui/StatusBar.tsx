@@ -5,13 +5,24 @@ export function StatusBar() {
   const jobs = useStore((s) => s.jobs);
   const parts = useStore((s) => s.parts);
   const selection = useStore((s) => s.selection);
+  const workspace = useStore((s) => s.workspace);
+  const g = useStore((s) => s.buildGen);
   const tris = parts.reduce((a, p) => a + (p.visible ? p.mesh.indices.length / 3 : 0), 0);
+  const placed = g.builds.reduce((a, b) => a + b.placements.length, 0);
   return (
     <footer className="statusbar">
-      <span>
-        {parts.length} part{parts.length === 1 ? '' : 's'} · {tris.toLocaleString()} triangles
-        {selection.length ? ` · ${selection.length} selected` : ''}
-      </span>
+      {workspace === 'build' ? (
+        <span>
+          Build generation · {g.builds.length} build{g.builds.length === 1 ? '' : 's'} · {placed} part{placed === 1 ? '' : 's'} placed
+          {g.unplaced.length ? ` · ${g.unplaced.length} not placed` : ''}
+          {g.builds[g.active] ? ` · showing ${g.builds[g.active].name}` : ''}
+        </span>
+      ) : (
+        <span>
+          {parts.length} part{parts.length === 1 ? '' : 's'} · {tris.toLocaleString()} triangles
+          {selection.length ? ` · ${selection.length} selected` : ''}
+        </span>
+      )}
       <div className="grow" />
       {jobs.map((j) => (
         <div className="job" key={j.id} title={j.message}>

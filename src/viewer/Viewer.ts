@@ -98,6 +98,8 @@ export class Viewer {
   private overlayGroup = new Group();
   private annotGroup = new Group();
   private dimGroup = new Group();
+  private volumeGroup = new Group();
+  private volumeKey = '';
   private dimKey: unknown[] = [];
   private hoverGroup = new Group();
   private hoverPending = false;
@@ -169,7 +171,7 @@ export class Viewer {
       if (!dragging) this.commitGizmo();
     });
 
-    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup, this.dimGroup);
+    this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup, this.dimGroup, this.volumeGroup);
     this.buildGrid(200);
 
     const el = this.renderer.domElement;
@@ -380,7 +382,8 @@ export class Viewer {
     orientationUniforms.uFrontColor.value.set(ns.frontColor);
     orientationUniforms.uBackColor.value.set(ns.backColor);
     if (!prev || prev.orthographic !== s.orthographic) this.setOrthographic(s.orthographic);
-    this.gridGroup.visible = s.showGrid;
+    this.gridGroup.visible = s.showGrid && !s.buildView;
+    this.syncBuildVolume(s);
 
     // clip plane (world)
     this.clipPlane = null;
@@ -940,6 +943,8 @@ export class Viewer {
       const gb = o.mesh.geometry.boundingBox;
       if (gb) b.union(gb.clone().applyMatrix4(o.group.matrixWorld));
     }
+    const bv = this.state?.buildView;
+    if (bv) b.union(new Box3(new Vector3(-bv.volume[0] / 2, -bv.volume[1] / 2, 0), new Vector3(bv.volume[0] / 2, bv.volume[1] / 2, bv.volume[2])));
     if (b.isEmpty()) b.set(new Vector3(-50, -50, 0), new Vector3(50, 50, 50));
     return b;
   }
@@ -1760,6 +1765,46 @@ export class Viewer {
       this.dimGroup.add(textSprite(`Y ${fmt(size.y)}`, [xR + tick, (lo.y + hi.y) / 2, lo.z], 0.03, [-0.08, 0.5]));
       this.dimGroup.add(textSprite(`Z ${fmt(size.z)}`, [xz, yz, (lo.z + hi.z) / 2], 0.03, [-0.08, 0.5]));
     }
+    this.requestRender();
+  }
+
+  /** Build Generation: printer build volume, platform and edge margin. */
+  private syncBuildVolume(s: AppState) {
+    const bv = s.buildView;
+    const key = bv ? JSON.stringify(bv) + (this.gridLight ? 'l' : 'd') : '';
+    if (key === this.volumeKey) return;
+    this.volumeKey = key;
+    disposeChildren(this.volumeGroup);
+    if (!bv) return;
+    const [X, Y, Z] = bv.volume;
+    const hx = X / 2, hy = Y / 2;
+    const box: number[] = [];
+    const c = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [i & 1 ? hx : -hx, i & 2 ? hy : -hy, i & 4 ? Z : 0]);
+    for (const [i, j] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) box.push(...c[i], ...c[j]);
+    const lineCol = this.gridLight ? 0x5a6475 : 0x6b7a90;
+    this.volumeGroup.add(lines(new Float32Array(box), lineCol, false));
+    // platform plate
+    const plate = new Mesh(
+      new PlaneGeometry(X, Y),
+      new MeshBasicMaterial({ color: this.gridLight ? 0x9aa6b8 : 0x3a4352, transparent: true, opacity: 0.45, side: DoubleSide, depthWrite: false }),
+    );
+    plate.position.z = -0.05;
+    plate.renderOrder = -1;
+    plate.raycast = () => {};
+    this.volumeGroup.add(plate);
+    // usable area inside the margins
+    const m = bv.margin;
+    if (m > 0 && m * 2 < Math.min(X, Y)) {
+      const r = [-hx + m, -hy + m, hx - m, hy - m];
+      const seg = [r[0], r[1], 0, r[2], r[1], 0, r[2], r[1], 0, r[2], r[3], 0, r[2], r[3], 0, r[0], r[3], 0, r[0], r[3], 0, r[0], r[1], 0];
+      this.volumeGroup.add(lines(new Float32Array(seg), 0xffd23f, false));
+    }
+    // platform grid every 10 mm (50 mm lines brighter)
+    const grid: number[] = [], major: number[] = [];
+    for (let x = Math.ceil(-hx / 10) * 10; x <= hx; x += 10) (x % 50 === 0 ? major : grid).push(x, -hy, 0.01, x, hy, 0.01);
+    for (let y = Math.ceil(-hy / 10) * 10; y <= hy; y += 10) (y % 50 === 0 ? major : grid).push(-hx, y, 0.01, hx, y, 0.01);
+    this.volumeGroup.add(lines(new Float32Array(grid), this.gridLight ? 0xb4bac4 : 0x2c313a, false));
+    this.volumeGroup.add(lines(new Float32Array(major), this.gridLight ? 0x8c94a1 : 0x46505f, false));
     this.requestRender();
   }
 

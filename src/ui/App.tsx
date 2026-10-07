@@ -8,9 +8,12 @@ import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
 import { useShortcuts } from './shortcuts';
 import { importFiles } from '../state/actions';
+import { useStore } from '../state/store';
+import { BuildSetupPanel, BuildsPanel } from './build/BuildPanels';
 
 export function App() {
   const [dragging, setDragging] = useState(false);
+  const workspace = useStore((s) => s.workspace);
   const openFile = useCallback(() => (document.querySelector('.toolbar input[type=file]') as HTMLInputElement | null)?.click(), []);
   useShortcuts(openFile);
 
@@ -36,12 +39,12 @@ export function App() {
       onDrop={onDrop}
     >
       <Toolbar />
-      <PartsPanel />
+      {workspace === 'build' ? <BuildSetupPanel /> : <PartsPanel />}
       <main className="center">
         <ViewerCanvas />
         <Notices />
       </main>
-      <PropertiesPanel />
+      {workspace === 'build' ? <BuildsPanel /> : <PropertiesPanel />}
       <StatusBar />
       <ExportDialog />
       <ShortcutsDialog />
@@ -49,7 +52,7 @@ export function App() {
       {dragging && (
         <div className="drop-overlay">
           <div>
-            <strong>Drop files to import</strong>
+            <strong>{workspace === 'build' ? 'Drop files to add them to the builds' : 'Drop files to import'}</strong>
             <span>Everything is processed locally in your browser — nothing is uploaded.</span>
           </div>
         </div>

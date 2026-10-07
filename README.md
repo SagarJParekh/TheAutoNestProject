@@ -38,6 +38,24 @@ npm run build      # type-check + production build into dist/
 | Texture | Displacement textures on a picked face (flat, or grown across smooth curved surfaces) or a whole part: diamond knurl, ribs, waffle, dots, hex tiles, noise, or an image heightmap. Planar, seamless cylindrical or triplanar projection. The area is subdivided with conforming splits, so the mesh stays watertight. |
 | General | **Theme** (palette button in the toolbar): dark or light interface, and the 3D viewport background (dark, graphite or midnight gradients, blueprint, black, light grey, sky gradient, white, or any custom colour); remembered in the browser. Two-row toolbar: file, edit and view controls on top, every tool below. Undo/redo for every change. Destructive tools show a preview with Apply/Cancel. Export selected or all parts as STL (binary or ASCII), 3MF or OBJ, as one file or one file per part in a ZIP. **Export quality**: Original, High (75%), Medium (50%), Low (25%), Draft (10%) or a custom percentage of triangles, reduced by quadric edge collapse that keeps the mesh watertight and its shape within 0.5% of the part size; coordinate precision for text formats; estimated triangle count and file size. Keyboard shortcuts are listed under `?`. **Search** every function with Ctrl+K or `/`. Progress bar and Cancel for every worker job. |
 
+## Build generation
+
+A separate unit (switch **Mesh prep / Build generation** at the top left). Pick a technology and printer:
+
+| Technology | Printers (build volume X × Y × Z, mm) |
+| --- | --- |
+| SLA / DLP | Eplus 800×800×320 · Magform 600×600×400 · Form 3 145×145×185 · Form 3L 335×200×300 · Form 4 200×125×210 · Form 4L 353×196×353 · Vayu Core 211×118×300 · Vayu Rise 302×161×380 · YouSu 211×118×240 · Custom |
+| DMLS | M2 245×245×300 · MLab 100R 90×90×80 · MLab 200R 100×100×100 · Custom |
+| HP MJF / SLS | HP MJF 5200 380×284×380 · Fuse 1+ 165×165×300 (rules to be confirmed) · Custom |
+
+Add files (or take parts from Mesh prep) and builds are generated automatically:
+
+- every part is put down on its largest flat face, optionally tilted (all parts or per part: 15°, 30°, 45° or a custom angle, in a chosen direction);
+- parts are packed in X and Y only (never stacked for SLA / DLP and DMLS; powder-bed printers can optionally stack in Z), with clearance between parts, a margin at the platform edges and a distance from the platform;
+- parts of similar height are grouped into the same build; when a build is full (or a part no longer fits after tilting) the next build is started: Build 1, Build 2, …;
+- quantities per part, parts that cannot fit the printer are listed with the reason;
+- each build is shown in the printer's volume; export one build or all builds (3MF or STL, parts in place), or open a build in Mesh prep.
+
 ## Architecture
 
 ```
@@ -70,7 +88,7 @@ Typed arrays transfer cheaply to and from workers. The main entry points are:
 - `measureDistance`, `angleBetween`, `angle3`, `circleFrom3Points`, `fitCylinder`, `fitSphereRegion`
 - `pointHoleCutters` (tapered holes), `applyLabel` / `conformToSurface`, `textureMesh`, `arrangeShelves`, `arrangeBoxes` (X/Y/Z layout), `gridArrayOffsets`, `simplifyMesh`, `remeshMesh`
 - `growSelection`, `shrinkSelection`, `invertSelection`, `shellOfTriangle`, `brushSelect`, `polylineToOutline`
-- `findFlattestFace`, `autoOrient`, `minAreaRectAngle`
+- `findFlattestFace`, `autoOrient`, `minAreaRectAngle`, `packBuilds` (build packing with MaxRects)
 - `offsetMesh`, `offsetRegion`, `findSharpEdge`, `blendEdges` (fillet / chamfer), `bridgeEdges`, `findCrackEdges`
 - `cutMesh` (planar split with caps), `splitByPlaneManifold`, `subtractMeshes`, `unionMeshes` (manifold-3d)
 - `growCoplanarRegion`, `extrudeRegion`

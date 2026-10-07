@@ -316,3 +316,35 @@ table.report tr:last-child td { border-bottom: none; }
 .bg-custom { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .bg-custom input[type='color'] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--line-2); border-radius: 4px; background: none; }
 .bg-custom.active { color: var(--accent); }
+
+/* ---------------------------------------------------------------- build generation */
+.workspace-switch { display: flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; margin-right: 6px; }
+.workspace-switch button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.workspace-switch button.active { background: var(--accent); color: #1a1a1a; }
+.build-tabs .build-printer { font-weight: 600; margin-right: 10px; white-space: nowrap; color: var(--muted); }
+.build-tabs .build-count { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; font-size: 11px; }
+.printer-tree { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.printer-tree .tech-head { display: flex; align-items: center; gap: 6px; width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-weight: 600; text-align: left; }
+.printer-tree .caret { width: 10px; color: var(--muted); }
+.printer-tree .tech-current { margin-left: auto; font-weight: 500; font-size: 11px; color: var(--accent); }
+.printer-tree ul { list-style: none; margin: 2px 0 6px; padding: 0 0 0 14px; }
+.printer-tree li label { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.printer-tree li label.active { background: rgba(63, 167, 255, 0.14); }
+.printer-tree .pvol { margin-left: auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.build-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.build-list li { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.build-list li.active { border-color: var(--accent); background: rgba(255, 210, 63, 0.08); }
+.build-list li span { color: var(--muted); }
+.build-list .util { grid-column: 1 / -1; height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+.build-list .util i { display: block; height: 100%; background: var(--accent-2); }
+.unplaced { border: 1px solid var(--danger); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; color: var(--danger); }
+.unplaced ul { margin: 4px 0 0; padding-left: 16px; color: var(--text); }
+.build-parts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.build-parts li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto 58px; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.build-parts li.selected { background: rgba(63, 167, 255, 0.14); }
+.build-parts .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.build-parts .where { color: var(--muted); font-size: 11px; }
+.build-parts .where.bad { color: var(--danger); }
+.build-parts .badge { background: var(--panel-2); color: var(--accent); font-size: 10px; padding: 0 4px; }
+.build-parts li .field { width: 58px; min-width: 0; }
+.build-parts li .field input { width: 100%; padding: 2px 6px; }
