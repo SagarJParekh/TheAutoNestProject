@@ -52,7 +52,8 @@ Add files (or take parts from Mesh prep) and builds are generated automatically:
 
 - every part is put down on its largest flat face, optionally tilted (all parts or per part: 15°, 30°, 45° or a custom angle, in a chosen direction);
 - parts are packed in X and Y only (never stacked for SLA / DLP and DMLS; powder-bed printers can optionally stack in Z), with clearance between parts, a margin at the platform edges and a distance from the platform;
-- parts of similar height are grouped into the same build; when a build is full (or a part no longer fits after tilting) the next build is started: Build 1, Build 2, …;
+- each build is filled completely before the next one is started (Build 1, Build 2, …); parts are placed tallest first, so similar heights end up together, and when everything fits one platform it stays one build;
+- parts that are too tall or too big for the printer are turned corner to corner or tilted automatically (smallest angle first) until they fit;
 - quantities per part, parts that cannot fit the printer are listed with the reason;
 - each build is shown in the printer's volume; export one build or all builds (3MF or STL, parts in place), or open a build in Mesh prep.
 

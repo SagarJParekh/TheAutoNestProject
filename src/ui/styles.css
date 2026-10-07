@@ -348,3 +348,4 @@ table.report tr:last-child td { border-bottom: none; }
 .build-parts .badge { background: var(--panel-2); color: var(--accent); font-size: 10px; padding: 0 4px; }
 .build-parts li .field { width: 58px; min-width: 0; }
 .build-parts li .field input { width: 100%; padding: 2px 6px; }
+.build-parts .badge.auto { color: var(--accent-2); }

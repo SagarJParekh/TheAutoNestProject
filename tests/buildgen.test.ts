@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { packBuilds, type PackItem, type PackParams } from '../src/geometry';
 
-const base: PackParams = { volume: [100, 100, 100], margin: 5, gap: 2, zOffset: 3, heightTolerance: Infinity, allowRotate: true, stack: false };
+const base: PackParams = { volume: [100, 100, 100], margin: 5, gap: 2, zOffset: 3, allowRotate: true, stack: false };
 
 /** Footprint rectangles of a build including their size (rotation applied). */
 function rects(items: PackItem[], placed: { key: string; x: number; y: number; z: number; rotated: boolean }[]) {
@@ -51,20 +51,31 @@ describe('build packing', () => {
     for (const b of r.builds) checkBuild(items, b.items, base);
   });
 
-  it('groups parts of similar height into the same build', () => {
+  it('keeps parts of different heights together while one build has room', () => {
     const items: PackItem[] = [
       { key: 'tall1', w: 10, d: 10, h: 80 },
       { key: 'short1', w: 10, d: 10, h: 10 },
       { key: 'tall2', w: 10, d: 10, h: 75 },
       { key: 'short2', w: 10, d: 10, h: 12 },
     ];
-    const r = packBuilds(items, { ...base, heightTolerance: 20 });
-    expect(r.builds.length).toBe(2);
-    const sets = r.builds.map((b) => b.items.map((i) => i.key).sort().join(','));
-    expect(sets).toContain('tall1,tall2');
-    expect(sets).toContain('short1,short2');
-    // without grouping they share one build
-    expect(packBuilds(items, base).builds.length).toBe(1);
+    const r = packBuilds(items, base);
+    expect(r.builds.length).toBe(1);
+    expect(r.builds[0].items.length).toBe(4);
+  });
+
+  it('fills each build completely before the next, tallest parts first', () => {
+    // 9 slots per build; 6 tall + 6 short parts -> build 1 gets the 6 tall and 3 short (full), build 2 the rest
+    const items: PackItem[] = [
+      ...Array.from({ length: 6 }, (_, i) => ({ key: `t${i}`, w: 25, d: 25, h: 80 })),
+      ...Array.from({ length: 6 }, (_, i) => ({ key: `s${i}`, w: 25, d: 25, h: 10 })),
+    ];
+    const r = packBuilds(items, base);
+    expect(r.builds.map((b) => b.items.length)).toEqual([9, 3]);
+    expect(r.builds[0].items.filter((i) => i.key.startsWith('t')).length).toBe(6);
+    expect(r.builds[1].items.every((i) => i.key.startsWith('s'))).toBe(true);
+    // a small part that still fits goes into the first build instead of opening a new one
+    const r2 = packBuilds([...items.slice(0, 8), { key: 'tiny', w: 5, d: 5, h: 2 }], base);
+    expect(r2.builds.length).toBe(1);
   });
 
   it('turns a long part by 90° to fit and reports parts that never fit', () => {
@@ -94,7 +105,9 @@ describe('build packing', () => {
 });
 
 import { Vector3 } from 'three';
-import { tiltQuaternion } from '../src/state/buildActions';
+import { Quaternion } from 'three';
+import { findFittingTilt, tiltQuaternion } from '../src/state/buildActions';
+import { boxMesh, fitsPlatform } from '../src/geometry';
 import { PRINTERS } from '../src/state/printers';
 
 describe('build generation setup', () => {
@@ -115,5 +128,42 @@ describe('build generation setup', () => {
     expect(v('M2', 'dmls')).toEqual([245, 245, 300]);
     expect(v('MLab 200R', 'dmls')).toEqual([100, 100, 100]);
     for (const tech of ['sla', 'dmls', 'powder']) expect(PRINTERS.some((p) => p.tech === tech && p.custom)).toBe(true);
+  });
+});
+
+describe('auto tilt', () => {
+  const fit = { volume: [100, 100, 60] as [number, number, number], margin: 5, gap: 2, zOffset: 3, allowRotate: true };
+  it('tilts a part that is too tall until it fits, using the smallest angle', () => {
+    const tall = boxMesh([-5, -5, -35], [5, 5, 35]); // 70 mm tall, printer allows 57 mm
+    expect(fitsPlatform(10, 10, 70, fit)).toBe(false);
+    const r = findFittingTilt(tall, new Quaternion(), fit)!;
+    expect(r).not.toBeNull();
+    expect(r.tilt.angle).toBe(45);
+    const h = r.bounds.max.z - r.bounds.min.z;
+    expect(h).toBeLessThanOrEqual(57);
+    // 30° is not enough: cos30 * 70 + sin30 * 10 > 57
+    expect(Math.cos(Math.PI / 6) * 70 + 0.5 * 10).toBeGreaterThan(57);
+  });
+  it('turns a long flat part corner to corner before tilting it', () => {
+    const long = boxMesh([-60, -3, -2], [60, 3, 2]); // 120 mm long on a 90 mm platform (diagonal ~127)
+    const r = findFittingTilt(long, new Quaternion(), fit)!;
+    expect(r).not.toBeNull();
+    expect(r.tilt.angle).toBe(0);
+    expect(r.tilt.turn).toBe(45);
+    const b = r.bounds;
+    expect(fitsPlatform(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, fit)).toBe(true);
+    expect(b.max.z - b.min.z).toBeCloseTo(4, 6);
+  });
+  it('tilts a part that is too long even corner to corner', () => {
+    const tallPrinter = { ...fit, volume: [100, 100, 150] as [number, number, number] };
+    const long = boxMesh([-75, -3, -2], [75, 3, 2]); // 150 mm: longer than the 127 mm diagonal
+    const r = findFittingTilt(long, new Quaternion(), tallPrinter)!;
+    expect(r).not.toBeNull();
+    expect(r.tilt.angle).toBeGreaterThan(0);
+    const b = r.bounds;
+    expect(fitsPlatform(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, tallPrinter)).toBe(true);
+  });
+  it('gives up when no tilt helps', () => {
+    expect(findFittingTilt(boxMesh([-200, -200, -200], [200, 200, 200]), new Quaternion(), fit)).toBeNull();
   });
 });

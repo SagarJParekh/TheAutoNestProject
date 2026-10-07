@@ -1,9 +1,12 @@
 /**
  * Build packing for 3D printers: parts (as oriented bounding boxes) are laid
- * out on build platforms with MaxRects 2D bin packing. A new build starts
- * when a part does not fit any open build; parts of similar height share a
- * build (so a build's print time is not set by one tall part among short
- * ones). Powder-bed builds can optionally stack layers in Z.
+ * out on build platforms with MaxRects 2D bin packing.
+ *
+ * Builds are filled completely first: parts are taken tallest first and each
+ * build keeps taking every remaining part that still fits before the next
+ * build is started. Because of the height order, similar heights end up in
+ * the same build, but a build is never split only because heights differ.
+ * Powder-bed builds can optionally stack layers in Z.
  */
 
 export interface PackItem {
@@ -23,8 +26,6 @@ export interface PackParams {
   gap: number;
   /** distance between the platform and the bottom of the parts */
   zOffset: number;
-  /** parts whose height differs by more than this from a build's tallest part go to another build (mm, Infinity = off) */
-  heightTolerance: number;
   /** allow turning a footprint by 90° about Z to fit */
   allowRotate: boolean;
   /** powder bed: stack layers of parts in Z */
@@ -158,30 +159,29 @@ export function packBuilds(items: PackItem[], p: PackParams): PackResult {
     b.layers.push({ z, bin: new MaxRectsBin(binW, binD), maxH: 0 });
     return tryPlace(b, it);
   };
+  const remaining: PackItem[] = [];
   for (const it of order) {
-    if (!fitsEmpty(it)) {
-      result.unplaced.push({
-        key: it.key,
-        reason:
-          it.h > usableH + 1e-9
-            ? `Too tall: ${it.h.toFixed(1)} mm, the printer allows ${usableH.toFixed(1)} mm`
-            : `Footprint ${it.w.toFixed(1)} × ${it.d.toFixed(1)} mm is larger than the platform minus margins`,
-      });
+    if (fitsEmpty(it)) {
+      remaining.push(it);
       continue;
     }
-    let placed = false;
-    for (const b of open) {
-      if (b.groupH - it.h > p.heightTolerance + 1e-9) continue; // keep heights together
-      if (tryPlace(b, it)) {
-        placed = true;
-        break;
-      }
+    result.unplaced.push({
+      key: it.key,
+      reason:
+        it.h > usableH + 1e-9
+          ? `Too tall: ${it.h.toFixed(1)} mm, the printer allows ${usableH.toFixed(1)} mm`
+          : `Footprint ${it.w.toFixed(1)} × ${it.d.toFixed(1)} mm is larger than the platform minus margins`,
+    });
+  }
+  // fill one build completely (tallest first, then whatever still fits), then start the next
+  while (remaining.length) {
+    const b: OpenBuild = { layers: [{ z: 0, bin: new MaxRectsBin(binW, binD), maxH: 0 }], items: [], groupH: remaining[0].h };
+    for (let i = 0; i < remaining.length; ) {
+      if (tryPlace(b, remaining[i])) remaining.splice(i, 1);
+      else i++;
     }
-    if (!placed) {
-      const b: OpenBuild = { layers: [{ z: 0, bin: new MaxRectsBin(binW, binD), maxH: 0 }], items: [], groupH: it.h };
-      tryPlace(b, it);
-      open.push(b);
-    }
+    if (!b.items.length) break; // cannot happen: the first remaining part always fits an empty build
+    open.push(b);
   }
   const area = (VX - 2 * p.margin) * (VY - 2 * p.margin);
   const sizeOf = new Map(items.map((it) => [it.key, it]));
@@ -195,4 +195,14 @@ export function packBuilds(items: PackItem[], p: PackParams): PackResult {
     result.builds.push({ items: b.items, height, utilization: area > 0 ? footprint / area : 0 });
   }
   return result;
+}
+
+/** Does a part box fit an empty platform of this printer (optionally turned 90°)? */
+export function fitsPlatform(w: number, d: number, h: number, p: Omit<PackParams, 'stack'>): boolean {
+  const [VX, VY, VZ] = p.volume;
+  const gap = Math.max(0, p.gap);
+  const binW = VX - 2 * p.margin + gap, binD = VY - 2 * p.margin + gap;
+  if (h > VZ - p.zOffset + 1e-9) return false;
+  const ok = (a: number, b: number) => a + gap <= binW + 1e-9 && b + gap <= binD + 1e-9;
+  return ok(w, d) || (p.allowRotate && ok(d, w));
 }

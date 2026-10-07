@@ -182,14 +182,9 @@ export function BuildSetupPanel() {
           </Row>
         </Section>
         <Section title="Arrangement">
-          <Check checked={g.groupHeights} onChange={(groupHeights) => updateBuildSettings({ groupHeights })}>
-            Group parts of similar height
+          <Check checked={g.autoTilt} onChange={(autoTilt) => updateBuildSettings({ autoTilt })}>
+            Tilt parts that are too tall or too big
           </Check>
-          {g.groupHeights && (
-            <Row label="Height difference up to">
-              <NumberField value={g.heightTolerance} min={0} step={5} suffix="mm" onChange={(heightTolerance) => updateBuildSettings({ heightTolerance })} />
-            </Row>
-          )}
           <Check checked={g.autoOrient} onChange={(autoOrient) => updateBuildSettings({ autoOrient })}>
             Largest flat face down
           </Check>
@@ -201,6 +196,10 @@ export function BuildSetupPanel() {
               Stack parts in Z (powder bed)
             </Check>
           )}
+          <Hint>
+            Each build is filled completely before a new one is started. Parts are placed tallest first, so similar heights end up together; when
+            everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.
+          </Hint>
         </Section>
         <Section title="Tilt (all parts)">
           <TiltControls tilt={g.tilt} onChange={(tilt) => updateBuildSettings({ tilt })} />
@@ -297,7 +296,13 @@ export function BuildsPanel() {
                   <span className="name" title={p.name}>
                     {p.name}
                   </span>
-                  {p.tilt && <span className="badge" title="Own tilt">{p.tilt.angle}°</span>}
+                  {p.tilt ? (
+                    <span className="badge" title="Own tilt">{p.tilt.angle}°</span>
+                  ) : g.autoTilts[p.id] ? (
+                    <span className="badge auto" title="Turned or tilted automatically to fit the printer">
+                      {g.autoTilts[p.id].angle ? `auto ${g.autoTilts[p.id].angle}°` : `turned ${g.autoTilts[p.id].turn}°`}
+                    </span>
+                  ) : null}
                   <span className={`where ${st.missing ? 'bad' : ''}`}>{st.missing ? 'too big' : st.where.join(' ')}</span>
                   <NumberField value={p.quantity} min={1} max={999} step={1} precision={0} title="Quantity" onChange={(q) => setPartQuantity(p.id, q)} />
                 </li>
@@ -319,6 +324,12 @@ export function BuildsPanel() {
             </Check>
             {sel.tilt ? (
               <TiltControls tilt={sel.tilt} onChange={(t) => setPartTilt(sel.id, t)} />
+            ) : g.autoTilts[sel.id] ? (
+              <Hint>
+                {g.autoTilts[sel.id].angle
+                  ? `Tilted automatically by ${g.autoTilts[sel.id].angle}° (towards ${g.autoTilts[sel.id].azimuth}°) because it did not fit the printer upright.`
+                  : `Turned ${g.autoTilts[sel.id].turn}° on the platform (corner to corner) because it did not fit straight.`}
+              </Hint>
             ) : (
               <Hint>Uses the tilt for all parts ({g.tilt.angle}°).</Hint>
             )}

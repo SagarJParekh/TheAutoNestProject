@@ -5,7 +5,7 @@
  */
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { zipSync } from 'fflate';
-import { applyMatrix, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, fitsPlatform, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, getState, notify, setState } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, runJob } from './actions';
@@ -104,11 +104,12 @@ export function scheduleRegenerate(delay = 150) {
 }
 
 export function tiltQuaternion(t: Tilt): Quaternion {
-  if (!t.angle) return new Quaternion();
+  const turn = t.turn ? new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (t.turn * Math.PI) / 180) : new Quaternion();
+  if (!t.angle) return turn;
   const a = (t.azimuth * Math.PI) / 180;
   // lean the top towards the azimuth direction: rotate about the horizontal axis perpendicular to it
   const axis = new Vector3(-Math.sin(a), Math.cos(a), 0);
-  return new Quaternion().setFromAxisAngle(axis, (t.angle * Math.PI) / 180);
+  return turn.multiply(new Quaternion().setFromAxisAngle(axis, (t.angle * Math.PI) / 180));
 }
 
 /** Axis-aligned bounds of a mesh rotated by q (about its own origin). */
@@ -127,6 +128,39 @@ function rotatedBounds(mesh: MeshData, q: Quaternion): { min: Vector3; max: Vect
     if (wz > max.z) max.z = wz;
   }
   return { min, max };
+}
+
+const AUTO_TILT_ANGLES = [15, 30, 45, 60, 75, 90];
+const AUTO_TILT_DIRECTIONS = [0, 90, 180, 270, 45, 135, 225, 315];
+
+/**
+ * Make a part fit the printer: first try turning it flat on the platform (15°
+ * steps, e.g. corner to corner), then the smallest tilt (15° steps, 8
+ * directions); among fitting directions at that angle the lowest one wins.
+ */
+export function findFittingTilt(
+  mesh: MeshData,
+  base: Quaternion,
+  fit: Parameters<typeof fitsPlatform>[3],
+): { tilt: Tilt; q: Quaternion; bounds: { min: Vector3; max: Vector3 } } | null {
+  for (let turn = 15; turn < 90; turn += 15) {
+    const tilt = { angle: 0, azimuth: 0, turn };
+    const q = tiltQuaternion(tilt).multiply(base);
+    const b = rotatedBounds(mesh, q);
+    if (fitsPlatform(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, fit)) return { tilt, q, bounds: b };
+  }
+  for (const angle of AUTO_TILT_ANGLES) {
+    let best: { tilt: Tilt; q: Quaternion; bounds: { min: Vector3; max: Vector3 }; h: number } | null = null;
+    for (const azimuth of AUTO_TILT_DIRECTIONS) {
+      const tilt = { angle, azimuth };
+      const q = tiltQuaternion(tilt).multiply(base);
+      const b = rotatedBounds(mesh, q);
+      const w = b.max.x - b.min.x, d = b.max.y - b.min.y, h = b.max.z - b.min.z;
+      if (fitsPlatform(w, d, h, fit) && (!best || h < best.h - 1e-6)) best = { tilt, q, bounds: b, h };
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 export async function regenerateBuilds() {
@@ -151,27 +185,29 @@ export async function regenerateBuilds() {
     buildGen: { ...s.buildGen, parts: s.buildGen.parts.map((p) => parts.find((q) => q.id === p.id && q.mesh === p.mesh) ?? p) },
   }));
   const s = bg();
-  // 2. final rotation and box size of each part
+  // 2. final rotation and box size of each part; parts that are too tall or too big get tilted automatically
+  const printer = currentPrinter(s);
+  const fitParams = { volume: printer.volume, margin: s.margin, gap: s.gap, zOffset: s.zOffset, allowRotate: s.allowRotate };
   const info = new Map<string, { q: Quaternion; min: Vector3; max: Vector3 }>();
   const items: PackItem[] = [];
+  const autoTilts: Record<string, Tilt> = {};
   for (const p of parts) {
     const base = s.autoOrient && p.orient ? new Quaternion(...p.orient.q) : new Quaternion();
-    const q = tiltQuaternion(p.tilt ?? s.tilt).multiply(base);
-    const b = rotatedBounds(p.mesh, q);
+    let q = tiltQuaternion(p.tilt ?? s.tilt).multiply(base);
+    let b = rotatedBounds(p.mesh, q);
+    if (s.autoTilt && !fitsPlatform(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, fitParams)) {
+      const found = findFittingTilt(p.mesh, base, fitParams);
+      if (found) {
+        q = found.q;
+        b = found.bounds;
+        autoTilts[p.id] = found.tilt;
+      }
+    }
     info.set(p.id, { q, ...b });
     for (let c = 0; c < p.quantity; c++) items.push({ key: `${p.id}#${c}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z });
   }
-  // 3. pack
-  const printer = currentPrinter(s);
-  const result = packBuilds(items, {
-    volume: printer.volume,
-    margin: s.margin,
-    gap: s.gap,
-    zOffset: s.zOffset,
-    heightTolerance: s.groupHeights ? s.heightTolerance : Infinity,
-    allowRotate: s.allowRotate,
-    stack: printer.tech === 'powder' && s.stack,
-  });
+  // 3. pack: fill each build completely before starting the next
+  const result = packBuilds(items, { ...fitParams, stack: printer.tech === 'powder' && s.stack });
   const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2);
   const builds: Build[] = result.builds.map((b, i) => ({
     name: `Build ${i + 1}`,
@@ -196,7 +232,7 @@ export async function regenerateBuilds() {
     }),
   }));
   const unplaced = result.unplaced.map((u) => ({ partId: partOfKey(u.key), copy: Number(u.key.split('#')[1]), reason: u.reason }));
-  setBg({ builds, unplaced, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false });
+  setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false });
 }
 
 // ---------------------------------------------------------------- display / export

@@ -254,6 +254,8 @@ export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };
 export interface Tilt {
   angle: number;
   azimuth: number;
+  /** extra turn about Z (degrees), used by the automatic fit (e.g. corner to corner on the platform) */
+  turn?: number;
 }
 
 export interface BuildPart {
@@ -294,8 +296,10 @@ export interface BuildGenState {
   margin: number;
   gap: number;
   zOffset: number;
-  groupHeights: boolean;
-  heightTolerance: number;
+  /** tilt parts automatically when they are too tall or too big for the platform */
+  autoTilt: boolean;
+  /** tilts chosen automatically in the last generation, by part id */
+  autoTilts: Record<string, Tilt>;
   autoOrient: boolean;
   allowRotate: boolean;
   stack: boolean;
