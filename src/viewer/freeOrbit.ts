@@ -14,6 +14,10 @@ const Z = new Vector3(0, 0, 1);
  * Mouse: right drag rotates (orbits), middle drag pans in the screen plane
  * (Shift + right drag too), the wheel zooms towards the cursor. The left
  * button is left to the viewer for selecting (click / box select).
+ *
+ * `pivotAt` can choose the rotation centre per drag (e.g. the part under the
+ * cursor); without one, or when it returns null, the view turns around the
+ * target. `onPivot` reports the centre while a rotation is in progress.
  */
 export class FreeOrbitControls extends EventDispatcher<{ change: object; start: object; end: object }> {
   readonly target = new Vector3();
@@ -26,7 +30,13 @@ export class FreeOrbitControls extends EventDispatcher<{ change: object; start: 
   minDistance = 0.01;
   maxDistance = 1e7;
 
+  /** rotation centre for the drag that starts at this screen point (null = the target) */
+  pivotAt: ((clientX: number, clientY: number) => Vector3 | null) | null = null;
+  /** called with the rotation centre when a rotation starts, and null when it ends */
+  onPivot: ((pivot: Vector3 | null, onPart: boolean) => void) | null = null;
+
   private mode: 'rotate' | 'pan' | 'dolly' | null = null;
+  private pivot: Vector3 | null = null;
   private last = new Vector2();
   private pointerId = -1;
   private raycaster = new Raycaster();
@@ -78,6 +88,10 @@ export class FreeOrbitControls extends EventDispatcher<{ change: object; start: 
       e.preventDefault(); // no auto-scroll cursor
     } else if (e.button === 2) this.mode = e.shiftKey ? 'pan' : 'rotate';
     else return;
+    if (this.mode === 'rotate') {
+      this.pivot = this.pivotAt?.(e.clientX, e.clientY) ?? null;
+      this.onPivot?.(this.pivot ?? this.target, !!this.pivot);
+    }
     this.pointerId = e.pointerId;
     this.last.set(e.clientX, e.clientY);
     this.dispatchEvent({ type: 'start' });
@@ -101,7 +115,9 @@ export class FreeOrbitControls extends EventDispatcher<{ change: object; start: 
 
   private finish() {
     if (!this.mode) return;
+    if (this.mode === 'rotate') this.onPivot?.(null, false);
     this.mode = null;
+    this.pivot = null;
     this.pointerId = -1;
     this.dispatchEvent({ type: 'end' });
   }
@@ -128,8 +144,11 @@ export class FreeOrbitControls extends EventDispatcher<{ change: object; start: 
     const qYaw = new Quaternion().setFromAxisAngle(Z, up.z < 0 ? -yaw : yaw);
     const qPitch = new Quaternion().setFromAxisAngle(right, pitch);
     const q = qYaw.multiply(qPitch);
-    const offset = new Vector3().subVectors(cam.position, this.target).applyQuaternion(q);
-    cam.position.copy(this.target).add(offset);
+    // turn the camera and its target together around the pivot
+    const pv = this.pivot ?? this.target;
+    const offset = new Vector3().subVectors(cam.position, pv).applyQuaternion(q);
+    if (this.pivot) this.target.sub(pv).applyQuaternion(q).add(pv);
+    cam.position.copy(pv).add(offset);
     cam.up.copy(up.applyQuaternion(q));
     cam.lookAt(this.target);
     this.dispatchEvent({ type: 'change' });

@@ -53,6 +53,13 @@ export function onPointPick(info: PickInfo) {
     setState({ perfPoints: [...s.perfPoints.filter((p) => p.mesh === part.mesh || p.partId !== part.id), pick], preview: null });
     return;
   }
+  if (s.pointSlot === 'propStart') {
+    // go straight on to the end point (Esc or Preview skips it: the prop then follows the surface normal)
+    const { propEnd: _old, ...rest } = s.pointPicks;
+    void _old;
+    setState({ pointPicks: { ...rest, propStart: pick }, pickMode: 'point', pointSlot: 'propEnd', preview: null });
+    return;
+  }
   setState({ pointPicks: { ...s.pointPicks, [s.pointSlot]: pick }, pickMode: null, preview: null });
 }
 
@@ -79,7 +86,7 @@ export async function previewSingleProp() {
   } else {
     const n = a.normal;
     const hit = viewerApi.current?.viewer?.castRay([a.point[0] + n[0] * 0.02, a.point[1] + n[1] * 0.02, a.point[2] + n[2] * 0.02], n);
-    if (!hit || hit.distance > st.maxLength) return notify('warning', `Nothing found within ${st.maxLength} mm along the surface normal; pick an end point instead`);
+    if (!hit || hit.distance > (st.maxLength || 10000)) return notify('warning', 'Nothing found along the surface normal; pick an end point instead');
     end = hit.point;
     hitPart = partById(hit.partId) ?? null;
   }

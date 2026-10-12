@@ -4,6 +4,7 @@ import { PartsPanel } from './PartsPanel';
 import { PropertiesPanel } from './PropertiesPanel';
 import { ViewerCanvas } from './ViewerCanvas';
 import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
+import { ClipWidget } from './panels/ClipCutPanel';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
 import { useShortcuts } from './shortcuts';
@@ -43,6 +44,7 @@ export function App() {
       <main className="center">
         <ViewerCanvas />
         <ProgressOverlay />
+        <ClipWidget />
         <Notices />
       </main>
       {workspace === 'build' ? <BuildsPanel /> : <PropertiesPanel />}

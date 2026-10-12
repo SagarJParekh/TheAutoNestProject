@@ -159,7 +159,31 @@ export class Viewer {
     this.controls.target.set(0, 0, 20);
     this.controls.screenSpacePanning = true;
     this.controls.zoomToCursor = true;
-    this.controls.addEventListener('change', () => this.requestRender());
+    this.controls.addEventListener('change', () => {
+      this.requestRender();
+      this.placePivotRing();
+    });
+    // right-drag on a part orbits around that part, on empty space around the grid / target
+    this.controls.pivotAt = (x, y) => {
+      const hit = this.pick(x, y);
+      const obj = hit && this.objects.get(hit.partId);
+      const gb = obj?.mesh.geometry.boundingBox;
+      return gb ? gb.getCenter(new Vector3()).applyMatrix4(obj.group.matrixWorld) : null;
+    };
+    this.controls.onPivot = (pivot, onPart) => {
+      this.pivotPoint = pivot ? pivot.clone() : null;
+      if (!pivot) {
+        this.pivotRing?.remove();
+        this.pivotRing = null;
+        return;
+      }
+      if (!this.pivotRing) {
+        this.pivotRing = document.createElement('div');
+        this.renderer.domElement.parentElement?.appendChild(this.pivotRing);
+      }
+      this.pivotRing.className = `pivot-ring ${onPart ? 'on-part' : ''}`;
+      this.placePivotRing();
+    };
     this.controls.update();
 
     this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
@@ -985,6 +1009,18 @@ export class Viewer {
     if (bv) b.union(new Box3(new Vector3(-bv.volume[0] / 2, -bv.volume[1] / 2, 0), new Vector3(bv.volume[0] / 2, bv.volume[1] / 2, bv.volume[2])));
     if (b.isEmpty()) b.set(new Vector3(-50, -50, 0), new Vector3(50, 50, 50));
     return b;
+  }
+
+  private pivotRing: HTMLDivElement | null = null;
+  private pivotPoint: Vector3 | null = null;
+
+  /** keep the rotation-centre ring on its point while the view turns */
+  private placePivotRing() {
+    if (!this.pivotRing || !this.pivotPoint) return;
+    const el = this.renderer.domElement;
+    const v = this.pivotPoint.clone().project(this.camera);
+    this.pivotRing.style.left = `${el.offsetLeft + ((v.x + 1) / 2) * el.clientWidth}px`;
+    this.pivotRing.style.top = `${el.offsetTop + ((1 - v.y) / 2) * el.clientHeight}px`;
   }
 
   fitView(selectionOnly = false) {

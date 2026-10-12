@@ -17,7 +17,7 @@ export function useSetting<K extends Key>(k: K) {
 }
 
 /** Button that arms a face pick, plus what was picked. */
-export function PickButton({ slot, label }: { slot: Exclude<PickSlot, 'primary'>; label: string }) {
+export function PickButton({ slot, label, multi = false }: { slot: Exclude<PickSlot, 'primary'>; label: string; multi?: boolean }) {
   const armed = useStore((s) => s.pickMode === 'face' && s.pickSlot === slot);
   const pick = useStore((s) => s.facePicks[slot]);
   const part = useStore((s) => (pick ? s.parts.find((p) => p.id === pick.partId) : undefined));
@@ -25,7 +25,7 @@ export function PickButton({ slot, label }: { slot: Exclude<PickSlot, 'primary'>
   return (
     <div className="pick-row">
       <button className={`btn ${armed ? 'primary' : ''}`} onClick={() => startPick(slot)}>
-        {armed ? 'Click a face…' : label}
+        {armed ? (multi ? 'Click faces… (click here to finish)' : 'Click a face…') : label}
       </button>
       <span className="muted small">
         {pick && part && !stale ? `${part.name} · ${pick.tris.length} tris · ${pick.area.toFixed(1)} mm²` : stale ? 'part changed — pick again' : 'not picked'}
@@ -276,7 +276,7 @@ export function PropsTab() {
         <>
           <PointButton slot="propStart" label="1. Start point" />
           <PointButton slot="propEnd" label="2. End point (optional)" />
-          <Hint>Without an end point the prop runs along the surface normal to the first surface it meets.</Hint>
+          <Hint>After the start point the end point pick starts by itself. Without an end point (Esc, or Preview straight away) the prop runs along the surface normal to the first surface it meets.</Hint>
         </>
       ) : (
         <>
@@ -323,9 +323,6 @@ export function PropsTab() {
           </Row>
         </>
       )}
-      <Row label="Max length">
-        <NumberField value={props.maxLength} min={0.5} step={5} suffix="mm" onChange={(maxLength) => setProps({ maxLength })} />
-      </Row>
       <Row label="Embed depth">
         <NumberField value={props.embed} min={0} step={0.1} suffix="mm" title="How far each prop sinks into the faces" onChange={(embed) => setProps({ embed })} />
       </Row>

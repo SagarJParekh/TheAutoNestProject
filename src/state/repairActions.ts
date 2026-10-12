@@ -54,7 +54,42 @@ export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number)
   const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, ...grow }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
   const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };
+  if (slot === 'offset') {
+    // offset takes several faces: each click adds a face (or removes it when already picked), picking stays on
+    const old = getState().facePicks.offset;
+    const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick);
+    setState((s) => {
+      const f = { ...s.facePicks };
+      if (merged) f.offset = merged;
+      else delete f.offset;
+      return { facePicks: f, preview: null };
+    });
+    return;
+  }
   setState((s) => ({ facePicks: { ...s.facePicks, [slot]: pick }, pickMode: null, preview: null }));
+}
+
+/** Add a face to a multi-face pick, or take it out when its seed triangle is already in the pick. */
+function mergeFacePicks(old: FaceSelection | null, add: FaceSelection): FaceSelection | null {
+  if (!old) return add;
+  const have = new Set(old.tris);
+  const removing = have.has(add.seed);
+  let tris: Uint32Array;
+  if (removing) {
+    const drop = new Set(add.tris);
+    tris = Uint32Array.from(Array.from(old.tris).filter((t) => !drop.has(t)));
+  } else {
+    for (const t of add.tris) have.add(t);
+    tris = Uint32Array.from(have);
+  }
+  if (!tris.length) return null;
+  // area-weighted normal and centroid of the faces
+  const a1 = old.area, a2 = removing ? -add.area : add.area;
+  const area = Math.max(1e-9, a1 + a2);
+  const mix = (u: Vec3, v: Vec3): Vec3 => [(u[0] * a1 + v[0] * a2) / area, (u[1] * a1 + v[1] * a2) / area, (u[2] * a1 + v[2] * a2) / area];
+  const n = mix(old.normal, add.normal);
+  const l = Math.hypot(n[0], n[1], n[2]) || 1;
+  return { ...old, tris, area, normal: [n[0] / l, n[1] / l, n[2] / l], centroid: mix(old.centroid, add.centroid) };
 }
 
 export function clearPick(slot: Slot) {
@@ -344,7 +379,7 @@ export async function previewProps() {
     towards,
   });
   if (!plan) return;
-  if (!plan.props.length) return notify('warning', `No props fit: ${plan.skipped} positions found no surface within ${st.maxLength} mm`);
+  if (!plan.props.length) return notify('warning', `No props fit: ${plan.skipped} positions found no surface along the face normal`);
   const parts = a.part.id === b.part.id ? [a.part] : [a.part, b.part];
   setPreview({
     tool: 'repair',
@@ -399,7 +434,7 @@ export async function previewFixNonManifold(fill = true) {
   if (!part) return;
   const r = await runJob('Fixing non-manifold edges', 'fixNonManifold', { mesh: part.mesh, fill });
   if (!r) return;
-  if (!r.removed) return notify('info', 'No non-manifold edges found');
+  if (!r.edges) return notify('info', 'No non-manifold edges found');
   setPreview({
     tool: 'repair',
     label: 'Fix non-manifold edges',
@@ -407,7 +442,8 @@ export async function previewFixNonManifold(fill = true) {
     meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r.mesh }), color: part.color }],
     summary: [
       `Non-manifold edges: ${r.edges.toLocaleString()}`,
-      `Extra triangles removed: ${r.removed.toLocaleString()}`,
+      `Vertices split so touching surfaces separate cleanly: ${r.split.toLocaleString()}`,
+      `Loose fins / internal walls removed: ${r.removed.toLocaleString()} triangles`,
       `Openings filled: ${r.filled}`,
     ],
     apply: () => {

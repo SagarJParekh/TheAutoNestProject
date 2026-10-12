@@ -1,9 +1,40 @@
+import { useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '../../state/store';
 import { applyPreview, cancelPreview } from '../../state/actions';
-import { liveActive } from '../../state/livePreview';
+import { liveActive, previewAnchor } from '../../state/livePreview';
 
+/**
+ * The preview card with Apply / Cancel. It opens right below the button that
+ * started the preview (in the side panel), or at the top of the panel.
+ */
 export function PreviewBar() {
   const preview = useStore((s) => s.preview);
+  const shown = !!preview;
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (!shown) return;
+    const anchor = previewAnchor();
+    // the block in the section that holds the button (a row of buttons, a list…)
+    const block = (anchor?.closest('.section-body > *') as HTMLElement | null) ?? anchor;
+    if (!block || !block.parentElement) return;
+    const div = document.createElement('div');
+    div.className = 'preview-host';
+    block.insertAdjacentElement('afterend', div);
+    setHost(div);
+    requestAnimationFrame(() => div.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+    return () => {
+      div.remove();
+      setHost(null);
+    };
+  }, [shown]);
+  if (!preview) return null;
+  const card = <PreviewCard />;
+  return host && host.isConnected ? createPortal(card, host) : card;
+}
+
+function PreviewCard() {
+  const preview = useStore((s) => s.preview)!;
   const busy = useStore((s) => s.jobs.length > 0);
   if (!preview) return null;
   return (

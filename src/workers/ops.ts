@@ -251,17 +251,18 @@ export const ops = {
     return { result: r, transfer: r.removed ? meshBuffers(r.mesh) : [] };
   },
 
-  async fixNonManifold(args: { mesh: MeshData; fill: boolean }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number; edges: number; filled: number }>> {
+  async fixNonManifold(args: { mesh: MeshData; fill: boolean }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number; edges: number; split: number; filled: number }>> {
     progress(0.2, 'Fixing non-manifold edges');
     const r = G.fixNonManifoldEdges(args.mesh);
     let mesh = r.mesh, filled = 0;
     if (args.fill && r.removed) {
       progress(0.7, 'Filling the openings');
       const f = G.fillHoles(mesh);
-      mesh = G.fixWinding(f.mesh).mesh;
+      mesh = f.mesh;
       filled = f.filled;
     }
-    return { result: { mesh, removed: r.removed, edges: r.edges, filled }, transfer: meshBuffers(mesh) };
+    if (r.edges) mesh = G.fixWinding(mesh).mesh;
+    return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
   async fitFeature(args: { mesh: MeshData; seed: number; kind: 'cylinder' | 'sphere'; angle?: number }): Promise<Result<{ c: Vec3; axis?: Vec3; r: number; rms: number }>> {

@@ -141,7 +141,7 @@ export const useStore = create<AppState>(() => ({
     solid: { voxelSize: 0 },
     boolean: { op: 'union' },
     align: { mode: 'mate', offset: 0, center: true },
-    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
+    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 10000, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
     label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },
     texture: {
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,

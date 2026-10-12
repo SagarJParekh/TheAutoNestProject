@@ -11,8 +11,7 @@ import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'transform', label: 'Transform', icon: Icon.transform, key: 'T' },
-  { id: 'clip', label: 'Clip', icon: Icon.clip, key: 'C' },
-  { id: 'cut', label: 'Cut', icon: Icon.cut, key: 'X' },
+  { id: 'clip', label: 'Clip & Cut', icon: Icon.cut, key: 'C / X' },
   { id: 'repair', label: 'Repair', icon: Icon.repair, key: 'R' },
   { id: 'hollow', label: 'Hollow', icon: Icon.hollow, key: 'H' },
   { id: 'perforate', label: 'Perforate', icon: Icon.perforate, key: 'P' },
@@ -192,9 +191,9 @@ export function Toolbar() {
         {TOOLS.map((t) => (
           <button
             key={t.id}
-            className={`tb tool ${tool === t.id ? 'active' : ''}`}
+            className={`tb tool ${tool === t.id || (t.id === 'clip' && tool === 'cut') ? 'active' : ''}`}
             title={`${t.label} (${t.key})`}
-            onClick={() => setTool(tool === t.id && t.id !== 'transform' ? 'transform' : t.id)}
+            onClick={() => setTool((tool === t.id || (t.id === 'clip' && tool === 'cut')) && t.id !== 'transform' ? 'transform' : t.id)}
           >
             {t.icon}
             <span>{t.label}</span>

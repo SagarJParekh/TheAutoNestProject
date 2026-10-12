@@ -434,6 +434,7 @@ export async function previewRepair() {
     `Triangles flipped: ${m.trianglesFlipped}`,
     `Holes filled: ${m.holesFilled}`,
     `Stitched: ${m.stitchedVertices} vertices, ${m.stitchedEdges} T-junctions`,
+    ...(m.nonManifoldFixed ? [`Non-manifold edges resolved: ${m.nonManifoldFixed}`] : []),
     `Shells removed: ${m.shellsRemoved}`,
     '—',
     line('Open edges', m.before.openEdges, m.after.openEdges),

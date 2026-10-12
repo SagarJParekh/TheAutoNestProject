@@ -2,8 +2,7 @@ import { useStore } from '../state/store';
 import { cancelTool } from '../state/actions';
 import { InfoPanel } from './panels/InfoPanel';
 import { TransformPanel } from './panels/TransformPanel';
-import { ClipPanel } from './panels/ClipPanel';
-import { CutPanel } from './panels/CutPanel';
+import { ClipCutPanel } from './panels/ClipCutPanel';
 import { RepairPanel } from './panels/RepairPanel';
 import { HollowPanel } from './panels/HollowPanel';
 import { PerforatePanel } from './panels/PerforatePanel';
@@ -19,8 +18,8 @@ import { OffsetPanel } from './panels/OffsetPanel';
 
 const TITLES = {
   transform: 'Transform',
-  clip: 'Clip',
-  cut: 'Cut',
+  clip: 'Clip & Cut',
+  cut: 'Clip & Cut',
   repair: 'Repair',
   hollow: 'Hollow',
   perforate: 'Perforate',
@@ -56,8 +55,7 @@ export function PropertiesPanel() {
       <div className="panel-scroll">
         <PreviewBar />
         {tool === 'transform' && <TransformPanel parts={parts} />}
-        {tool === 'clip' && <ClipPanel />}
-        {tool === 'cut' && <CutPanel parts={parts} />}
+        {(tool === 'clip' || tool === 'cut') && <ClipCutPanel parts={parts} />}
         {tool === 'repair' && <RepairPanel parts={parts} />}
         {tool === 'hollow' && <HollowPanel parts={parts} />}
         {tool === 'perforate' && <PerforatePanel />}

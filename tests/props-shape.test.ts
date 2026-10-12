@@ -49,3 +49,48 @@ describe('errorGroups', () => {
     }
   });
 });
+
+import { boxMesh, fixNonManifoldEdges, mergeMeshes } from '../src/geometry';
+
+describe('fixNonManifoldEdges', () => {
+  it('separates two cubes that share an edge without losing triangles', () => {
+    const a = boxMesh([0, 0, 0], [10, 10, 10]);
+    const b = boxMesh([10, 10, 0], [20, 20, 10]);
+    // weld them so the shared edge (x=y=10) is one non-manifold edge
+    const m = mergeMeshes([a, b]);
+    const key = (i: number) => `${m.positions[i * 3]},${m.positions[i * 3 + 1]},${m.positions[i * 3 + 2]}`;
+    const first = new Map<string, number>();
+    const idx = Uint32Array.from(m.indices, (v) => {
+      const k = key(v);
+      if (!first.has(k)) first.set(k, v);
+      return first.get(k)!;
+    });
+    const welded = { positions: m.positions, indices: idx };
+    expect(analyzeMesh(welded).nonManifoldEdges).toBeGreaterThan(0);
+    const r = fixNonManifoldEdges(welded);
+    expect(r.removed).toBe(0);
+    expect(r.split).toBeGreaterThan(0);
+    const a2 = analyzeMesh(r.mesh);
+    expect(a2.nonManifoldEdges).toBe(0);
+    expect(a2.openEdges).toBe(0);
+    expect(r.mesh.indices.length).toBe(welded.indices.length);
+  });
+
+  it('removes an internal wall and keeps the outer skin closed', () => {
+    const c = boxMesh([0, 0, 0], [10, 10, 10]);
+    // a wall x=5 spanning the full box, welded into the box corners would need box edges there; use a cube split mesh instead
+    const pos = Array.from(c.positions);
+    const vi = (x: number, y: number, z: number) => {
+      for (let i = 0; i < pos.length / 3; i++) if (pos[i * 3] === x && pos[i * 3 + 1] === y && pos[i * 3 + 2] === z) return i;
+      pos.push(x, y, z);
+      return pos.length / 3 - 1;
+    };
+    // fin from the box edge (0,0,0)-(10,0,0) inward diagonally: shares that edge
+    const a = vi(0, 0, 0), b = vi(10, 0, 0), d = vi(5, 5, 5);
+    const fin = { positions: Float32Array.from(pos), indices: Uint32Array.from([...c.indices, a, b, d]) };
+    expect(analyzeMesh(fin).nonManifoldEdges).toBe(1);
+    const r = fixNonManifoldEdges(fin);
+    expect(r.removed).toBe(1);
+    expect(isWatertight(r.mesh)).toBe(true);
+  });
+});

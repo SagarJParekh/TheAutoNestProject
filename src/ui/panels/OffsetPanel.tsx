@@ -56,11 +56,11 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
                 <NumberField value={st.angle} min={1} max={89} suffix="°" onChange={(angle) => setO({ angle })} />
               </Row>
             )}
-            <PickButton slot="offset" label="Pick face to offset" />
+            <PickButton slot="offset" label="Pick faces to offset" multi />
             <button className="btn primary wide" disabled={!!preview || !st.distance} onClick={() => live(previewOffset)}>
               Preview face offset
             </button>
-            <Hint>Moves the picked face (flat or curved) along its normals by the distance; side walls keep the part closed.</Hint>
+            <Hint>Click one or more faces (flat or curved; click a picked face again to drop it). They move along their normals by the distance; side walls keep the part closed.</Hint>
           </>
         )}
       </Section>

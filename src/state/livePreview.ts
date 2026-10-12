@@ -18,6 +18,28 @@ interface Session {
 }
 
 let session: Session | null = null;
+
+/** the button pressed last in the side panel: the preview card opens just below it */
+let lastPressed: HTMLElement | null = null;
+let liveAnchor: HTMLElement | null = null;
+if (typeof document !== 'undefined')
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('.preview-bar')) return;
+      const b = t?.closest?.('button') as HTMLElement | null;
+      // a press anywhere else (parts list, toolbar, viewport) means the card goes to the top
+      lastPressed = b && b.closest('.panel.right') ? b : null;
+    },
+    true,
+  );
+
+/** Where the preview card should open: below the button that started the (live) preview. */
+export function previewAnchor(): HTMLElement | null {
+  const a = session ? liveAnchor : lastPressed;
+  return a && a.isConnected ? a : null;
+}
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
 let again = false;
@@ -41,6 +63,7 @@ export function liveActive() {
 export function live(run: Run) {
   const s = getState();
   session = { run, tool: s.tool, repairTab: s.repairTab, snap: snapshot(s) };
+  liveAnchor = lastPressed;
   return run();
 }
 
