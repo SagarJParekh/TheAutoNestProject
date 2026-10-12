@@ -7,9 +7,17 @@ import { analyzePart, previewFillHoles, previewRepair, repairParts } from '../..
 import { previewCleanTriangles, previewFixNonManifold } from '../../state/repairActions';
 import type { Part, RepairTab, ToolSettings } from '../../state/types';
 import { highlightColors } from '../../state/contrast';
+import { ErrorNavigator } from './ErrorNavigator';
+import { live } from '../../state/livePreview';
 
 export function RepairPanel({ parts }: { parts: Part[] }) {
   const tab = useStore((s) => s.repairTab);
+  const part = parts.length === 1 ? parts[0] : null;
+  const hasReport = useStore((s) => !!(part && s.analysis[part.id]?.mesh === part.mesh));
+  useEffect(() => {
+    // analyse automatically (in every tab, so problems stay highlighted while editing)
+    if (part && !hasReport && part.mesh.indices.length / 3 < 3_000_000) analyzePart(part.id);
+  }, [part, hasReport]);
   return (
     <>
       <div className="repair-tabs">
@@ -24,6 +32,7 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
           ]}
         />
       </div>
+      {tab !== 'fix' && part && <ErrorNavigator part={part} compact />}
       {tab === 'fix' && <FixTab parts={parts} />}
       {tab === 'shells' && <ShellsTab parts={parts} />}
       {tab === 'combine' && <CombineTab parts={parts} />}
@@ -40,11 +49,6 @@ function FixTab({ parts }: { parts: Part[] }) {
   const report = entry && part && entry.mesh === part.mesh ? entry.report : null;
   const ix = useStore((s) => (part ? s.intersections[part.id] : undefined));
   const crossing = ix && part && ix.mesh === part.mesh ? ix.report.intersecting.length + ix.report.overlapping.length : 0;
-
-  useEffect(() => {
-    // analyse automatically for reasonably sized parts
-    if (part && !report && part.mesh.indices.length / 3 < 3_000_000) analyzePart(part.id);
-  }, [part, report]);
 
   const setRepair = (patch: Partial<ToolSettings['repair']>) =>
     setState({ settings: { ...getState().settings, repair: { ...getState().settings.repair, ...patch } } });
@@ -127,6 +131,8 @@ function FixTab({ parts }: { parts: Part[] }) {
         )}
       </Section>
 
+      {report && <ErrorNavigator part={part} />}
+
       {report && report.loops.length > 0 && (
         <Section
           title={`Holes (${report.loops.length})`}
@@ -186,7 +192,7 @@ function FixTab({ parts }: { parts: Part[] }) {
             onChange={(weldTolerance) => setRepair({ weldTolerance })}
           />
         </Row>
-        <button className="btn primary wide" disabled={!!preview || part.locked} onClick={previewRepair}>
+        <button className="btn primary wide" disabled={!!preview || part.locked} onClick={() => live(previewRepair)}>
           Auto repair…
         </button>
         <Hint>Welds duplicate vertices, removes degenerate/duplicate triangles, stitches cracks, fixes winding, fills holes. Shows a before/after summary before applying.</Hint>

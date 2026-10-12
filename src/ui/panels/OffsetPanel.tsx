@@ -3,6 +3,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { clearBlendEdges, previewBlend, previewOffset, startSharpEdgePick } from '../../state/modifyActions';
 import { PickButton } from './RepairTabs';
 import type { Part } from '../../state/types';
+import { live } from '../../state/livePreview';
 
 export function OffsetPanel({ parts }: { parts: Part[] }) {
   const st = useStore((s) => s.settings.offset);
@@ -37,7 +38,7 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
             <Check checked={st.asCopy} onChange={(asCopy) => setO({ asCopy })}>
               Keep the original (add the offset as a new part)
             </Check>
-            <button className="btn primary wide" disabled={!target || !!preview || !st.distance} onClick={previewOffset}>
+            <button className="btn primary wide" disabled={!target || !!preview || !st.distance} onClick={() => live(previewOffset)}>
               Preview offset
             </button>
             <Hint>
@@ -56,7 +57,7 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
               </Row>
             )}
             <PickButton slot="offset" label="Pick face to offset" />
-            <button className="btn primary wide" disabled={!!preview || !st.distance} onClick={previewOffset}>
+            <button className="btn primary wide" disabled={!!preview || !st.distance} onClick={() => live(previewOffset)}>
               Preview face offset
             </button>
             <Hint>Moves the picked face (flat or curved) along its normals by the distance; side walls keep the part closed.</Hint>
@@ -86,7 +87,7 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
             </button>
           )}
         </div>
-        <button className="btn primary wide" disabled={!edges.length || !!preview} onClick={previewBlend}>
+        <button className="btn primary wide" disabled={!edges.length || !!preview} onClick={() => live(previewBlend)}>
           Preview {bl.kind}
         </button>
         <Hint>

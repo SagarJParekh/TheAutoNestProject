@@ -4,7 +4,7 @@ import type {
   Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap, ShellView, TriEdit,
   BlendEdgePick, BuildGenState,
 } from './types';
-import type { MeshData } from '../geometry';
+import type { ErrorGroup, MeshData } from '../geometry';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
@@ -56,6 +56,8 @@ export interface AppState {
   polyMode: boolean;
   shellView: ShellView | null;
   triEdit: TriEdit | null;
+  /** problem cluster the repair tool is zoomed to */
+  errorFocus: { partId: string; mesh: MeshData; index: number; group: ErrorGroup } | null;
   showSearch: boolean;
   preview: Preview | null;
   analysis: Record<string, AnalysisEntry>;
@@ -123,6 +125,7 @@ export const useStore = create<AppState>(() => ({
   polyMode: false,
   shellView: null,
   triEdit: null,
+  errorFocus: null,
   showSearch: false,
   preview: null,
   analysis: {},
@@ -138,7 +141,7 @@ export const useStore = create<AppState>(() => ({
     solid: { voxelSize: 0 },
     boolean: { op: 'union' },
     align: { mode: 'mate', offset: 0, center: true },
-    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false, mode: 'single' },
+    props: { diameter: 2, spacing: 8, margin: 2, maxLength: 50, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
     label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },
     texture: {
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
@@ -269,7 +272,11 @@ export function setTransform(id: string, t: Partial<Transform>, label = 'Transfo
 // ---------------------------------------------------------------- notices & jobs
 
 let noticeId = 1;
+/** set while a live preview re-runs, so half-typed values don't flood the screen with warnings */
+export const noticeGate = { quiet: false };
+
 export function notify(kind: Notice['kind'], text: string, ttl = kind === 'error' ? 9000 : 4000) {
+  if (noticeGate.quiet && (kind === 'warning' || kind === 'info')) return;
   const id = noticeId++;
   setState((s) => {
     const list = [...s.notices, { id, kind, text }];

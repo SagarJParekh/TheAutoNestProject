@@ -16,6 +16,7 @@ import {
   centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
 } from './math';
 import { viewerApi } from '../viewer/api';
+import { endLive } from './livePreview';
 
 let uid = 1;
 export const newId = () => `p${Date.now().toString(36)}${(uid++).toString(36)}`;
@@ -178,6 +179,29 @@ export function setPartColor(id: string, color: string) {
 export function toggleVisible(id: string) {
   updateParts('Toggle visibility', [id], (p) => ({ ...p, visible: !p.visible }));
 }
+/** Hide every part except the selected ones (one undo step). */
+export function hideOthers(ids = getState().selection) {
+  if (!ids.length) return notify('info', 'Select the part(s) to keep visible');
+  const keep = new Set(ids);
+  const hide = getState().parts.filter((p) => !keep.has(p.id) && p.visible).map((p) => p.id);
+  const show = getState().parts.filter((p) => keep.has(p.id) && !p.visible).map((p) => p.id);
+  if (!hide.length && !show.length) return;
+  updateParts('Hide others', [...hide, ...show], (p) => ({ ...p, visible: keep.has(p.id) }));
+}
+
+export function showAllParts() {
+  const ids = getState().parts.filter((p) => !p.visible).map((p) => p.id);
+  if (ids.length) updateParts('Show all', ids, (p) => ({ ...p, visible: true }));
+}
+
+/** Shift+V: hide the others, or show everything again when they are already hidden. */
+export function toggleHideOthers() {
+  const s = getState();
+  const keep = new Set(s.selection);
+  if (s.selection.length && s.parts.some((p) => !keep.has(p.id) && p.visible)) hideOthers();
+  else showAllParts();
+}
+
 export function toggleLocked(id: string) {
   updateParts('Toggle lock', [id], (p) => ({ ...p, locked: !p.locked }));
 }
@@ -267,17 +291,20 @@ export function setPreview(preview: Preview | null) {
 export function applyPreview() {
   const p = getState().preview;
   if (!p) return;
+  endLive();
   p.apply();
   setState({ preview: null });
 }
 
 export function cancelPreview() {
+  endLive();
   setState({ preview: null });
 }
 
 export function setTool(tool: ToolId) {
   const s = getState();
   if (s.tool === tool) return;
+  endLive();
   const extra: Partial<typeof s> = {};
   if (tool === 'cut') {
     const target = selectedParts().filter((p) => !p.locked);

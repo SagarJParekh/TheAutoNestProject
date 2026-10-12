@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Icon } from './icons';
 import { useStore } from '../state/store';
 import {
-  deleteParts, duplicateParts, renamePart, repairParts, setRotationLock, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
+  deleteParts, duplicateParts, hideOthers, renamePart, showAllParts, repairParts, setRotationLock, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
 } from '../state/actions';
 import { sendPartsToBuild } from '../state/buildActions';
 import type { Part } from '../state/types';
@@ -26,6 +26,16 @@ export function PartsPanel() {
           None
         </button>
       </header>
+      {parts.length > 1 && (
+        <div className="parts-vis">
+          <button className="mini" onClick={() => hideOthers()} disabled={!selection.length || !parts.some((p) => !sel.has(p.id) && p.visible)} title="Hide every part except the selected ones (Shift+V)">
+            {Icon.eyeOff} Hide others
+          </button>
+          <button className="mini" onClick={showAllParts} disabled={!parts.some((p) => !p.visible)} title="Show every part again (Shift+V)">
+            {Icon.eye} Show all
+          </button>
+        </div>
+      )}
       <div className="parts-list" role="listbox" aria-multiselectable>
         {parts.length === 0 && (
           <div className="empty">

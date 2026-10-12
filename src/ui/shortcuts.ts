@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { getState, redo, setState, undo, updateParts } from '../state/store';
 import {
-  applyPreview, cancelPreview, centerOnOrigin, deleteParts, dropToBed, duplicateParts, selectAll, setTool,
+  applyPreview, cancelPreview, centerOnOrigin, deleteParts, dropToBed, duplicateParts, selectAll, setTool, toggleHideOthers,
 } from '../state/actions';
 import { viewerApi } from '../viewer/api';
 import type { DisplayMode, ToolId } from '../state/types';
@@ -104,6 +104,9 @@ export function useShortcuts(openFile: () => void) {
           break;
         case k === 'm':
           setState({ display: MODES[(MODES.indexOf(s.display) + 1) % MODES.length] });
+          break;
+        case k === 'v' && e.shiftKey:
+          toggleHideOthers();
           break;
         case k === 'v':
           if (s.selection.length) updateParts('Toggle visibility', s.selection, (p) => ({ ...p, visible: !p.visible }));

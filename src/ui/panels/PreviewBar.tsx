@@ -1,5 +1,6 @@
 import { useStore } from '../../state/store';
 import { applyPreview, cancelPreview } from '../../state/actions';
+import { liveActive } from '../../state/livePreview';
 
 export function PreviewBar() {
   const preview = useStore((s) => s.preview);
@@ -10,6 +11,11 @@ export function PreviewBar() {
       <header>
         <span className="tag">Preview</span>
         <strong>{preview.label}</strong>
+        {liveActive() && (
+          <span className="tag live" title="Change the settings in the panel and the preview updates by itself; nothing changes until Apply">
+            Live
+          </span>
+        )}
       </header>
       {preview.summary && (
         <ul>

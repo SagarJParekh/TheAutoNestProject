@@ -352,7 +352,8 @@ export async function previewProps() {
     replaces: [],
     meshes: [{ name: 'Props', mesh: plan.mesh, color: '#ffd23f' }],
     summary: [
-      `Props: ${plan.props.length} × Ø${st.diameter} mm${plan.skipped ? ` (${plan.skipped} positions skipped)` : ''}`,
+      `Props: ${plan.props.length} × ${st.shape ?? 'circle'} ${st.diameter} mm${plan.skipped ? ` (${plan.skipped} positions skipped)` : ''}`,
+      ...(st.thinEnds ? [`Thin ends: ${st.tipDiameter} mm wide, ${st.tipLength} mm long`] : []),
       `Embedded ${st.embed} mm into each face`,
       merge ? `Apply merges props with ${parts.map((p) => p.name).join(' + ')} into one solid` : 'Apply adds the props as a new part',
     ],

@@ -179,6 +179,7 @@ export const SHORTCUTS: [string, string][] = [
   ['Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y', 'Undo / redo'],
   ['Ctrl+A', 'Select all'],
   ['Ctrl+D', 'Duplicate selected'],
+  ['Shift+V', 'Hide all parts except the selected / show all again'],
   ['Delete / Backspace', 'Delete selected'],
   ['W / Q', 'Move / rotate gizmo'],
   ['F', 'Lay flat (click a face)'],

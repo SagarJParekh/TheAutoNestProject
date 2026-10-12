@@ -6,6 +6,7 @@ import {
   previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell,
 } from '../../state/editActions';
 import type { MarkTool, Part } from '../../state/types';
+import { live as livePreview } from '../../state/livePreview';
 
 const fmtVol = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} cm³` : `${v.toFixed(1)} mm³`);
 
@@ -17,7 +18,7 @@ export function OpenEdgesSection({ part, openEdges }: { part: Part; openEdges: n
   const busy = !!preview || part.locked;
   return (
     <Section title={`Fix open edges (${openEdges.toLocaleString()})`}>
-      <button className="btn wide" disabled={busy} onClick={() => previewFixOpenEdges('stitchFill')} title="Close cracks between triangles, then fill every remaining hole">
+      <button className="btn wide" disabled={busy} onClick={() => livePreview(() => previewFixOpenEdges('stitchFill'))} title="Close cracks between triangles, then fill every remaining hole">
         Stitch &amp; fill all
       </button>
       <Row label="Fill holes up to">
@@ -29,11 +30,11 @@ export function OpenEdgesSection({ part, openEdges }: { part: Part; openEdges: n
           title="Largest hole perimeter to fill"
           onChange={(v) => setState({ settings: { ...getState().settings, openEdges: { maxPerimeter: v } } })}
         />
-        <button className="btn" disabled={busy} onClick={() => previewFixOpenEdges('fillSmall')}>
+        <button className="btn" disabled={busy} onClick={() => livePreview(() => previewFixOpenEdges('fillSmall'))}>
           Fill
         </button>
       </Row>
-      <button className="btn wide" disabled={busy} onClick={() => previewFixOpenEdges('trim')} title="Remove slivers and ragged borders: triangles with two or more open edges">
+      <button className="btn wide" disabled={busy} onClick={() => livePreview(() => previewFixOpenEdges('trim'))} title="Remove slivers and ragged borders: triangles with two or more open edges">
         Remove dangling triangles
       </button>
       <Hint>Open edges belong to only one triangle. Stitching closes hairline cracks; filling closes real holes; trimming removes loose slivers.</Hint>
@@ -238,7 +239,7 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
               <button className="btn danger" disabled={!marked || busy} onClick={deleteSelectedTriangles}>
                 Delete marked
               </button>
-              <button className="btn" disabled={!marked || busy} onClick={() => previewRemesh('marked')} title="Remesh only the marked area; its border stays attached">
+              <button className="btn" disabled={!marked || busy} onClick={() => livePreview(() => previewRemesh('marked'))} title="Remesh only the marked area; its border stays attached">
                 Remesh marked
               </button>
             </div>
@@ -328,10 +329,10 @@ export function RemeshSection({ part, marked }: { part: Part | null; marked: num
         <NumberField value={st.iterations} min={1} max={20} step={1} precision={0} onChange={(iterations) => set({ iterations: Math.round(iterations) })} />
       </Row>
       <div className="btn-grid two">
-        <button className="btn primary" disabled={busy} onClick={() => previewRemesh('part')}>
+        <button className="btn primary" disabled={busy} onClick={() => livePreview(() => previewRemesh('part'))}>
           Remesh whole part
         </button>
-        <button className="btn" disabled={busy || !marked} onClick={() => previewRemesh('marked')}>
+        <button className="btn" disabled={busy || !marked} onClick={() => livePreview(() => previewRemesh('marked'))}>
           Remesh marked
         </button>
       </div>

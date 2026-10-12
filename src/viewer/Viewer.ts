@@ -702,11 +702,13 @@ export class Viewer {
     // per-part overlays: analysis highlights, face selection
     for (const obj of this.objects.values()) {
       const a = s.analysis[obj.part.id];
-      const analysis = a && a.mesh === obj.part.mesh && s.tool === 'repair' && s.repairTab === 'fix' ? a : null;
+      // problems stay highlighted in every repair tab (fix, shells, combine, edit)
+      const analysis = a && a.mesh === obj.part.mesh && s.tool === 'repair' ? a : null;
+      const ef = s.tool === 'repair' && s.errorFocus?.partId === obj.part.id && s.errorFocus.mesh === obj.part.mesh ? s.errorFocus : null;
       const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate') ? s.faceSelection : null;
       const hl = s.settings.highlight;
       const inRepair = s.tool === 'repair';
-      const ix = inRepair && s.repairTab === 'fix' ? s.intersections[obj.part.id] : undefined;
+      const ix = inRepair ? s.intersections[obj.part.id] : undefined;
       const inter = ix && ix.mesh === obj.part.mesh ? ix : null;
       const showNormals = inRepair && s.repairTab === 'fix' && s.settings.normals.show;
       const analysisFor = a;
@@ -723,7 +725,7 @@ export class Viewer {
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
       const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}`;
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}`;
       // isolate: ghost the whole part, the selected shells are drawn as an overlay
       const ghostForShells = !!(sv && sv.isolate && sv.selected.length);
       obj.material.transparent = obj.material.transparent || ghostForShells;
@@ -830,6 +832,30 @@ export class Viewer {
             }
             obj.overlay.add(lines(seg, 0xffd23f, true));
           }
+        }
+      }
+      if (ef) {
+        // the problem the navigator zoomed to: thick white edges / bright triangles on top of everything
+        const g = ef.group;
+        if (g.segs) {
+          obj.overlay.add(this.fatLines(g.segs, '#ffffff', 8));
+          obj.overlay.add(this.fatLines(g.segs, '#ff1744', 4));
+        }
+        if (g.tris) {
+          const m = triMesh(obj.part.mesh, g.tris, 0xffea00);
+          (m.material as MeshBasicMaterial).depthTest = false;
+          m.renderOrder = 1001;
+          obj.overlay.add(m);
+        }
+        // a marker around tiny problems that would otherwise be hard to spot
+        if (Math.hypot(g.max[0] - g.min[0], g.max[1] - g.min[1], g.max[2] - g.min[2]) < 2) {
+          const c = [(g.min[0] + g.max[0]) / 2, (g.min[1] + g.max[1]) / 2, (g.min[2] + g.max[2]) / 2];
+          const pts = new Points(
+            new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(c), 3)),
+            new PointsMaterial({ color: 0xff1744, size: 26, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.35 }),
+          );
+          pts.renderOrder = 1005;
+          obj.overlay.add(pts);
         }
       }
       if (fs) {
@@ -963,6 +989,17 @@ export class Viewer {
 
   fitView(selectionOnly = false) {
     const sphere = this.visibleBounds(selectionOnly).getBoundingSphere(new Sphere());
+    const dir = new Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    if (dir.lengthSq() === 0) dir.set(1, -1, 1).normalize();
+    this.frame(sphere, dir, true);
+  }
+
+  /** Zoom to a world-space box (keeps the viewing direction), with some room around it. */
+  frameBox(min: Vector3, max: Vector3) {
+    const sphere = new Box3(min, max).getBoundingSphere(new Sphere());
+    // small problems still get a few mm of context around them
+    const whole = this.visibleBounds(false).getBoundingSphere(new Sphere());
+    sphere.radius = Math.max(sphere.radius * 2.2, Math.min(whole.radius * 0.5, 4), 0.5);
     const dir = new Vector3().subVectors(this.camera.position, this.controls.target).normalize();
     if (dir.lengthSq() === 0) dir.set(1, -1, 1).normalize();
     this.frame(sphere, dir, true);

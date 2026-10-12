@@ -4,6 +4,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { previewCut } from '../../state/actions';
 import { PlaneControls } from './PlaneControls';
 import type { Part } from '../../state/types';
+import { live } from '../../state/livePreview';
 
 export function CutPanel({ parts }: { parts: Part[] }) {
   const plane = useStore((s) => s.cutPlane);
@@ -69,7 +70,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
           title="Move the two halves apart after cutting"
         />
       </Row>
-      <button className="btn primary wide" disabled={!target || !!preview} onClick={previewCut}>
+      <button className="btn primary wide" disabled={!target || !!preview} onClick={() => live(previewCut)}>
         Preview cut
       </button>
       <Hint>Splits the part into two closed parts; the cut faces are capped. Use the tilt sliders (or Free) to angle the plane.</Hint>

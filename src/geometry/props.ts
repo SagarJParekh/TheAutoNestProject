@@ -1,7 +1,7 @@
 import { DoubleSide, Ray } from 'three';
 import { MeshData, Vec3, mergeMeshes } from './mesh';
 import { planPerforation } from './perforate';
-import { cylinderMesh } from './primitives';
+import { planeBasis } from './triangulate';
 import { makeBVH } from './sdf';
 
 export interface PropParams {
@@ -17,6 +17,71 @@ export interface PropParams {
   embed: number;
   segments?: number;
   maxProps?: number;
+  /** cross-section; the diameter is the width across flats (the polygon fits around a circle of that diameter) */
+  shape?: PropShape;
+  /** neck the prop down at both ends where it meets the part */
+  thinEnds?: boolean;
+  /** width of the thin ends, mm */
+  tipDiameter?: number;
+  /** length of each thin end outside the surface, mm (the embedded part is thin too) */
+  tipLength?: number;
+}
+
+export type PropShape = 'circle' | 'square' | 'hexagon' | 'triangle';
+
+const SIDES: Record<PropShape, number> = { circle: 24, square: 4, hexagon: 6, triangle: 3 };
+
+/**
+ * One closed prop from `start` along `dir` over `length` mm, with the
+ * chosen cross-section and (optionally) thinner ends: the first and last
+ * `embed + tipLength` mm use the tip width, the middle the full width.
+ */
+export function propMesh(start: Vec3, dir: Vec3, length: number, params: PropParams): MeshData {
+  const shape = params.shape ?? 'circle';
+  const sides = shape === 'circle' ? params.segments ?? SIDES.circle : SIDES[shape];
+  // circumradius of a polygon whose inscribed circle has the given diameter
+  const circ = (d: number) => (shape === 'circle' ? d / 2 : d / 2 / Math.cos(Math.PI / sides));
+  const R = circ(params.diameter);
+  const rings: [number, number][] = [];
+  const tipD = Math.min(params.tipDiameter ?? params.diameter / 2, params.diameter);
+  let tip = (params.tipLength ?? 0) + params.embed;
+  if (params.thinEnds && tipD > 0 && tipD < params.diameter && tip > 0) {
+    // keep at least a third of the prop at full width
+    tip = Math.min(tip, length / 3);
+    const r = circ(tipD);
+    rings.push([0, r], [tip, r], [tip, R], [length - tip, R], [length - tip, r], [length, r]);
+  } else rings.push([0, R], [length, R]);
+  const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const n: Vec3 = [dir[0] / l, dir[1] / l, dir[2] / l];
+  const { u, v } = planeBasis(n);
+  const rot = shape === 'circle' ? 0 : Math.PI / sides;
+  const nr = rings.length;
+  const positions = new Float32Array((nr * sides + 2) * 3);
+  for (let k = 0; k < nr; k++) {
+    const [h, r] = rings[k];
+    for (let i = 0; i < sides; i++) {
+      const a = rot + (i / sides) * Math.PI * 2;
+      const cx = Math.cos(a) * r, cy = Math.sin(a) * r;
+      const o = (k * sides + i) * 3;
+      for (let c = 0; c < 3; c++) positions[o + c] = start[c] + u[c] * cx + v[c] * cy + n[c] * h;
+    }
+  }
+  const cb = nr * sides, ct = cb + 1;
+  for (let c = 0; c < 3; c++) {
+    positions[cb * 3 + c] = start[c];
+    positions[ct * 3 + c] = start[c] + n[c] * length;
+  }
+  const idx: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const j = (i + 1) % sides;
+    for (let k = 0; k + 1 < nr; k++) {
+      const b0 = k * sides + i, b1 = k * sides + j, t0 = (k + 1) * sides + i, t1 = (k + 1) * sides + j;
+      idx.push(b0, b1, t1, b0, t1, t0);
+    }
+    idx.push(cb, j, i);
+    idx.push(ct, (nr - 1) * sides + i, (nr - 1) * sides + j);
+  }
+  return { positions, indices: Uint32Array.from(idx) };
 }
 
 export interface PropPlan {
@@ -72,12 +137,11 @@ export function planProps(
     const start: Vec3 = [c[0] - d[0] * params.embed, c[1] - d[1] * params.embed, c[2] - d[2] * params.embed];
     const end: Vec3 = [c[0] + d[0] * (len + params.embed), c[1] + d[1] * (len + params.embed), c[2] + d[2] * (len + params.embed)];
     props.push({ start, end });
-    parts.push(cylinderMesh(start, d, params.diameter / 2, len + 2 * params.embed, params.segments ?? 16));
+    parts.push(propMesh(start, d, len + 2 * params.embed, params));
   }
   return { props, mesh: mergeMeshes(parts), direction: d, skipped };
 }
 
-/** Short line segments along face normals (xyz xyz), sampling at most maxCount faces. */
 /**
  * Normal hairs split in two sets: triangles marked in `inward` (e.g. the
  * flipped triangles from analysis) and all the others.

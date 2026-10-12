@@ -6,6 +6,7 @@ import {
 } from '../../state/repairActions';
 import type { Part, PickSlot, PointSlot, ToolSettings } from '../../state/types';
 import { clearPointPick, previewSingleProp, startPointPick, worldPoint } from '../../state/featureActions';
+import { live } from '../../state/livePreview';
 
 type Key = { [K in keyof ToolSettings]: ToolSettings[K] extends object ? K : never }[keyof ToolSettings];
 export function useSetting<K extends Key>(k: K) {
@@ -53,7 +54,7 @@ export function FixExtras({ part }: { part: Part }) {
         <Row label="Tolerance">
           <NumberField value={stitch.tolerance} min={0} step={0.01} precision={4} suffix="mm" title="0 = automatic (0.01% of part size)" onChange={(tolerance) => setStitch({ tolerance })} />
         </Row>
-        <button className="btn wide" disabled={busy} onClick={previewStitch}>
+        <button className="btn wide" disabled={busy} onClick={() => live(previewStitch)}>
           Stitch cracks…
         </button>
         <Hint>Merges open-edge vertices closer than the tolerance and splits edges at T-junctions, closing cracks between triangles.</Hint>
@@ -189,7 +190,7 @@ export function CombineTab({ parts }: { parts: Part[] }) {
         ) : (
           <Hint>Ctrl-click two or more parts. The first one you select is the base (subtract removes the others from it).</Hint>
         )}
-        <button className="btn primary wide" disabled={ops.length < 2 || !!preview} onClick={previewBoolean}>
+        <button className="btn primary wide" disabled={ops.length < 2 || !!preview} onClick={() => live(previewBoolean)}>
           Preview boolean
         </button>
         <button className="btn wide" disabled={ops.length < 2} onClick={mergeSelectedParts} title="Combine into one part without a boolean; shells stay separate">
@@ -225,7 +226,7 @@ export function AlignTab() {
       <Check checked={align.center} onChange={(center) => setAlign({ center })}>
         Centre the faces on each other
       </Check>
-      <button className="btn primary wide" disabled={!!preview} onClick={previewAlign}>
+      <button className="btn primary wide" disabled={!!preview} onClick={() => live(previewAlign)}>
         Preview alignment
       </button>
       <Hint>The part with the first face moves; its geometry is not changed, only its position and rotation.</Hint>
@@ -283,9 +284,35 @@ export function PropsTab() {
           <PickButton slot="propsB" label="2. Target face / shell" />
         </>
       )}
-      <Row label="Diameter">
-        <NumberField value={props.diameter} min={0.2} step={0.5} suffix="mm" onChange={(diameter) => setProps({ diameter })} />
+      <Row label="Shape">
+        <Segmented
+          value={props.shape ?? 'circle'}
+          onChange={(shape) => setProps({ shape })}
+          options={[
+            { value: 'circle', label: 'Circle' },
+            { value: 'square', label: 'Square' },
+            { value: 'hexagon', label: 'Hexagon' },
+            { value: 'triangle', label: 'Triangle' },
+          ]}
+        />
       </Row>
+      <Row label={props.shape && props.shape !== 'circle' ? 'Width' : 'Diameter'}>
+        <NumberField value={props.diameter} min={0.2} step={0.5} suffix="mm" title="Width across flats (the shape fits around a circle of this diameter)" onChange={(diameter) => setProps({ diameter })} />
+      </Row>
+      <Check checked={!!props.thinEnds} onChange={(thinEnds) => setProps({ thinEnds })}>
+        Thinner start and end points
+      </Check>
+      {props.thinEnds && (
+        <>
+          <Row label="End width">
+            <NumberField value={props.tipDiameter ?? props.diameter / 2} min={0.1} max={props.diameter} step={0.25} suffix="mm" title="Width of the prop where it touches the part" onChange={(tipDiameter) => setProps({ tipDiameter })} />
+          </Row>
+          <Row label="End length">
+            <NumberField value={props.tipLength ?? 0.5} min={0} step={0.25} suffix="mm" title="Length of each thin end outside the surface (the embedded part is thin too)" onChange={(tipLength) => setProps({ tipLength })} />
+          </Row>
+          <Hint>The prop narrows to the end width where it meets the part, so it breaks off cleanly.</Hint>
+        </>
+      )}
       {!single && (
         <>
           <Row label="Spacing">
@@ -305,7 +332,7 @@ export function PropsTab() {
       <Check checked={props.merge} onChange={(merge) => setProps({ merge })}>
         Merge prop(s) and parts into one solid
       </Check>
-      <button className="btn primary wide" disabled={!!preview} onClick={single ? previewSingleProp : previewProps}>
+      <button className="btn primary wide" disabled={!!preview} onClick={() => live(single ? previewSingleProp : previewProps)}>
         {single ? 'Preview prop' : 'Preview props'}
       </button>
       {!single && (

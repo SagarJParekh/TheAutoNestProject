@@ -2,6 +2,7 @@ import { Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { previewHollow } from '../../state/actions';
 import type { Part, ToolSettings } from '../../state/types';
+import { live } from '../../state/livePreview';
 
 export function HollowPanel({ parts }: { parts: Part[] }) {
   const h = useStore((s) => s.settings.hollow);
@@ -52,7 +53,7 @@ export function HollowPanel({ parts }: { parts: Part[] }) {
           ))}
         </ul>
       )}
-      <button className="btn primary wide" disabled={!target || !!preview} onClick={previewHollow}>
+      <button className="btn primary wide" disabled={!target || !!preview} onClick={() => live(previewHollow)}>
         Preview hollow
       </button>
       <Hint>

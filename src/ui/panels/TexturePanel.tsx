@@ -4,6 +4,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { loadHeightmap, previewTexture } from '../../state/featureActions';
 import { clearPick, startPick } from '../../state/repairActions';
 import type { TexturePattern } from '../../geometry';
+import { live } from '../../state/livePreview';
 
 export function TexturePanel() {
   const st = useStore((s) => s.settings.texture);
@@ -119,7 +120,7 @@ export function TexturePanel() {
       <Check checked={!!st.invert} onChange={(invert) => set({ invert })}>
         Invert pattern
       </Check>
-      <button className="btn primary wide" disabled={!valid || !!preview} onClick={previewTexture}>
+      <button className="btn primary wide" disabled={!valid || !!preview} onClick={() => live(previewTexture)}>
         Preview texture
       </button>
       <Hint>The area is subdivided to the resolution and displaced along the surface normal; the edges of a picked face stay fixed so the part remains watertight. Fine textures on large areas create many triangles.</Hint>

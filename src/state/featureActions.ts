@@ -3,7 +3,7 @@
  * texturing, 2D arrays/arrangement and mirror copies.
  */
 import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
-import { arrangeBoxes, cylinderMesh, gridArrayOffsets, mirrorMesh, pointHoleOutlines } from '../geometry';
+import { arrangeBoxes, gridArrayOffsets, mirrorMesh, pointHoleOutlines, propMesh } from '../geometry';
 import type { Heightmap, MeshData, Vec3 } from '../geometry';
 import { commit, getState, notify, partById, selectedParts, setState } from './store';
 import type { FaceSelection, Part, PointPick, PointSlot } from './types';
@@ -88,7 +88,7 @@ export async function previewSingleProp() {
   if (len < 1e-3) return notify('warning', 'Start and end points are the same');
   d.normalize();
   const start: Vec3 = [a.point[0] - d.x * st.embed, a.point[1] - d.y * st.embed, a.point[2] - d.z * st.embed];
-  const prop = cylinderMesh(start, [d.x, d.y, d.z], st.diameter / 2, len + 2 * st.embed, 24);
+  const prop = propMesh(start, [d.x, d.y, d.z], len + 2 * st.embed, st);
   const parts = hitPart && hitPart.id !== a.part.id ? [a.part, hitPart] : [a.part];
   setPreview({
     tool: 'repair',
@@ -96,7 +96,8 @@ export async function previewSingleProp() {
     replaces: [],
     meshes: [{ name: 'Prop', mesh: prop, color: '#ffd23f' }],
     summary: [
-      `Length ${len.toFixed(2)} mm (+${st.embed} mm embedded at each end), Ø${st.diameter} mm`,
+      `Length ${len.toFixed(2)} mm (+${st.embed} mm embedded at each end), ${st.shape ?? 'circle'} ${st.diameter} mm`,
+      ...(st.thinEnds ? [`Thin ends: ${st.tipDiameter} mm wide, ${st.tipLength} mm long`] : []),
       st.merge ? `Apply merges the prop with ${parts.map((p) => p.name).join(' + ')}` : 'Apply adds the prop as a new part',
     ],
     apply: async () => {

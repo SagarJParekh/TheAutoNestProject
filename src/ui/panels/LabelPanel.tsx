@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearPointPick, loadCustomFont, previewLabel, startPointPick, worldPoint } from '../../state/featureActions';
+import { live } from '../../state/livePreview';
 
 export function LabelPanel() {
   const st = useStore((s) => s.settings.label);
@@ -92,7 +93,7 @@ export function LabelPanel() {
           </button>
         )}
       </div>
-      <button className="btn primary wide" disabled={!w || !!preview} onClick={previewLabel}>
+      <button className="btn primary wide" disabled={!w || !!preview} onClick={() => live(previewLabel)}>
         Preview label
       </button>
       <Hint>

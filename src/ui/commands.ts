@@ -4,7 +4,7 @@
  */
 import { getState, redo, setState, undo } from '../state/store';
 import {
-  analyzePart, cancelTool, centerOnOrigin, deleteParts, dropToBed, duplicateParts, mirrorParts, previewFillHoles, previewRepair,
+  analyzePart, cancelTool, centerOnOrigin, deleteParts, dropToBed, duplicateParts, hideOthers, showAllParts, mirrorParts, previewFillHoles, previewRepair,
   selectAll, setImportQuality, setTool,
   setAppearance, repairParts,
 } from '../state/actions';
@@ -58,6 +58,8 @@ export function buildCommands(): Command[] {
     { id: 'undo', label: 'Undo', group: 'Edit', shortcut: 'Ctrl+Z', run: undo },
     { id: 'redo', label: 'Redo', group: 'Edit', shortcut: 'Ctrl+Shift+Z', run: redo },
     { id: 'select-all', label: 'Select all parts', group: 'Edit', shortcut: 'Ctrl+A', run: selectAll },
+    { id: 'hide-others', label: 'Hide others (show only the selected parts)', group: 'View', keywords: 'isolate solo hide show only', shortcut: 'Shift+V', run: () => hideOthers() },
+    { id: 'show-all', label: 'Show all parts', group: 'View', keywords: 'unhide visible', run: () => showAllParts() },
     { id: 'duplicate', label: 'Duplicate selected parts', group: 'Edit', keywords: 'copy clone', shortcut: 'Ctrl+D', run: () => duplicateParts() },
     { id: 'delete', label: 'Delete selected parts', group: 'Edit', keywords: 'remove', shortcut: 'Del', run: () => deleteParts() },
     // transform
