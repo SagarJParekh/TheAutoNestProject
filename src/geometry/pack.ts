@@ -15,6 +15,8 @@ export interface PackItem {
   w: number;
   d: number;
   h: number;
+  /** orientation locked: never turned by 90° */
+  fixed?: boolean;
 }
 
 export interface PackParams {
@@ -138,12 +140,12 @@ export function packBuilds(items: PackItem[], p: PackParams): PackResult {
   const open: OpenBuild[] = [];
   const fitsEmpty = (it: PackItem) => {
     const ok = (w: number, d: number) => w + gap <= binW + 1e-9 && d + gap <= binD + 1e-9;
-    return it.h <= usableH + 1e-9 && (ok(it.w, it.d) || (p.allowRotate && ok(it.d, it.w)));
+    return it.h <= usableH + 1e-9 && (ok(it.w, it.d) || (p.allowRotate && !it.fixed && ok(it.d, it.w)));
   };
   const tryPlace = (b: OpenBuild, it: PackItem): boolean => {
     for (const layer of b.layers) {
       if (layer.z + it.h > usableH + 1e-9) continue;
-      const pos = layer.bin.find(it.w + gap, it.d + gap, p.allowRotate);
+      const pos = layer.bin.find(it.w + gap, it.d + gap, p.allowRotate && !it.fixed);
       if (!pos) continue;
       const w = pos.rotated ? it.d : it.w, d = pos.rotated ? it.w : it.d;
       layer.bin.place({ x: pos.x, y: pos.y, w: w + gap, h: d + gap });

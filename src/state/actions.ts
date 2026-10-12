@@ -231,6 +231,9 @@ export function centerOnOrigin(ids = editable().map((p) => p.id)) {
 
 /** Mirror across the world axis through the part's bounding-box centre (baked into the mesh). */
 export function mirrorParts(axis: 0 | 1 | 2, ids = editable().map((p) => p.id)) {
+  const lockedIds = ids.filter((id) => partById(id)?.lockRotation);
+  if (lockedIds.length) notify('warning', `${lockedIds.length} part${lockedIds.length > 1 ? 's have' : ' has'} a locked orientation and ${lockedIds.length > 1 ? 'were' : 'was'} not mirrored`);
+  ids = ids.filter((id) => !lockedIds.includes(id));
   if (!ids.length) return;
   updateParts(`Mirror ${'XYZ'[axis]}`, ids, (p) => {
     const w = mirrorMesh(worldMesh(p), axis);
@@ -244,6 +247,7 @@ export function mirrorParts(axis: 0 | 1 | 2, ids = editable().map((p) => p.id)) 
 export function layFlat(id: string, worldNormal: Vec3) {
   const p = partById(id);
   if (!p || p.locked) return;
+  if (p.lockRotation) return notify('warning', `${p.name} has a locked orientation; unlock it to lay it flat`);
   const n = new Vector3(...worldNormal).normalize();
   const q = new Quaternion().setFromUnitVectors(n, new Vector3(0, 0, -1));
   const rot = q.multiply(quaternionOf(p.transform));
@@ -449,7 +453,10 @@ export async function repairParts(scope: 'selected' | 'all') {
     stitch: st.stitch,
     stitchTolerance: s.settings.stitch.tolerance > 0 ? s.settings.stitch.tolerance : undefined,
   };
-  const results = await Promise.all(parts.map((p) => runJob(`Repairing ${p.name}`, 'repair', { mesh: p.mesh, options }, { silent: parts.length > 1 })));
+  const results = await withProgress(
+    `Repairing ${parts.length} parts`,
+    parts.map((p) => () => runJob(`Repairing ${p.name}`, 'repair', { mesh: p.mesh, options }, { silent: parts.length > 1 })),
+  );
   if (results.some((r) => !r)) return; // cancelled
   const done = parts.map((p, i) => ({ part: p, r: results[i]! }));
   const fixed = done.filter((d) => d.r.summary.after.watertight).length;
@@ -753,4 +760,34 @@ export function setAppearance(patch: Partial<import('./theme').Appearance>) {
   setState({ appearance });
   saveAppearance(appearance);
   applyUiTheme(appearance);
+}
+
+/** Lock or unlock the orientation of parts (they can still be moved). */
+export function setRotationLock(ids: string[], lock: boolean) {
+  if (!ids.length) return;
+  updateParts(lock ? 'Lock orientation' : 'Unlock orientation', ids, (p) => ({ ...p, lockRotation: lock }));
+}
+
+/**
+ * Run several tasks with one progress bar ("label 3 / 10"): used for jobs
+ * that work on many parts at once.
+ */
+export async function withProgress<T>(label: string, tasks: (() => Promise<T>)[]): Promise<T[]> {
+  if (tasks.length <= 1) return Promise.all(tasks.map((t) => t()));
+  const job = startJob(label);
+  let done = 0;
+  job.progress(0.02, `0 / ${tasks.length}`);
+  try {
+    return await Promise.all(
+      tasks.map((t) =>
+        t().then((r) => {
+          done++;
+          job.progress(done / tasks.length, `${done} / ${tasks.length}`);
+          return r;
+        }),
+      ),
+    );
+  } finally {
+    job.end();
+  }
 }

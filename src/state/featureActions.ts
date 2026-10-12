@@ -8,7 +8,7 @@ import type { Heightmap, MeshData, Vec3 } from '../geometry';
 import { commit, getState, notify, partById, selectedParts, setState } from './store';
 import type { FaceSelection, Part, PointPick, PointSlot } from './types';
 import { IDENTITY_TRANSFORM, eulerDegFromQuaternion, matrixOf, quaternionOf, recenter, worldBounds, worldMesh } from './math';
-import { newId, partFromWorld, prepareMesh, replaceWithWorldMeshes, runJob, setPreview } from './actions';
+import { newId, partFromWorld, prepareMesh, replaceWithWorldMeshes, runJob, setPreview, withProgress } from './actions';
 import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
 import type { PickInfo } from '../viewer/Viewer';
@@ -347,9 +347,12 @@ export async function autoArrange() {
   const parts = (sel.length ? sel : s.parts).filter((p) => !p.locked && p.visible);
   if (!parts.length) return notify('warning', 'Nothing to arrange');
   const { bedWidth, bedDepth, bedHeight, gap, autoAlignXY } = s.settings.arrange;
-  const results = await Promise.all(
-    parts.map((p) => {
+  const results = await withProgress(
+    `Auto arranging ${parts.length} parts`,
+    parts.map((p) => () => {
       const q = quaternionOf(p.transform);
+      // locked orientation: keep the rotation, only arrange
+      if (p.lockRotation) return Promise.resolve({ quaternion: [q.x, q.y, q.z, q.w] as [number, number, number, number], face: null, turnDeg: 0 });
       return runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [q.x, q.y, q.z, q.w], alignXY: autoAlignXY }, { silent: parts.length > 1 });
     }),
   );

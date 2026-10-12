@@ -53,6 +53,8 @@ export interface ViewerCallbacks {
   onRect?: (x0: number, y0: number, x1: number, y1: number, erase: boolean) => void;
   /** polyline drawing finished: points in client coordinates */
   onPolyline?: (points: [number, number][]) => void;
+  /** box selection with the left button: ids of the parts inside, and whether to add to the selection */
+  onBoxSelect?: (ids: string[], add: boolean) => void;
   /** pick & place finished: new positions of the dragged parts */
   onPlaceEnd?: (moves: { id: string; position: [number, number, number] }[]) => void;
 }
@@ -106,6 +108,7 @@ export class Viewer {
   private annotKey: unknown[] = [];
   private zoomRect: { x: number; y: number; div: HTMLDivElement; mark?: boolean; erase?: boolean } | null = null;
   private brushing: { erase: boolean; pending: PointerEvent | null } | null = null;
+  private boxStart: { x: number; y: number; add: boolean; div: HTMLDivElement | null } | null = null;
   private placing: {
     plane: Plane;
     start: Vector3;
@@ -182,6 +185,8 @@ export class Viewer {
       else if (this.state?.pickMode === 'window' && e.button === 0) this.startZoomRect(e, true);
       else if (this.state?.pickMode === 'brush' && e.button === 0) this.startBrush(e);
       else if (this.placeActive() && e.button === 0) this.startPlace(e);
+      // plain left drag on empty space (or on a part outside pick & place): box selection
+      if (e.button === 0 && !this.placing && this.boxSelectAllowed()) this.boxStart = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey || e.shiftKey, div: null };
     });
     el.addEventListener('pointermove', (e) => {
       this.moveZoomRect(e);
@@ -189,6 +194,7 @@ export class Viewer {
       this.moveBrush(e);
       this.movePoly(e);
       this.movePlace(e);
+      this.moveBox(e);
       this.scheduleHover(e.clientX, e.clientY, e.buttons !== 0);
     });
     el.addEventListener('pointerleave', () => this.clearHover());
@@ -201,6 +207,11 @@ export class Viewer {
         if (moved) return;
       }
       if (this.state?.polyMode) return this.clickPoly(e);
+      if (this.boxStart) {
+        const box = this.boxStart;
+        this.boxStart = null;
+        if (box.div) return this.endBox(box, e);
+      }
       this.onPointerUp(e);
     });
     el.addEventListener('dblclick', () => {
@@ -629,7 +640,8 @@ export class Viewer {
   private syncGizmo(s: AppState) {
     const sel = s.selection.length === 1 ? this.objects.get(s.selection[0]) : undefined;
     const can =
-      sel && !sel.part.locked && sel.part.visible && s.tool === 'transform' && s.gizmo !== 'none' && s.gizmo !== 'place' && !s.preview && !s.pickMode;
+      sel && !sel.part.locked && sel.part.visible && s.tool === 'transform' && s.gizmo !== 'none' && s.gizmo !== 'place' && !s.preview && !s.pickMode &&
+      !(s.gizmo === 'rotate' && sel.part.lockRotation);
     if (can) {
       if (this.gizmo.object !== sel.group) this.gizmo.attach(sel.group);
       this.gizmo.setMode(s.gizmo === 'rotate' ? 'rotate' : 'translate');
@@ -1379,6 +1391,70 @@ export class Viewer {
     }
     if (w > 6 && h > 6) this.zoomToRect((z.x + e.clientX) / 2, (z.y + e.clientY) / 2, w, h);
     this.cb.onZoomDone?.();
+  }
+
+  // ------------------------------------------------------------------ box selection
+
+  private boxSelectAllowed(): boolean {
+    const s = this.state;
+    if (!s || s.pickMode || s.zoomWindow || s.lassoMode || s.polyMode || s.preview) return false;
+    if (s.tool === 'measure') return false;
+    // a press on the move / rotate gizmo drags the gizmo
+    if ((this.gizmo as unknown as { axis: string | null }).axis) return false;
+    return true;
+  }
+
+  private moveBox(e: PointerEvent) {
+    const b = this.boxStart;
+    if (!b || this.draggingGizmo) return;
+    if (!b.div) {
+      if (Math.hypot(e.clientX - b.x, e.clientY - b.y) < 5) return;
+      b.div = document.createElement('div');
+      b.div.className = 'zoom-rect select-rect';
+      this.container.appendChild(b.div);
+    }
+    const r = this.container.getBoundingClientRect();
+    const crossing = e.clientX < b.x; // right-to-left drag also takes parts it only touches
+    b.div.classList.toggle('crossing', crossing);
+    Object.assign(b.div.style, {
+      left: `${Math.min(b.x, e.clientX) - r.left}px`,
+      top: `${Math.min(b.y, e.clientY) - r.top}px`,
+      width: `${Math.abs(e.clientX - b.x)}px`,
+      height: `${Math.abs(e.clientY - b.y)}px`,
+    });
+  }
+
+  /**
+   * Parts inside the dragged rectangle: dragging left to right takes parts
+   * that are completely inside, right to left also parts it only touches.
+   */
+  private endBox(b: { x: number; y: number; add: boolean; div: HTMLDivElement | null }, e: PointerEvent) {
+    b.div?.remove();
+    this.pointerDown = null;
+    const x0 = Math.min(b.x, e.clientX), x1 = Math.max(b.x, e.clientX), y0 = Math.min(b.y, e.clientY), y1 = Math.max(b.y, e.clientY);
+    const crossing = e.clientX < b.x;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.camera.updateMatrixWorld();
+    const ids: string[] = [];
+    const v = new Vector3();
+    for (const o of this.objects.values()) {
+      if (!o.part.visible) continue;
+      const gb = o.mesh.geometry.boundingBox;
+      if (!gb) continue;
+      let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+      let behind = false;
+      for (let i = 0; i < 8; i++) {
+        v.set(i & 1 ? gb.max.x : gb.min.x, i & 2 ? gb.max.y : gb.min.y, i & 4 ? gb.max.z : gb.min.z).applyMatrix4(o.mesh.matrixWorld).project(this.camera);
+        if (v.z > 1) behind = true;
+        const sx = rect.left + ((v.x + 1) / 2) * rect.width, sy = rect.top + ((1 - v.y) / 2) * rect.height;
+        sx0 = Math.min(sx0, sx); sx1 = Math.max(sx1, sx); sy0 = Math.min(sy0, sy); sy1 = Math.max(sy1, sy);
+      }
+      if (behind) continue;
+      const inside = sx0 >= x0 && sx1 <= x1 && sy0 >= y0 && sy1 <= y1;
+      const touches = sx1 >= x0 && sx0 <= x1 && sy1 >= y0 && sy0 <= y1;
+      if (inside || (crossing && touches)) ids.push(o.part.id);
+    }
+    this.cb.onBoxSelect?.(ids, b.add);
   }
 
   // ------------------------------------------------------------------ pick & place

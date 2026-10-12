@@ -295,6 +295,7 @@ export function previewAlign() {
   const r = alignDelta();
   if (!r) return;
   const { part, delta } = r;
+  if (part.lockRotation) return notify('warning', `${part.name} has a locked orientation; use Align to part (move only) or unlock it`);
   const world = delta.clone().multiply(matrixOf(part.transform));
   const moved = worldMesh(part);
   const pos = moved.positions.slice();

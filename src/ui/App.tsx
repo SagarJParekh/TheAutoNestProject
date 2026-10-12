@@ -3,7 +3,7 @@ import { Toolbar } from './Toolbar';
 import { PartsPanel } from './PartsPanel';
 import { PropertiesPanel } from './PropertiesPanel';
 import { ViewerCanvas } from './ViewerCanvas';
-import { StatusBar, Notices } from './StatusBar';
+import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
 import { useShortcuts } from './shortcuts';
@@ -42,6 +42,7 @@ export function App() {
       {workspace === 'build' ? <BuildSetupPanel /> : <PartsPanel />}
       <main className="center">
         <ViewerCanvas />
+        <ProgressOverlay />
         <Notices />
       </main>
       {workspace === 'build' ? <BuildsPanel /> : <PropertiesPanel />}

@@ -60,3 +60,33 @@ export function Notices() {
     </div>
   );
 }
+
+/** Progress shown over the viewport whenever a function is running. */
+export function ProgressOverlay() {
+  const jobs = useStore((s) => s.jobs);
+  if (!jobs.length) return null;
+  return (
+    <div className="progress-overlay" role="status" aria-live="polite">
+      {jobs.slice(0, 4).map((j) => (
+        <div className="progress-card" key={j.id}>
+          <div className="progress-head">
+            <span className="progress-label">
+              {j.label}
+              {j.message && j.message !== j.label ? <span className="muted"> — {j.message}</span> : null}
+            </span>
+            <span className="progress-pct">{Math.round(j.progress * 100)}%</span>
+            {j.cancel && (
+              <button className="mini" onClick={j.cancel}>
+                Cancel
+              </button>
+            )}
+          </div>
+          <div className={`progress big ${j.progress <= 0 ? 'indeterminate' : ''}`}>
+            <div style={{ width: `${Math.max(3, Math.round(j.progress * 100))}%` }} />
+          </div>
+        </div>
+      ))}
+      {jobs.length > 4 && <div className="progress-more">+{jobs.length - 4} more running</div>}
+    </div>
+  );
+}

@@ -6,7 +6,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { zipSync } from 'fflate';
 import { applyMatrix, fitsPlatform, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
-import { commit, getState, notify, setState } from './store';
+import { commit, getState, notify, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, runJob } from './actions';
 import { nextColor } from './palette';
@@ -31,7 +31,7 @@ export function currentPrinter(s: BuildGenState = bg()): Printer {
 
 // ---------------------------------------------------------------- parts
 
-export function addBuildParts(items: { name: string; mesh: MeshData; color?: string; quantity?: number }[]) {
+export function addBuildParts(items: { name: string; mesh: MeshData; color?: string; quantity?: number; lockRotation?: boolean }[]) {
   if (!items.length) return;
   const parts: BuildPart[] = items.map((it) => ({
     id: newId(),
@@ -40,6 +40,7 @@ export function addBuildParts(items: { name: string; mesh: MeshData; color?: str
     mesh: recenter(it.mesh).mesh,
     quantity: Math.max(1, Math.round(it.quantity ?? 1)),
     tilt: null,
+    lockRotation: !!it.lockRotation,
   }));
   setBg({ parts: [...bg().parts, ...parts] });
   scheduleRegenerate();
@@ -51,7 +52,7 @@ export function addPartsFromPrep() {
   const sel = s.parts.filter((p) => s.selection.includes(p.id));
   const src = (sel.length ? sel : s.parts).filter((p) => p.visible);
   if (!src.length) return notify('warning', 'There are no parts in the Prep workspace yet');
-  addBuildParts(src.map((p) => ({ name: p.name, mesh: worldMesh(p), color: p.color })));
+  addBuildParts(src.map((p) => ({ name: p.name, mesh: worldMesh(p), color: p.color, lockRotation: p.lockRotation })));
   notify('success', `Added ${src.length} part${src.length > 1 ? 's' : ''} from Prep`);
 }
 
@@ -171,11 +172,25 @@ export async function regenerateBuilds() {
     return;
   }
   setBg({ busy: true });
+  const job = startJob('Generating builds');
+  try {
+    await generate(run, s0, job);
+  } finally {
+    job.end();
+  }
+}
+
+async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof startJob>) {
   // 1. "largest flat face down" orientation, cached per mesh
+  const toOrient = s0.parts.filter((p) => s0.autoOrient && !p.lockRotation && !(p.orient && p.orient.mesh === p.mesh)).length;
+  let oriented = 0;
+  job.progress(0.05, toOrient ? `Orienting 0 / ${toOrient} parts` : 'Packing');
   const parts = await Promise.all(
     s0.parts.map(async (p) => {
-      if (!s0.autoOrient || (p.orient && p.orient.mesh === p.mesh)) return p;
+      if (!s0.autoOrient || p.lockRotation || (p.orient && p.orient.mesh === p.mesh)) return p;
       const r = await runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [0, 0, 0, 1], alignXY: true }, { silent: true });
+      oriented++;
+      job.progress(0.05 + 0.75 * (oriented / Math.max(1, toOrient)), `Orienting ${oriented} / ${toOrient} parts`);
       return r ? { ...p, orient: { mesh: p.mesh, q: r.quaternion } } : p;
     }),
   );
@@ -192,6 +207,15 @@ export async function regenerateBuilds() {
   const items: PackItem[] = [];
   const autoTilts: Record<string, Tilt> = {};
   for (const p of parts) {
+    if (p.lockRotation) {
+      // locked orientation: exactly as it came from Mesh prep, only moved
+      const q0 = new Quaternion();
+      const b0 = rotatedBounds(p.mesh, q0);
+      info.set(p.id, { q: q0, ...b0 });
+      for (let c = 0; c < p.quantity; c++)
+        items.push({ key: `${p.id}#${c}`, w: b0.max.x - b0.min.x, d: b0.max.y - b0.min.y, h: b0.max.z - b0.min.z, fixed: true });
+      continue;
+    }
     const base = s.autoOrient && p.orient ? new Quaternion(...p.orient.q) : new Quaternion();
     let q = tiltQuaternion(p.tilt ?? s.tilt).multiply(base);
     let b = rotatedBounds(p.mesh, q);
@@ -206,6 +230,8 @@ export async function regenerateBuilds() {
     info.set(p.id, { q, ...b });
     for (let c = 0; c < p.quantity; c++) items.push({ key: `${p.id}#${c}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z });
   }
+  job.progress(0.85, 'Packing builds');
+  await new Promise((r) => setTimeout(r, 0)); // let the progress bar paint
   // 3. pack: fill each build completely before starting the next
   const result = packBuilds(items, { ...fitParams, stack: printer.tech === 'powder' && s.stack });
   const turn = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2);
@@ -304,7 +330,12 @@ export function openBuildInPrep(i: number) {
   const s = bg();
   const b = s.builds[i];
   if (!b) return;
-  const parts = buildDisplayParts(s, i).map((p) => ({ ...makePart(p.name, p.mesh, p.transform.position as Vec3, undefined, p.color), transform: p.transform }));
+  const locked = new Set(s.parts.filter((p) => p.lockRotation).map((p) => p.id));
+  const parts = buildDisplayParts(s, i).map((p) => ({
+    ...makePart(p.name, p.mesh, p.transform.position as Vec3, undefined, p.color),
+    transform: p.transform,
+    lockRotation: locked.has(partOfKey(p.id)),
+  }));
   setWorkspace('prep');
   commit(`Open ${b.name} in Prep`, [...getState().parts, ...parts], { selection: parts.map((p) => p.id) });
 }
@@ -343,8 +374,18 @@ export function selectAllBuildParts() {
 
 /** Give several parts their own tilt (null = follow the tilt for all parts again). */
 export function setTiltFor(ids: string[], tilt: Tilt | null) {
+  const lockedIds = new Set(bg().parts.filter((p) => p.lockRotation).map((p) => p.id));
+  if (tilt && ids.some((id) => lockedIds.has(id))) notify('info', 'Parts with a locked orientation are not tilted');
+  ids = ids.filter((id) => !lockedIds.has(id));
   if (!ids.length) return;
   const set = new Set(ids);
   setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p)) });
+  scheduleRegenerate();
+}
+
+/** Lock or unlock the orientation of build parts. */
+export function setBuildRotationLock(ids: string[], lock: boolean) {
+  const set = new Set(ids);
+  setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, lockRotation: lock, tilt: lock ? null : p.tilt } : p)) });
   scheduleRegenerate();
 }

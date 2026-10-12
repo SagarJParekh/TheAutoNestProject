@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { Icon } from '../icons';
 import { useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -368,6 +369,16 @@ export function BuildsPanel() {
                     </span>
                   ) : null}
                   <span className={`where ${st.missing ? 'bad' : ''}`}>{st.missing ? 'too big' : st.where.join(' ')}</span>
+                  <button
+                    className={`icon-btn ${p.lockRotation ? 'on' : ''}`}
+                    title={p.lockRotation ? 'Orientation locked: kept as in Mesh prep, only moved — click to unlock' : 'Lock orientation (no flat-face turn, tilt or 90° turns)'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBuildRotationLock([p.id], !p.lockRotation);
+                    }}
+                  >
+                    {Icon.rotLock}
+                  </button>
                   <NumberField value={p.quantity} min={1} max={999} step={1} precision={0} title="Quantity" onChange={(q) => setPartQuantity(p.id, q)} />
                 </li>
               );

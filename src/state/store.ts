@@ -205,6 +205,14 @@ function trimHistory(past: HistoryEntry[], current: Part[]): HistoryEntry[] {
 /** Replace the part list as one undoable step. */
 export function commit(label: string, parts: Part[], extra: Partial<AppState> = {}) {
   const s = getState();
+  // parts with a locked orientation keep their rotation whatever the edit (moves still apply)
+  const before = new Map(s.parts.map((p) => [p.id, p]));
+  parts = parts.map((p) => {
+    const old = before.get(p.id);
+    if (!old || !old.lockRotation || !p.lockRotation || old.mesh !== p.mesh) return p;
+    const r0 = old.transform.rotation, r1 = p.transform.rotation;
+    return r0[0] === r1[0] && r0[1] === r1[1] && r0[2] === r1[2] ? p : { ...p, transform: { ...p.transform, rotation: r0 } };
+  });
   const past = trimHistory([...s.past, { label, parts: s.parts }], parts);
   const ids = new Set(parts.map((p) => p.id));
   setState({

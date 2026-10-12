@@ -23,6 +23,8 @@ export interface Part {
   source?: string;
   /** bounding-box centre of the body in the source file (used to keep placement when re-importing) */
   importCenter?: Vec3;
+  /** orientation locked: the part can be moved in X / Y / Z but never rotated (Mesh prep and Build generation) */
+  lockRotation?: boolean;
 }
 
 export type ToolId =
@@ -267,6 +269,8 @@ export interface BuildPart {
   quantity: number;
   /** per-part tilt; null = use the global tilt */
   tilt: Tilt | null;
+  /** orientation locked: kept exactly as it came from Mesh prep (no flat-face turn, tilt or 90° turns) */
+  lockRotation?: boolean;
   /** cached "largest flat face down" orientation for this mesh */
   orient?: { mesh: MeshData; q: [number, number, number, number] };
 }

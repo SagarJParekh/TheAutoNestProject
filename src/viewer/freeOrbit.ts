@@ -11,8 +11,9 @@ const Z = new Vector3(0, 0, 1);
  * around the world Z axis like a turntable, vertical drags tilt around the
  * screen's horizontal axis and carry on over the top and underneath.
  *
- * Left drag rotates, right drag (or Shift / Ctrl + left) pans, middle drag
- * dollies, the wheel zooms towards the cursor.
+ * Mouse: right drag rotates (orbits), middle drag pans in the screen plane
+ * (Shift + right drag too), the wheel zooms towards the cursor. The left
+ * button is left to the viewer for selecting (click / box select).
  */
 export class FreeOrbitControls extends EventDispatcher<{ change: object; start: object; end: object }> {
   readonly target = new Vector3();
@@ -72,9 +73,10 @@ export class FreeOrbitControls extends EventDispatcher<{ change: object; start: 
 
   private onDown = (e: PointerEvent) => {
     if (!this.enabled || this.mode) return;
-    if (e.button === 0) this.mode = e.shiftKey || e.ctrlKey || e.metaKey ? 'pan' : 'rotate';
-    else if (e.button === 1) this.mode = 'dolly';
-    else if (e.button === 2) this.mode = 'pan';
+    if (e.button === 1) {
+      this.mode = 'pan';
+      e.preventDefault(); // no auto-scroll cursor
+    } else if (e.button === 2) this.mode = e.shiftKey ? 'pan' : 'rotate';
     else return;
     this.pointerId = e.pointerId;
     this.last.set(e.clientX, e.clientY);

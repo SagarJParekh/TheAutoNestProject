@@ -169,6 +169,11 @@ export function ExportDialog() {
 }
 
 export const SHORTCUTS: [string, string][] = [
+  ['Left click', 'Select a part (Ctrl / Shift-click: add or remove)'],
+  ['Left drag', 'Box select: left→right takes parts fully inside, right→left also parts it touches'],
+  ['Middle drag', 'Pan (2D, in the screen plane)'],
+  ['Right drag', 'Rotate the view (3D)'],
+  ['Mouse wheel', 'Zoom in / out at the cursor'],
   ['Ctrl+O', 'Open files'],
   ['Ctrl+E', 'Export'],
   ['Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y', 'Undo / redo'],

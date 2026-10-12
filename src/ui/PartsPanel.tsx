@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { Icon } from './icons';
 import { useStore } from '../state/store';
 import {
-  deleteParts, duplicateParts, renamePart, repairParts, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
+  deleteParts, duplicateParts, renamePart, repairParts, setRotationLock, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
 } from '../state/actions';
 import { sendPartsToBuild } from '../state/buildActions';
 import type { Part } from '../state/types';
+import { meshEntry } from '../state/meshCache';
 
 export function PartsPanel() {
   const parts = useStore((s) => s.parts);
@@ -69,7 +70,9 @@ export function PartsPanel() {
 
 function PartRow({ part, selected }: { part: Part; selected: boolean }) {
   const [editing, setEditing] = useState(false);
+  useStore((s) => s.meshInfoVersion);
   const tris = part.mesh.indices.length / 3;
+  const wt = meshEntry(part.mesh).watertight;
   return (
     <div
       className={`part-row ${selected ? 'selected' : ''} ${part.visible ? '' : 'hidden-part'}`}
@@ -107,9 +110,26 @@ function PartRow({ part, selected }: { part: Part; selected: boolean }) {
         )}
         <small className="muted">{tris.toLocaleString()} tris</small>
       </div>
+      {wt === false && (
+        <span className="part-status bad" title="Not watertight — repair it before printing (Repair, or Repair all below)">
+          {Icon.warning}
+        </span>
+      )}
+      {wt === true && (
+        <span className="part-status ok" title="Watertight — ready for printing">
+          {Icon.printer}
+        </span>
+      )}
       <div className="row-actions" onClick={(e) => e.stopPropagation()}>
         <button className="icon-btn" title={part.visible ? 'Hide' : 'Show'} onClick={() => toggleVisible(part.id)}>
           {part.visible ? Icon.eye : Icon.eyeOff}
+        </button>
+        <button
+          className={`icon-btn ${part.lockRotation ? 'on' : ''}`}
+          title={part.lockRotation ? 'Orientation locked (can only be moved) — click to unlock' : 'Lock orientation (moves only, no rotation)'}
+          onClick={() => setRotationLock([part.id], !part.lockRotation)}
+        >
+          {Icon.rotLock}
         </button>
         <button className={`icon-btn ${part.locked ? 'on' : ''}`} title={part.locked ? 'Unlock' : 'Lock'} onClick={() => toggleLocked(part.id)}>
           {part.locked ? Icon.lock : Icon.unlock}

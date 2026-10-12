@@ -1,7 +1,7 @@
 import { Icon } from '../icons';
 import { Check, Hint, NumberField, Row, Section, Segmented, VecRow } from '../controls';
 import { getState, setState, updateParts, useStore } from '../../state/store';
-import { centerOnOrigin, dropToBed, mirrorParts } from '../../state/actions';
+import { centerOnOrigin, dropToBed, mirrorParts, setRotationLock } from '../../state/actions';
 import { alignToReference, arrangeOnBed, arrayParts, autoArrange, mirrorCopies } from '../../state/featureActions';
 import { localBounds } from '../../state/math';
 import type { Part, Transform } from '../../state/types';
@@ -33,7 +33,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       key={key + i}
       label={'XYZ'[i]}
       value={single ? single.transform[key][i] : 0}
-      disabled={!single || single.locked}
+      disabled={!single || single.locked || (key === 'rotation' && !!single.lockRotation)}
       step={step}
       suffix={suffix}
       onChange={(v) =>
@@ -62,7 +62,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
         />
       </Row>
       {gizmo === 'place' && (
-        <Hint>Drag any part with the mouse to move it on the bed. Shift-drag moves it up / down, Ctrl snaps to 1 mm. Drag empty space to orbit.</Hint>
+        <Hint>Drag any part with the mouse to move it on the bed. Shift-drag moves it up / down, Ctrl snaps to 1 mm. Right-drag rotates the view, middle-drag pans.</Hint>
       )}
       {parts.length === 0 && <Hint>Select a part to transform it.</Hint>}
       {single && (
@@ -126,7 +126,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
             <button className="mini" disabled={single.locked} onClick={() => setT('Reset scale', () => ({ scale: [1, 1, 1] }))}>
               Reset scale
             </button>
-            <button className="mini" disabled={single.locked} onClick={() => setT('Reset rotation', () => ({ rotation: [0, 0, 0] }))}>
+            <button className="mini" disabled={single.locked || !!single.lockRotation} onClick={() => setT('Reset rotation', () => ({ rotation: [0, 0, 0] }))}>
               Reset rotation
             </button>
           </Row>
@@ -134,12 +134,21 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       )}
       {parts.length > 0 && (
         <>
+          <Check
+            checked={parts.every((p) => p.lockRotation)}
+            onChange={(lock) => setRotationLock(parts.map((p) => p.id), lock)}
+          >
+            Lock orientation{parts.length > 1 ? ` (${parts.length} parts)` : ''}
+          </Check>
+          {parts.some((p) => p.lockRotation) && (
+            <Hint>Locked parts keep their rotation here and in Build generation: they can only be moved in X, Y and Z.</Hint>
+          )}
           <Row label="Mirror">
             {[0, 1, 2].map((a) => (
               <button
                 key={a}
                 className="btn"
-                disabled={arr.mirrorCopy ? parts.length === 0 : disabled}
+                disabled={arr.mirrorCopy ? parts.length === 0 : disabled || parts.every((p) => p.lockRotation)}
                 onClick={() => (arr.mirrorCopy ? mirrorCopies(a as 0 | 1 | 2) : mirrorParts(a as 0 | 1 | 2))}
               >
                 {'XYZ'[a]}
@@ -158,7 +167,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
             </button>
             <button
               className={`btn ${pickMode === 'layflat' ? 'primary' : ''}`}
-              disabled={disabled}
+              disabled={disabled || parts.every((p) => p.lockRotation)}
               onClick={() => setState({ pickMode: getState().pickMode === 'layflat' ? null : 'layflat' })}
               title="Lay flat: click a face to make it the bottom (F)"
             >

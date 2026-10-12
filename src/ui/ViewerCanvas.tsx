@@ -158,6 +158,15 @@ export function ViewerCanvas() {
       onPolyline(points) {
         onPolylineDone(points);
       },
+      onBoxSelect(ids, add) {
+        const s = getState();
+        if (s.workspace === 'build') {
+          const keys = [...new Set(ids.map((k) => `${partOfKey(k)}#0`))];
+          setState({ selection: add ? [...new Set([...s.selection.map((k) => `${partOfKey(k)}#0`), ...keys])] : keys });
+          return;
+        }
+        setState({ selection: add ? [...new Set([...s.selection, ...ids])] : ids });
+      },
       onPlaceEnd(moves) {
         const at = new Map(moves.map((m) => [m.id, m.position]));
         updateParts(moves.length > 1 ? `Place ${moves.length} parts` : 'Place part', [...at.keys()], (p) => ({
@@ -208,7 +217,7 @@ export function ViewerCanvas() {
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
           {pickMode === 'point' && <PointBanner />}
           {pickMode === 'triangle' && 'Click to mark triangles · click a marked one (or Ctrl-click) to unmark'}
-          {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · drag empty space to orbit'}
+          {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · right-drag to rotate the view'}
           {pickMode === 'window' && 'Drag a rectangle to mark · Ctrl-drag to unmark · right-drag to orbit'}
           {pickMode === 'vertex' && 'Click three corners to create a triangle'}
           {pickMode === 'sharpEdge' && 'Click near sharp edges to fillet / chamfer them (click again to remove)'}
