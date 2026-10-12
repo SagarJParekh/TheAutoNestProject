@@ -871,6 +871,8 @@ export class Viewer {
         if (hl.nonManifold && h.nonManifoldEdges.length) obj.overlay.add(this.fatLines(h.nonManifoldEdges, hc.nonManifold, 3.5));
         if (hl.flipped && h.flippedTriangles.length) obj.overlay.add(triMesh(obj.part.mesh, h.flippedTriangles, 0xd040ff));
         if (h.degenerateTriangles.length) obj.overlay.add(triMesh(obj.part.mesh, h.degenerateTriangles, 0x00e0ff));
+        if (h.duplicateTriangles?.length) obj.overlay.add(triMesh(obj.part.mesh, h.duplicateTriangles, 0xffd400));
+        if (h.internalWalls?.length) obj.overlay.add(triMesh(obj.part.mesh, h.internalWalls, 0x00e68a));
         if (hl.holeIndex !== null) {
           const loop = analysis.report.loops[hl.holeIndex];
           if (loop) {

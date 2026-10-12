@@ -1,6 +1,6 @@
 import { MeshData, compactMesh, triangleCount, subsetTriangles, ProgressFn, noProgress, removeTriangles, flipTriangles } from './mesh';
 import { weldVertices, defaultWeldTolerance } from './weld';
-import { findDegenerateTriangles, findDuplicateTriangles, findFlippedTriangles, analyzeMesh } from './analysis';
+import { findDegenerateTriangles, findDuplicates, findFlippedTriangles, analyzeMesh } from './analysis';
 import { fillHoles, findBoundaryLoops } from './holes';
 import { buildTopology, findShells } from './topology';
 import { stitchBoundaries } from './stitch';
@@ -136,8 +136,9 @@ export function autoRepair(
   let duplicatesRemoved = 0;
   if (opts.removeDuplicates) {
     onProgress(0.4, 'Removing duplicate triangles');
-    // opposite copies are faces shared by two shells: keep them (the non-manifold step separates the shells)
-    const d = findDuplicateTriangles(mesh, true);
+    // by position; doubled walls where two shells meet are kept (the non-manifold step separates
+    // the shells), stray inside-out copies are removed
+    const d = findDuplicates(mesh, tol).copies;
     duplicatesRemoved = d.length;
     mesh = removeTriangles(mesh, d);
   }
@@ -495,10 +496,27 @@ function dropNonManifoldTriangles(mesh: MeshData): { mesh: MeshData; removed: nu
   return { mesh: cur, removed };
 }
 
-/** Remove triangles that repeat an earlier triangle's three vertices. */
-export function removeDuplicateTriangles(mesh: MeshData): { mesh: MeshData; removed: number } {
-  const d = findDuplicateTriangles(mesh);
-  return { mesh: removeTriangles(mesh, d), removed: d.length };
+/**
+ * Remove duplicate triangles, found by position (see findDuplicates).
+ * Extra copies facing the same way are always removed (one stays). Doubled
+ * walls (coincident triangles facing opposite ways, where two shells meet)
+ * are kept by default, which leaves two clean closed shells; with
+ * `walls: 'remove'` both sides go and the shells are joined into one.
+ * The result is welded at the same tolerance, so copies with their own
+ * vertices don't leave cracks behind.
+ */
+export function removeDuplicateTriangles(
+  mesh: MeshData,
+  opts: { walls?: 'keep' | 'remove'; tolerance?: number } = {},
+): { mesh: MeshData; removed: number; copies: number; walls: number } {
+  const tol = opts.tolerance ?? defaultWeldTolerance(mesh.positions);
+  const d = findDuplicates(mesh, tol);
+  const removeWalls = opts.walls === 'remove';
+  const drop = removeWalls ? Uint32Array.from(new Set([...d.copies, ...d.walls])) : d.copies;
+  if (!drop.length) return { mesh, removed: 0, copies: 0, walls: d.walls.length / 2 };
+  const welded = weldVertices(mesh.positions, mesh.indices, tol).mesh;
+  const out = compactMesh(removeTriangles(welded, drop));
+  return { mesh: out, removed: drop.length, copies: d.copies.length, walls: d.walls.length / 2 };
 }
 
 /** Remove zero-area / collapsed triangles. */

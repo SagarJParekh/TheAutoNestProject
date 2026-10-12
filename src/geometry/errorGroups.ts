@@ -6,7 +6,7 @@
 import type { AnalysisReport } from './analysis';
 import type { MeshData, Vec3 } from './mesh';
 
-export type ErrorKind = 'open' | 'crack' | 'nonManifold' | 'flipped' | 'degenerate' | 'intersecting' | 'overlapping';
+export type ErrorKind = 'open' | 'crack' | 'nonManifold' | 'flipped' | 'degenerate' | 'duplicate' | 'intersecting' | 'overlapping';
 
 export interface ErrorGroup {
   kind: ErrorKind;
@@ -27,6 +27,7 @@ export const ERROR_LABEL: Record<ErrorKind, [string, string]> = {
   nonManifold: ['Non-manifold edges', 'edge'],
   flipped: ['Flipped triangles', 'triangle'],
   degenerate: ['Degenerate triangles', 'triangle'],
+  duplicate: ['Duplicate triangles', 'triangle'],
   intersecting: ['Self-intersection', 'triangle'],
   overlapping: ['Overlapping triangles', 'triangle'],
 };
@@ -132,7 +133,7 @@ export function triangleGroups(mesh: MeshData, tris: ArrayLike<number>, kind: Er
   return out;
 }
 
-const ORDER: ErrorKind[] = ['open', 'crack', 'nonManifold', 'flipped', 'intersecting', 'overlapping', 'degenerate'];
+const ORDER: ErrorKind[] = ['open', 'crack', 'nonManifold', 'flipped', 'duplicate', 'intersecting', 'overlapping', 'degenerate'];
 
 /** All problem clusters of a part, worst kinds first, larger clusters first within a kind. */
 export function errorGroups(
@@ -148,6 +149,7 @@ export function errorGroups(
     ...segmentGroups(h.nonManifoldEdges, 'nonManifold'),
     ...triangleGroups(mesh, h.flippedTriangles, 'flipped'),
     ...triangleGroups(mesh, h.degenerateTriangles, 'degenerate'),
+    ...triangleGroups(mesh, h.duplicateTriangles ?? [], 'duplicate'),
   ];
   if (intersections) {
     groups.push(...triangleGroups(mesh, intersections.intersecting, 'intersecting'));

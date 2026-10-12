@@ -113,7 +113,8 @@ function FixTab({ parts }: { parts: Part[] }) {
               {rowItem('Non-manifold edges', report.nonManifoldEdges, hc.nonManifold, undefined, { label: 'Fix', run: () => previewFixNonManifold(true) })}
               {rowItem('Flipped triangles', report.flippedTriangles, '#d040ff')}
               {rowItem('Degenerate triangles', report.degenerateTriangles, '#00e0ff', undefined, { label: 'Remove', run: () => previewCleanTriangles('degenerate') })}
-              {rowItem('Duplicate triangles', report.duplicateTriangles, undefined, undefined, { label: 'Remove', run: () => previewCleanTriangles('duplicates') })}
+              {rowItem('Duplicate triangles', report.duplicateTriangles, '#ffd400', undefined, { label: 'Remove', run: () => previewCleanTriangles('duplicates') })}
+              {rowItem('Doubled walls (shells touching)', report.internalWalls ?? 0, '#00e68a', false, { label: 'Remove', run: () => previewCleanTriangles('walls') })}
               {rowItem('Shells', report.shells, undefined, report.shells > 1)}
             </dl>
             <div className="btn-grid two">

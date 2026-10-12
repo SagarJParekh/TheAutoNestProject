@@ -11,7 +11,7 @@ import { highlightColors } from '../../state/contrast';
 
 export function errorColor(kind: ErrorKind, partColor: string): string {
   const hc = highlightColors(partColor);
-  return { open: hc.open, crack: hc.crack, nonManifold: hc.nonManifold, flipped: '#d040ff', degenerate: '#00e0ff', intersecting: '#ff7a1a', overlapping: '#22d3ee' }[kind];
+  return { open: hc.open, crack: hc.crack, nonManifold: hc.nonManifold, flipped: '#d040ff', degenerate: '#00e0ff', duplicate: '#ffd400', intersecting: '#ff7a1a', overlapping: '#22d3ee' }[kind];
 }
 
 function sizeOf(g: ErrorGroup) {
@@ -38,6 +38,8 @@ function quickFix(part: Part, g: ErrorGroup): { label: string; title: string; ru
       return { label: 'Fix', title: 'Orient all normals consistently outward', run: () => void unifyNormals() };
     case 'degenerate':
       return { label: 'Remove', title: 'Remove all degenerate triangles', run: () => previewCleanTriangles('degenerate') };
+    case 'duplicate':
+      return { label: 'Remove', title: 'Remove all duplicate copies (one of each stays)', run: () => previewCleanTriangles('duplicates') };
     case 'overlapping':
       return { label: 'Remove', title: 'Remove coplanar overlapping triangles', run: () => previewRemoveOverlaps() };
     default:

@@ -387,20 +387,44 @@ export async function previewProps() {
 
 // ---------------------------------------------------------------- single-purpose cleanups
 
-export async function previewCleanTriangles(what: 'duplicates' | 'degenerate') {
+export async function previewCleanTriangles(what: 'duplicates' | 'degenerate' | 'walls') {
   const part = firstEditable();
   if (!part) return;
-  const r = await runJob(what === 'duplicates' ? 'Removing duplicate triangles' : 'Removing degenerate triangles', 'cleanTriangles', { mesh: part.mesh, what });
+  const label = what === 'degenerate' ? 'Remove degenerate triangles' : what === 'walls' ? 'Remove doubled walls (join shells)' : 'Remove duplicate triangles';
+  const r = await runJob(label, 'cleanTriangles', { mesh: part.mesh, what });
   if (!r) return;
-  if (!r.removed) return notify('info', `No ${what} triangles found`);
+  if (!r.removed)
+    return notify(
+      'info',
+      what === 'degenerate'
+        ? 'No degenerate triangles found'
+        : what === 'walls'
+          ? 'No doubled walls found'
+          : r.walls
+            ? `No duplicate copies found; ${r.walls} doubled wall${r.walls > 1 ? 's' : ''} (opposite-facing pairs) kept — use "Remove walls" to join those shells`
+            : 'No duplicate triangles found',
+    );
+  const summary =
+    what === 'degenerate'
+      ? [`Triangles removed: ${r.removed.toLocaleString()}`]
+      : what === 'walls'
+        ? [
+            `Doubled walls removed: ${(r.walls ?? 0).toLocaleString()} (both sides), ${(r.copies ?? 0).toLocaleString()} extra copies`,
+            'The shells on either side are joined into one solid',
+          ]
+        : [
+            `Duplicate copies removed: ${(r.copies ?? r.removed).toLocaleString()} (one of each kept)`,
+            'Found by position, so copies with their own vertices count too',
+            ...(r.walls ? [`${r.walls.toLocaleString()} doubled walls (opposite-facing pairs) kept: they separate two closed shells`] : []),
+          ];
   setPreview({
     tool: 'repair',
-    label: what === 'duplicates' ? 'Remove duplicate triangles' : 'Remove degenerate triangles',
+    label,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r.mesh }), color: part.color }],
-    summary: [`Triangles removed: ${r.removed.toLocaleString()}`],
+    summary,
     apply: () => {
-      replaceLocalMesh(what === 'duplicates' ? 'Remove duplicate triangles' : 'Remove degenerate triangles', part.id, r.mesh);
+      replaceLocalMesh(label, part.id, r.mesh);
       invalidateAnalysis(part.id);
       analyzePart(part.id);
     },

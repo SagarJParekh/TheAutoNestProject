@@ -86,7 +86,7 @@ export const ops = {
     const h = report.highlights;
     return {
       result: report,
-      transfer: [h.openEdges, h.nonManifoldEdges, h.flippedTriangles, h.degenerateTriangles, h.duplicateTriangles].map(
+      transfer: [h.openEdges, h.nonManifoldEdges, h.flippedTriangles, h.degenerateTriangles, h.duplicateTriangles, h.internalWalls].map(
         (a) => a.buffer as ArrayBuffer,
       ),
     };
@@ -256,9 +256,15 @@ export const ops = {
     return { result: { mesh, holes: args.points.length, plugs }, transfer: [...meshBuffers(mesh), ...(plugs ? meshBuffers(plugs) : [])] };
   },
 
-  async cleanTriangles(args: { mesh: MeshData; what: 'duplicates' | 'degenerate' }, progress: Progress): Promise<Result<{ mesh: MeshData; removed: number }>> {
-    progress(0.3, args.what === 'duplicates' ? 'Removing duplicate triangles' : 'Removing degenerate triangles');
-    const r = args.what === 'duplicates' ? G.removeDuplicateTriangles(args.mesh) : G.removeDegenerateTriangles(args.mesh);
+  async cleanTriangles(
+    args: { mesh: MeshData; what: 'duplicates' | 'degenerate' | 'walls' },
+    progress: Progress,
+  ): Promise<Result<{ mesh: MeshData; removed: number; copies?: number; walls?: number }>> {
+    progress(0.3, args.what === 'degenerate' ? 'Removing degenerate triangles' : 'Removing duplicate triangles');
+    const r =
+      args.what === 'degenerate'
+        ? G.removeDegenerateTriangles(args.mesh)
+        : G.removeDuplicateTriangles(args.mesh, { walls: args.what === 'walls' ? 'remove' : 'keep' });
     return { result: r, transfer: r.removed ? meshBuffers(r.mesh) : [] };
   },
 
