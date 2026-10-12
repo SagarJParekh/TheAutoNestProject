@@ -94,3 +94,20 @@ describe('fixNonManifoldEdges', () => {
     expect(isWatertight(r.mesh)).toBe(true);
   });
 });
+
+import { autoRepair } from '../src/geometry';
+
+describe('auto repair keeps shells', () => {
+  it('two boxes sharing a face stay two closed shells', () => {
+    const m = mergeMeshes([boxMesh([0, 0, 0], [5, 10, 10]), boxMesh([5, 0, 0], [10, 10, 10])]);
+    const r = autoRepair(m);
+    expect(r.summary.after.shells).toBe(2);
+    expect(r.summary.after.triangles).toBe(24);
+    expect(r.summary.after.watertight).toBe(true);
+  });
+  it('a box with a far-away small box keeps both', () => {
+    const m = mergeMeshes([boxMesh([0, 0, 0], [50, 50, 50]), boxMesh([60, 0, 0], [61, 1, 1])]);
+    const r = autoRepair(m);
+    expect(r.summary.after.shells).toBe(2);
+  });
+});

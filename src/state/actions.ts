@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from 'three';
 import type { MeshData, Vec3 } from '../geometry';
 import { mirrorMesh } from '../geometry/transform';
+import { regionNormal } from '../geometry/select';
 import { pool, CancelledError } from '../workers/client';
 import type { OpArgs, OpName, OpResult } from '../workers/ops';
 import { getLoader, extensionOf } from '../loaders/registry';
@@ -10,7 +11,7 @@ import {
 } from './store';
 import { applyUiTheme, saveAppearance } from './theme';
 import { nextColor } from './palette';
-import type { Part, Preview, ToolId } from './types';
+import type { FaceSelection, Part, Preview, ToolId } from './types';
 import { meshEntry, updateMeshEntry } from './meshCache';
 import {
   centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
@@ -56,7 +57,7 @@ export function prepareMesh(mesh: MeshData) {
   const big = mesh.indices.length / 3 > 300000;
   runJob('Preparing mesh', 'prepare', { mesh }, { silent: !big, quietErrors: true }).then((r) => {
     if (!r) return updateMeshEntry(mesh, { preparing: false });
-    updateMeshEntry(mesh, { bvh: r.bvh, watertight: r.watertight, preparing: false });
+    updateMeshEntry(mesh, { bvh: r.bvh, watertight: r.watertight, shells: r.shells, preparing: false });
     setState((s) => ({ meshInfoVersion: s.meshInfoVersion + 1 }));
   });
 }
@@ -395,7 +396,7 @@ export async function analyzePart(id: string) {
   if (!p) return;
   const report = await runJob(`Analysing ${p.name}`, 'analyze', { mesh: p.mesh });
   if (!report) return;
-  updateMeshEntry(p.mesh, { watertight: report.watertight });
+  updateMeshEntry(p.mesh, { watertight: report.watertight, shells: report.shells });
   setState((s) => ({ analysis: { ...s.analysis, [id]: { mesh: p.mesh, report } }, meshInfoVersion: s.meshInfoVersion + 1 }));
 }
 
@@ -549,6 +550,30 @@ export async function previewFillHoles(which?: number[]) {
 
 // ---------------------------------------------------------------- face selection
 
+/**
+ * Add a picked face to a multi-face selection, or take it out again when the
+ * clicked triangle is already part of the selection.
+ */
+export function mergeFacePicks(old: FaceSelection | null, add: FaceSelection, mesh: MeshData): FaceSelection | null {
+  if (!old) return { ...add, groups: [add.tris], seeds: [add.seed] };
+  const groups = [...(old.groups ?? [old.tris])];
+  const seeds = [...(old.seeds ?? [old.seed])];
+  const hit = groups.findIndex((g) => g.includes(add.seed));
+  if (hit >= 0) {
+    groups.splice(hit, 1);
+    seeds.splice(hit, 1);
+  } else {
+    groups.push(add.tris);
+    seeds.push(add.seed);
+  }
+  if (!groups.length) return null;
+  const all = new Set<number>();
+  for (const g of groups) for (const t of g) all.add(t);
+  const tris = Uint32Array.from(all);
+  const r = regionNormal(mesh, tris);
+  return { ...old, seed: seeds[0], tris, groups, seeds, normal: r.normal, centroid: r.centroid, area: r.area };
+}
+
 export async function pickFace(partId: string, faceIndex: number) {
   const s = getState();
   const p = partById(partId);
@@ -556,18 +581,37 @@ export async function pickFace(partId: string, faceIndex: number) {
   const angle = s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.settings.extrude.angleTolerance;
   const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
-  setState({
-    faceSelection: { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area },
-    selection: [partId],
-    pickMode: null,
-    preview: null,
-  });
+  const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };
+  if (s.tool === 'extrude') {
+    // extrude takes several faces: each click adds one (or drops it again), picking stays on
+    const old = getState().faceSelection;
+    const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
+    setState({ faceSelection: merged, selection: [partId], preview: null });
+    return;
+  }
+  setState({ faceSelection: pick, selection: [partId], pickMode: null, preview: null });
 }
 
 /** Re-grow the current selection after the angle tolerance changed. */
 export async function regrowFace() {
   const fs = getState().faceSelection;
-  if (fs) await pickFace(fs.partId, fs.seed);
+  if (!fs) return;
+  const seeds = fs.seeds ?? [fs.seed];
+  if (seeds.length === 1) {
+    setState({ faceSelection: null });
+    return pickFace(fs.partId, seeds[0]);
+  }
+  const p = partById(fs.partId);
+  if (!p) return;
+  const s = getState();
+  const angle = s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.settings.extrude.angleTolerance;
+  let sel: FaceSelection | null = null;
+  for (const seed of seeds) {
+    const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed, angle }, { silent: true });
+    if (!r) return;
+    sel = mergeFacePicks(sel, { partId: p.id, seed, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh }, p.mesh);
+  }
+  setState({ faceSelection: sel, preview: null });
 }
 
 export async function previewExtrude() {
@@ -578,14 +622,17 @@ export async function previewExtrude() {
   if (!part || part.locked) return;
   const d = s.settings.extrude.distance;
   if (!d) return setPreview(null);
-  const r = await runJob('Extruding', 'extrude', { mesh: worldMesh(part), tris: fs.tris, distance: d }, { silent: part.mesh.indices.length < 300000 });
+  const r = await runJob('Extruding', 'extrude', { mesh: worldMesh(part), tris: fs.tris, groups: fs.groups, distance: d }, { silent: part.mesh.indices.length < 300000 });
   if (!r) return;
   setPreview({
     tool: 'extrude',
     label: `Extrude ${d > 0 ? '+' : ''}${d} mm`,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r, color: part.color }],
-    summary: [`Region: ${fs.tris.length.toLocaleString()} triangles, ${fs.area.toFixed(1)} mm²`, `Distance: ${d} mm`],
+    summary: [
+      `${(fs.groups?.length ?? 1) > 1 ? `${fs.groups!.length} faces, each along its own normal: ` : 'Region: '}${fs.tris.length.toLocaleString()} triangles, ${fs.area.toFixed(1)} mm²`,
+      `Distance: ${d} mm`,
+    ],
     apply: () => replaceWithWorldMeshes('Extrude', part.id, [{ name: part.name, mesh: r, color: part.color }]),
   });
 }
@@ -644,21 +691,27 @@ export async function previewHollow() {
     maxVoxels: VOXELS[h.quality],
     drainHoles: h.drainHoles,
     drainDiameter: h.drainDiameter,
+    drainExit: h.drainExit,
+    keepPlugs: h.keepPlugs,
   });
   if (!r) return;
   setPreview({
     tool: 'hollow',
     label: `Hollow ${h.thickness} mm`,
     replaces: [part.id],
-    meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],
+    meshes: [{ name: part.name, mesh: r.mesh, color: part.color }, ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs, color: '#ffd23f' }] : [])],
     summary: [
       `Wall: ${h.thickness} mm (voxel ${r.voxelSize.toFixed(2)} mm)`,
-      `Drain holes: ${r.drained}`,
+      `Drain holes: ${r.drained}${r.drained && h.drainExit && h.drainExit !== h.drainDiameter ? ` (tapered Ø${h.drainDiameter} → Ø${h.drainExit} mm)` : r.drained ? ` (Ø${h.drainDiameter} mm)` : ''}`,
+      ...(r.plugs && r.plugs.indices.length ? ['Plugs kept as a separate part'] : []),
       `Triangles: ${(r.mesh.indices.length / 3).toLocaleString()}`,
       'Tip: enable Clip to inspect the cavity.',
     ],
     apply: () => {
-      replaceWithWorldMeshes('Hollow', part.id, [{ name: part.name, mesh: r.mesh, color: part.color }]);
+      replaceWithWorldMeshes('Hollow', part.id, [
+        { name: part.name, mesh: r.mesh, color: part.color },
+        ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs }] : []),
+      ]);
       setState((st) => ({ settings: { ...st.settings, hollow: { ...st.settings.hollow, drainHoles: [] } } }));
     },
   });

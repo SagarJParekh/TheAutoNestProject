@@ -37,6 +37,7 @@ const meshBuffers = (m: MeshData): Transferable[] => [m.positions.buffer as Arra
 export interface PrepareResult {
   bvh: { version?: number; roots: ArrayBuffer[]; index: null; indirectBuffer: Uint32Array | Uint16Array | null };
   watertight: boolean;
+  shells: number;
 }
 
 export interface CutArgs {
@@ -68,9 +69,10 @@ export const ops = {
     const s = MeshBVH.serialize(bvh, { cloneBuffers: false });
     progress(0.7, 'Checking topology');
     const watertight = G.isWatertight(args.mesh);
+    const shells = G.findShells(args.mesh).shellCount;
     const transfer: Transferable[] = [...s.roots];
     if (s.indirectBuffer) transfer.push(s.indirectBuffer.buffer as ArrayBuffer);
-    return { result: { bvh: { version: (s as { version?: number }).version, roots: s.roots, index: null, indirectBuffer: s.indirectBuffer }, watertight }, transfer };
+    return { result: { bvh: { version: (s as { version?: number }).version, roots: s.roots, index: null, indirectBuffer: s.indirectBuffer }, watertight, shells }, transfer };
   },
 
   async featureEdges(args: { mesh: MeshData; angle: number }): Promise<Result<Float32Array>> {
@@ -126,25 +128,34 @@ export const ops = {
     return { result: { tris, normal, centroid, area }, transfer: [tris.buffer as ArrayBuffer] };
   },
 
-  async extrude(args: { mesh: MeshData; tris: Uint32Array; distance: number }, progress: Progress): Promise<Result<MeshData>> {
+  async extrude(args: { mesh: MeshData; tris: Uint32Array; groups?: Uint32Array[]; distance: number }, progress: Progress): Promise<Result<MeshData>> {
     progress(0.2, 'Extruding');
-    const m = G.extrudeRegion(args.mesh, args.tris, args.distance);
+    // several picked faces: each moves along its own normal (triangle ids stay valid between steps)
+    let m = args.mesh;
+    if (args.groups && args.groups.length > 1) for (const g of args.groups) m = G.extrudeRegion(m, g, args.distance);
+    else m = G.extrudeRegion(args.mesh, args.tris, args.distance);
     return { result: m, transfer: meshBuffers(m) };
   },
 
   async hollow(
-    args: { mesh: MeshData; thickness: number; maxVoxels: number; drainHoles: G.DrainHole[]; drainDiameter: number },
+    args: { mesh: MeshData; thickness: number; maxVoxels: number; drainHoles: G.DrainHole[]; drainDiameter: number; drainExit?: number; keepPlugs?: boolean },
     progress: Progress,
-  ): Promise<Result<{ mesh: MeshData; voxelSize: number; drained: number }>> {
+  ): Promise<Result<{ mesh: MeshData; voxelSize: number; drained: number; plugs?: MeshData }>> {
     if (!G.isWatertight(args.mesh)) throw new Error('Hollowing needs a watertight part. Run Repair first.');
     const r = G.hollowMesh(args.mesh, { thickness: args.thickness, maxVoxels: args.maxVoxels }, (f, m) => progress(f * 0.85, m));
     let mesh = r.mesh;
+    let plugs: MeshData | undefined;
     if (args.drainHoles.length) {
       progress(0.9, 'Cutting drain holes');
-      const cutters = G.drainHoleCutters(args.drainHoles, args.drainDiameter, args.thickness, r.voxelSize);
-      mesh = await G.subtractMeshes(mesh, cutters);
+      const cutters = G.drainHoleCutters(args.drainHoles, args.drainDiameter, args.thickness, r.voxelSize, args.drainExit || args.drainDiameter);
+      const shell = mesh;
+      mesh = await G.subtractMeshes(shell, cutters);
+      if (args.keepPlugs) {
+        progress(0.95, 'Extracting plugs');
+        plugs = await G.intersectWithUnion(shell, cutters);
+      }
     }
-    return { result: { mesh, voxelSize: r.voxelSize, drained: args.drainHoles.length }, transfer: meshBuffers(mesh) };
+    return { result: { mesh, voxelSize: r.voxelSize, drained: args.drainHoles.length, plugs }, transfer: [...meshBuffers(mesh), ...(plugs ? meshBuffers(plugs) : [])] };
   },
 
   async perforationPlan(args: { mesh: MeshData; tris: Uint32Array; params: G.PerforationParams }): Promise<Result<G.PerforationPlan>> {

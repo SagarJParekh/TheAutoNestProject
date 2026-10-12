@@ -1,4 +1,4 @@
-import { Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { previewHollow } from '../../state/actions';
 import type { Part, ToolSettings } from '../../state/types';
@@ -30,8 +30,15 @@ export function HollowPanel({ parts }: { parts: Part[] }) {
       </Row>
       <h4>Drain holes</h4>
       <Row label="Diameter">
-        <NumberField value={h.drainDiameter} min={0.5} step={0.5} suffix="mm" onChange={(drainDiameter) => set({ drainDiameter })} />
+        <NumberField value={h.drainDiameter} min={0.5} step={0.5} suffix="mm" title="Hole size at the outer surface" onChange={(drainDiameter) => set({ drainDiameter })} />
       </Row>
+      <Row label="Exit size">
+        <NumberField value={h.drainExit} min={0} step={0.5} suffix="mm" title="Hole size where it reaches the cavity (0 = same as the diameter: straight hole)" onChange={(drainExit) => set({ drainExit })} />
+      </Row>
+      <Check checked={h.keepPlugs} onChange={(keepPlugs) => set({ keepPlugs })}>
+        Retain plugs (keep the cut-out pieces as a separate part)
+      </Check>
+      <Hint>A different exit size makes tapered holes; a plug narrower on the inside seats back into the hole to close it after draining.</Hint>
       <button
         className={`btn wide ${pickMode === 'drain' ? 'primary' : ''}`}
         disabled={!target}

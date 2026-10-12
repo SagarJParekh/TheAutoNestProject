@@ -82,7 +82,7 @@ function PartRow({ part, selected }: { part: Part; selected: boolean }) {
   const [editing, setEditing] = useState(false);
   useStore((s) => s.meshInfoVersion);
   const tris = part.mesh.indices.length / 3;
-  const wt = meshEntry(part.mesh).watertight;
+  const { watertight: wt, shells } = meshEntry(part.mesh);
   return (
     <div
       className={`part-row ${selected ? 'selected' : ''} ${part.visible ? '' : 'hidden-part'}`}
@@ -121,13 +121,18 @@ function PartRow({ part, selected }: { part: Part; selected: boolean }) {
         <small className="muted">{tris.toLocaleString()} tris</small>
       </div>
       {wt === false && (
-        <span className="part-status bad" title="Not watertight — repair it before printing (Repair, or Repair all below)">
-          {Icon.warning}
+        <span className="part-status bad" title="Not print ready: not watertight — repair it first (Repair, or Repair all below)">
+          {Icon.bottleEmpty}
         </span>
       )}
-      {wt === true && (
-        <span className="part-status ok" title="Watertight — ready for printing">
-          {Icon.printer}
+      {wt === true && (shells ?? 1) <= 1 && (
+        <span className="part-status ok" title="Print ready: watertight">
+          {Icon.bottleFull}
+        </span>
+      )}
+      {wt === true && (shells ?? 1) > 1 && (
+        <span className="part-status multi" title={`Print ready: watertight, made of ${shells} separate shells`}>
+          {Icon.bottleStriped}
         </span>
       )}
       <div className="row-actions" onClick={(e) => e.stopPropagation()}>

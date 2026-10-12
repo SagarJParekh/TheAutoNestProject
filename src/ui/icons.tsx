@@ -43,6 +43,10 @@ export const Icon = {
   offset: P(<><path d="M4 20V10a6 6 0 0 1 6-6h10" /><path d="M8 20v-9a3 3 0 0 1 3-3h9" strokeDasharray="2 2" /></>),
   theme: P(<><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.5-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z" /><circle cx="7.5" cy="11" r="1.2" /><circle cx="10" cy="7" r="1.2" /><circle cx="15" cy="7.5" r="1.2" /></>),
   warning: P(<><path d="M12 3 2 20h20z" /><path d="M12 9.5v5M12 17.5v.01" /></>),
+  // bottle outline: neck, shoulders, body
+  bottleEmpty: P(<path d="M10 2h4v4l3 3v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V9l3-3z" />),
+  bottleFull: P(<><path d="M10 2h4v4l3 3v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V9l3-3z" /><path d="M7.5 11.5h9V21a.5.5 0 0 1-.5.5H8a.5.5 0 0 1-.5-.5z" fill="currentColor" stroke="none" /></>),
+  bottleStriped: P(<><path d="M10 2h4v4l3 3v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V9l3-3z" /><path d="M7 12h10M7 15h10M7 18h10" /></>),
   printer: P(<><path d="M7 9V3h10v6" /><rect x="3" y="9" width="18" height="8" rx="2" /><path d="M7 14h10v7H7z" /><path d="M17.5 12h.01" /></>),
   rotLock: P(<><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v5h-5" /><rect x="9" y="11" width="6" height="5" rx="1" /><path d="M10.5 11V9.5a1.5 1.5 0 0 1 3 0V11" /></>),
   search: P(<><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>),

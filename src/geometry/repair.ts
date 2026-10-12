@@ -136,7 +136,8 @@ export function autoRepair(
   let duplicatesRemoved = 0;
   if (opts.removeDuplicates) {
     onProgress(0.4, 'Removing duplicate triangles');
-    const d = findDuplicateTriangles(mesh);
+    // opposite copies are faces shared by two shells: keep them (the non-manifold step separates the shells)
+    const d = findDuplicateTriangles(mesh, true);
     duplicatesRemoved = d.length;
     mesh = removeTriangles(mesh, d);
   }
@@ -151,7 +152,8 @@ export function autoRepair(
   let nonManifoldFixed = 0;
   if (opts.fixNonManifold) {
     onProgress(0.48, 'Fixing non-manifold edges');
-    const r = fixNonManifoldEdges(mesh);
+    // auto repair never throws pieces away: only split, so every shell is kept
+    const r = fixNonManifoldEdges(mesh, { removeLoose: false });
     if (r.edges) {
       mesh = r.mesh;
       nonManifoldFixed = r.edges;
@@ -225,7 +227,11 @@ export function autoRepair(
  * them (fins, internal walls, stray flaps) are removed. Holes left behind can
  * then be filled.
  */
-export function fixNonManifoldEdges(mesh: MeshData): { mesh: MeshData; removed: number; edges: number; split: number } {
+export function fixNonManifoldEdges(
+  mesh: MeshData,
+  opts: { removeLoose?: boolean } = {},
+): { mesh: MeshData; removed: number; edges: number; split: number } {
+  const removeLoose = opts.removeLoose ?? true;
   const topo = buildTopology(mesh);
   const p = mesh.positions, idx = mesh.indices;
   const nHE = idx.length, nt = nHE / 3;
@@ -412,7 +418,7 @@ export function fixNonManifoldEdges(mesh: MeshData): { mesh: MeshData; removed: 
   let out: MeshData = { positions, indices };
   // drop small open pieces that hold unpaired triangles (fins, internal walls)
   let removed = 0;
-  if (unpaired.some((x) => x)) {
+  if (removeLoose && unpaired.some((x) => x)) {
     const { shellOfTri, shellCount } = findShells(out);
     const size = new Uint32Array(shellCount), hasUnpaired = new Uint8Array(shellCount);
     for (let t = 0; t < nt; t++) {
@@ -434,7 +440,7 @@ export function fixNonManifoldEdges(mesh: MeshData): { mesh: MeshData; removed: 
   }
   out = compactMesh(out);
   // edges that splitting could not resolve (a surface pinched onto itself): drop extra triangles
-  const rest = dropNonManifoldTriangles(out);
+  const rest = removeLoose ? dropNonManifoldTriangles(out) : { mesh: out, removed: 0 };
   if (rest.removed) {
     out = rest.mesh;
     removed += rest.removed;

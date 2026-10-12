@@ -7,11 +7,13 @@ import { FacePickSection } from './FacePickSection';
 export function ExtrudePanel() {
   const fs = useStore((s) => s.faceSelection);
   const distance = useStore((s) => s.settings.extrude.distance);
+  const picking = useStore((s) => s.pickMode === 'face');
   useEffect(() => {
-    if (!fs) return;
+    // wait until face picking is finished: the preview ghosts the part, which would block further picks
+    if (!fs || picking) return;
     const t = setTimeout(previewExtrude, 250);
     return () => clearTimeout(t);
-  }, [fs, distance]);
+  }, [fs, distance, picking]);
   return (
     <Section title="Extrude surface">
       <FacePickSection tool="extrude" />

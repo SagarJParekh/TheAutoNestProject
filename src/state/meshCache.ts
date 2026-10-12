@@ -4,6 +4,8 @@ import type { PrepareResult } from '../workers/ops';
 export interface MeshCacheEntry {
   bvh?: PrepareResult['bvh'];
   watertight?: boolean;
+  /** number of separate shells */
+  shells?: number;
   edges?: Float32Array;
   edgesPending?: boolean;
   preparing?: boolean;

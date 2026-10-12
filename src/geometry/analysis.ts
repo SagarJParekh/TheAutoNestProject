@@ -63,7 +63,12 @@ export function findDegenerateTriangles(mesh: MeshData, relEps = 1e-10): Uint32A
 }
 
 /** Triangles that reuse the same three vertices as an earlier triangle (any order). */
-export function findDuplicateTriangles(mesh: MeshData): Uint32Array {
+/**
+ * Triangles that repeat an earlier triangle's three vertices. With
+ * `sameOrientation`, only copies wound the same way count: an opposite copy
+ * is the shared face of two shells (or an internal wall), not a stray double.
+ */
+export function findDuplicateTriangles(mesh: MeshData, sameOrientation = false): Uint32Array {
   const idx = mesh.indices;
   const nt = triangleCount(mesh);
   let cap = 1;
@@ -78,6 +83,11 @@ export function findDuplicateTriangles(mesh: MeshData): Uint32Array {
     if (a > b) { s = a; a = b; b = s; }
     return [a, b, c];
   };
+  // winding: which way the corners run once rotated to start at the smallest index
+  const parity = (t: number) => {
+    const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+    return (a < b && b < c) || (b < c && c < a) || (c < a && a < b) ? 0 : 1;
+  };
   for (let t = 0; t < nt; t++) {
     const [a, b, c] = sorted(t);
     if (a === b || b === c) continue;
@@ -87,7 +97,7 @@ export function findDuplicateTriangles(mesh: MeshData): Uint32Array {
       const s = table[slot];
       if (s === -1) break;
       const [x, y, z] = sorted(s);
-      if (x === a && y === b && z === c) {
+      if (x === a && y === b && z === c && (!sameOrientation || parity(s) === parity(t))) {
         dup = true;
         break;
       }

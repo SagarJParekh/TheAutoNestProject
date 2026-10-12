@@ -2,7 +2,8 @@ import { MeshData, Vec3, computeBounds, flipMesh, mergeMeshes, ProgressFn, noPro
 import { signedDistanceGrid } from './sdf';
 import { marchingTetrahedra } from './marching';
 import { meshVolume } from './measure';
-import { cylinderMesh } from './primitives';
+import { holeCutter } from './perforate';
+import { planeBasis } from './triangulate';
 
 export interface HollowOptions {
   /** wall thickness in mm */
@@ -71,13 +72,14 @@ export interface DrainHole {
 }
 
 /** Cylinders that cut from just outside the surface through the wall into the cavity. */
-export function drainHoleCutters(holes: DrainHole[], diameter: number, thickness: number, voxelSize = 0): MeshData[] {
+export function drainHoleCutters(holes: DrainHole[], diameter: number, thickness: number, voxelSize = 0, exitDiameter = diameter): MeshData[] {
+  // the hole tapers from `diameter` at the surface to `exitDiameter` where it reaches the cavity
+  const ratio = diameter > 0 ? Math.max(0.05, exitDiameter / diameter) : 1;
+  const beyond = 2 * voxelSize + Math.max(1, Math.max(diameter, exitDiameter) * 0.5);
   return holes.map((hole) => {
     const l = Math.hypot(hole.normal[0], hole.normal[1], hole.normal[2]) || 1;
     const n: Vec3 = [hole.normal[0] / l, hole.normal[1] / l, hole.normal[2] / l];
-    const out = 1;
-    const base: Vec3 = [hole.point[0] + n[0] * out, hole.point[1] + n[1] * out, hole.point[2] + n[2] * out];
-    const length = out + thickness + 2 * voxelSize + Math.max(1, diameter * 0.5);
-    return cylinderMesh(base, [-n[0], -n[1], -n[2]], diameter / 2, length, 32);
+    const { u, v } = planeBasis(n);
+    return holeCutter(hole.point, n, u, v, diameter / 2, ratio, 32, 0, thickness, beyond);
   });
 }

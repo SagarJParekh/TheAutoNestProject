@@ -131,7 +131,7 @@ export const useStore = create<AppState>(() => ({
   analysis: {},
   settings: {
     repair: { removeSmallShells: false, smallShellRatio: 0.01, weldTolerance: 0, fillHoles: true, stitch: true },
-    hollow: { thickness: 2, quality: 'normal', drainDiameter: 4, drainHoles: [] },
+    hollow: { thickness: 2, quality: 'normal', drainDiameter: 4, drainExit: 0, keepPlugs: false, drainHoles: [] },
     perforate: { pattern: 'round', size: 4, spacing: 2, margin: 2, depth: 0, angle: 0, angleTolerance: 2, mode: 'array', exitSize: 0 },
     extrude: { distance: 5, angleTolerance: 2 },
     cut: { gap: 0 },

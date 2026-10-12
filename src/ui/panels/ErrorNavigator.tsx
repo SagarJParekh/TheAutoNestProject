@@ -58,6 +58,7 @@ export function ErrorNavigator({ part, compact = false }: { part: Part; compact?
   useStore((s) => s.intersections[part.id]);
   const focus = useStore((s) => (s.errorFocus?.partId === part.id && s.errorFocus.mesh === part.mesh ? s.errorFocus : null));
   const preview = useStore((s) => s.preview);
+  const shownColor = useStore((s) => s.appearance.selection);
   const hl = useStore((s) => s.settings.highlight);
   const setHl = (patch: Partial<ToolSettings['highlight']>) =>
     setState({ settings: { ...getState().settings, highlight: { ...getState().settings.highlight, ...patch } } });
@@ -113,7 +114,7 @@ export function ErrorNavigator({ part, compact = false }: { part: Part; compact?
                 const fx = quickFix(part, g);
                 return (
                   <li key={i} className={focus?.index === i ? 'active' : ''} onClick={() => focusError(part.id, i)} title="Zoom to this problem">
-                    <i className="dot" style={{ background: errorColor(g.kind, part.color) }} />
+                    <i className="dot" style={{ background: errorColor(g.kind, shownColor) }} />
                     <span className="err-text">
                       #{i + 1} {describe(g)}
                     </span>

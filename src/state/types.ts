@@ -49,6 +49,8 @@ export interface ShellView {
   hover: number | null;
   /** show only the selected shells in the viewport */
   isolate: boolean;
+  /** shells hidden in the viewport */
+  hidden?: number[];
 }
 
 /** Manual triangle editing: selected triangles to delete, or vertices picked for a new triangle. */
@@ -122,6 +124,9 @@ export interface FaceSelection {
   area: number;
   /** the mesh the triangle ids refer to (a pick goes stale when the part's mesh changes) */
   mesh?: MeshData;
+  /** multi-face picks: each picked face (its triangles) and the triangle clicked for it */
+  groups?: Uint32Array[];
+  seeds?: number[];
 }
 
 export interface AnalysisEntry {
@@ -188,7 +193,16 @@ export interface IntersectionEntry {
 
 export interface ToolSettings {
   repair: { removeSmallShells: boolean; smallShellRatio: number; weldTolerance: number; fillHoles: boolean; stitch: boolean };
-  hollow: { thickness: number; quality: 'draft' | 'normal' | 'fine'; drainDiameter: number; drainHoles: DrainHolePick[] };
+  hollow: {
+    thickness: number;
+    quality: 'draft' | 'normal' | 'fine';
+    drainDiameter: number;
+    /** hole size where it reaches the cavity, mm (0 = same as the diameter: straight hole) */
+    drainExit: number;
+    /** keep the cut-out plugs as a separate part */
+    keepPlugs: boolean;
+    drainHoles: DrainHolePick[];
+  };
   perforate: PerforationParams & { angleTolerance: number; mode: 'array' | 'points' };
   extrude: { distance: number; angleTolerance: number };
   cut: { gap: number };

@@ -6,16 +6,34 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' }) {
   const fs = useStore((s) => s.faceSelection);
   const pickMode = useStore((s) => s.pickMode);
   const tol = useStore((s) => s.settings[tool].angleTolerance);
+  const multi = tool === 'extrude';
   return (
     <>
       <button className={`btn wide ${pickMode === 'face' ? 'primary' : ''}`} onClick={() => setState({ pickMode: pickMode === 'face' ? null : 'face', pickSlot: 'primary' })}>
-        {pickMode === 'face' ? 'Click a face in the viewport…' : fs ? 'Pick another face' : 'Pick face…'}
+        {pickMode === 'face'
+          ? multi
+            ? 'Click faces… (click here to finish)'
+            : 'Click a face in the viewport…'
+          : multi
+            ? fs
+              ? 'Add / remove faces…'
+              : 'Pick faces…'
+            : fs
+              ? 'Pick another face'
+              : 'Pick face…'}
       </button>
       {fs && (
         <p className="muted small">
-          Selected {fs.tris.length.toLocaleString()} triangles · {fs.area.toFixed(1)} mm²
+          Selected {multi && (fs.groups?.length ?? 1) > 1 ? `${fs.groups!.length} faces · ` : ''}
+          {fs.tris.length.toLocaleString()} triangles · {fs.area.toFixed(1)} mm²{' '}
+          {multi && (
+            <button className="mini" onClick={() => setState({ faceSelection: null, preview: null })}>
+              Clear
+            </button>
+          )}
         </p>
       )}
+      {multi && <p className="muted small">Click several faces to extrude them together; click a picked face again to drop it.</p>}
       <Row label="Angle tolerance">
         <NumberField
           value={tol}

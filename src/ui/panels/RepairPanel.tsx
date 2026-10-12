@@ -43,6 +43,7 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
 
 function FixTab({ parts }: { parts: Part[] }) {
   const part = parts.length === 1 ? parts[0] : null;
+  const shownColor = useStore((s) => s.appearance.selection);
   const entry = useStore((s) => (part ? s.analysis[part.id] : undefined));
   const settings = useStore((s) => s.settings);
   const preview = useStore((s) => s.preview);
@@ -82,7 +83,8 @@ function FixTab({ parts }: { parts: Part[] }) {
     </>
   );
 
-  const hc = highlightColors(part.color);
+  // the part is selected here, so it is drawn in the selection colour
+  const hc = highlightColors(shownColor);
   return (
     <>
       <RepairManySection />

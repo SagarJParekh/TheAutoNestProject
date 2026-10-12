@@ -56,6 +56,11 @@ export function ThemeMenu() {
             <input type="color" value={a.custom} onChange={(e) => setAppearance({ background: 'custom', custom: e.target.value })} />
             Custom colour
           </label>
+          <h4>Selected parts</h4>
+          <label className="bg-custom active">
+            <input type="color" value={a.selection} onChange={(e) => setAppearance({ selection: e.target.value })} />
+            Selection colour
+          </label>
         </div>
       )}
     </div>

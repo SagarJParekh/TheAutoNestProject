@@ -88,6 +88,36 @@ export function selectShells(which: 'all' | 'none' | 'open' | 'small' | 'invert'
   patchShells({ selected: ids });
 }
 
+/** Hide the selected shells in the viewport (they can't be picked while hidden). */
+export function hideSelectedShells() {
+  const sv = liveShellView();
+  if (!sv || !sv.selected.length) return;
+  patchShells({ hidden: [...new Set([...(sv.hidden ?? []), ...sv.selected])], selected: [], isolate: false });
+}
+
+export function showAllShells() {
+  if (liveShellView()?.hidden?.length) patchShells({ hidden: [] });
+}
+
+/** Zoom the view to the selected shells (or all shells when none are selected). */
+export function zoomToShells() {
+  const sv = liveShellView();
+  const part = sv && partById(sv.partId);
+  if (!sv || !part) return;
+  const ids = new Set(sv.selected.length ? sv.selected : sv.shells.map((s) => s.id));
+  const min = new Vector3(Infinity, Infinity, Infinity), max = new Vector3(-Infinity, -Infinity, -Infinity);
+  const m = matrixOf(part.transform);
+  for (const sh of sv.shells) {
+    if (!ids.has(sh.id)) continue;
+    for (let c = 0; c < 8; c++) {
+      const v = new Vector3(c & 1 ? sh.max[0] : sh.min[0], c & 2 ? sh.max[1] : sh.min[1], c & 4 ? sh.max[2] : sh.min[2]).applyMatrix4(m);
+      min.min(v);
+      max.max(v);
+    }
+  }
+  if (min.x <= max.x) viewerApi.current?.viewer?.frameBox(min, max);
+}
+
 export function toggleIsolate() {
   const sv = liveShellView();
   if (sv) patchShells({ isolate: !sv.isolate });

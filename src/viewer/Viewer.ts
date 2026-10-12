@@ -73,6 +73,8 @@ interface PartObject {
   overlay: Group;
   overlayKey?: string;
   selBox?: Box3Helper;
+  /** hidden shells applied as draw groups */
+  hiddenKey?: string;
 }
 
 interface GeometryRecord {
@@ -507,9 +509,10 @@ export class Viewer {
 
     // material per display mode
     const mode = s.display;
-    const color = new Color(part.color);
+    // selected parts all take the one selection colour (with a little glow), the rest their own colour
+    const color = new Color(selected ? s.appearance.selection : part.color);
     material.color.copy(color);
-    material.emissive.copy(selected ? color.clone().multiplyScalar(0.28) : new Color(0));
+    material.emissive.copy(selected ? color.clone().multiplyScalar(0.18) : new Color(0));
     material.wireframe = mode === 'wireframe';
     const xray = mode === 'xray' || ghost;
     material.transparent = xray;
@@ -749,7 +752,29 @@ export class Viewer {
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
       const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? fs.tris.length + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}`;
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}`;
+      // hidden shells: draw only the other triangles (draw groups need a material array)
+      const hiddenKey = sv && sv.hidden?.length ? this.refId(sv.hidden) + ':' + this.refId(sv.shellOfTri) : '';
+      if ((obj.hiddenKey ?? '') !== hiddenKey) {
+        obj.hiddenKey = hiddenKey;
+        const g = obj.mesh.geometry;
+        g.clearGroups();
+        if (sv && sv.hidden?.length) {
+          const hide = new Set(sv.hidden);
+          const nt = sv.shellOfTri.length;
+          let start = -1;
+          for (let t = 0; t <= nt; t++) {
+            const shown = t < nt && !hide.has(sv.shellOfTri[t]);
+            if (shown && start < 0) start = t;
+            else if (!shown && start >= 0) {
+              g.addGroup(start * 3, (t - start) * 3, 0);
+              start = -1;
+            }
+          }
+          if (!g.groups.length) g.addGroup(0, 0, 0);
+          obj.mesh.material = [obj.material];
+        } else obj.mesh.material = obj.material;
+      }
       // isolate: ghost the whole part, the selected shells are drawn as an overlay
       const ghostForShells = !!(sv && sv.isolate && sv.selected.length);
       obj.material.transparent = obj.material.transparent || ghostForShells;
@@ -839,7 +864,8 @@ export class Viewer {
       if (analysis) {
         const h = analysis.report.highlights;
         // thick lines in colours picked to contrast with the part and with each other
-        const hc = highlightColors(obj.part.color);
+        // contrast with the colour the part is drawn in (the selection colour when selected)
+        const hc = highlightColors('#' + obj.material.color.getHexString());
         if (hl.open && h.openEdges.length) obj.overlay.add(this.fatLines(h.openEdges, hc.open, 3.5));
         if (hl.open && h.crackEdges?.length) obj.overlay.add(this.fatLines(h.crackEdges, hc.crack, 3.5));
         if (hl.nonManifold && h.nonManifoldEdges.length) obj.overlay.add(this.fatLines(h.nonManifoldEdges, hc.nonManifold, 3.5));

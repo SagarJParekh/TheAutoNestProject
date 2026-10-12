@@ -183,15 +183,19 @@ export function exitRatioOf(params: PerforationParams): number {
  * part along -n, depth d; tapering linearly to r0*ratio at depth d. The cutter
  * starts 1 mm outside the surface and ends 1 mm past the exit.
  */
-function holeCutter(c: Vec3, n: Vec3, u: Vec3, v: Vec3, r0: number, ratio: number, sides: number, rotation: number, d: number): MeshData {
+/**
+ * A hole cutter at surface point `c` going in along -n: radius r0 at the
+ * surface, r0 × ratio at depth d (tapered), continuing `beyond` mm past d.
+ */
+export function holeCutter(c: Vec3, n: Vec3, u: Vec3, v: Vec3, r0: number, ratio: number, sides: number, rotation: number, d: number, beyond = 1): MeshData {
   const above = 1;
   const r1 = r0 * ratio;
   const slope = (r1 - r0) / Math.max(d, 1e-6);
   const rStart = Math.max(r0 * 0.05, r0 - slope * above);
-  const rEnd = Math.max(r0 * 0.05, r0 + slope * (d + 1));
+  const rEnd = Math.max(r0 * 0.05, r0 + slope * (d + beyond));
   const base: Vec3 = [c[0] + n[0] * above, c[1] + n[1] * above, c[2] + n[2] * above];
   const poly = regularPolygon(0, 0, rStart, sides, rotation);
-  return extrudePolygon(base, u, v, [-n[0], -n[1], -n[2]], poly, above + d + 1, rEnd / rStart);
+  return extrudePolygon(base, u, v, [-n[0], -n[1], -n[2]], poly, above + d + beyond, rEnd / rStart);
 }
 
 function measureDepth(bvh: ReturnType<typeof makeBVH> | null, c: Vec3, n: Vec3, fixed: number, ray: Ray): number {

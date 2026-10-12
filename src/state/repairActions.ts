@@ -9,7 +9,7 @@ import type { MeshData, Vec3 } from '../geometry';
 import { commit, getState, notify, partById, selectedParts, setState } from './store';
 import type { FaceSelection, Part, PickSlot } from './types';
 import { eulerDegFromQuaternion, matrixOf, worldMesh } from './math';
-import { partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview, analyzePart } from './actions';
+import { partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview, analyzePart, mergeFacePicks } from './actions';
 import { nextColor } from './palette';
 
 type Slot = Exclude<PickSlot, 'primary'>;
@@ -57,7 +57,7 @@ export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number)
   if (slot === 'offset') {
     // offset takes several faces: each click adds a face (or removes it when already picked), picking stays on
     const old = getState().facePicks.offset;
-    const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick);
+    const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
     setState((s) => {
       const f = { ...s.facePicks };
       if (merged) f.offset = merged;
@@ -69,28 +69,6 @@ export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number)
   setState((s) => ({ facePicks: { ...s.facePicks, [slot]: pick }, pickMode: null, preview: null }));
 }
 
-/** Add a face to a multi-face pick, or take it out when its seed triangle is already in the pick. */
-function mergeFacePicks(old: FaceSelection | null, add: FaceSelection): FaceSelection | null {
-  if (!old) return add;
-  const have = new Set(old.tris);
-  const removing = have.has(add.seed);
-  let tris: Uint32Array;
-  if (removing) {
-    const drop = new Set(add.tris);
-    tris = Uint32Array.from(Array.from(old.tris).filter((t) => !drop.has(t)));
-  } else {
-    for (const t of add.tris) have.add(t);
-    tris = Uint32Array.from(have);
-  }
-  if (!tris.length) return null;
-  // area-weighted normal and centroid of the faces
-  const a1 = old.area, a2 = removing ? -add.area : add.area;
-  const area = Math.max(1e-9, a1 + a2);
-  const mix = (u: Vec3, v: Vec3): Vec3 => [(u[0] * a1 + v[0] * a2) / area, (u[1] * a1 + v[1] * a2) / area, (u[2] * a1 + v[2] * a2) / area];
-  const n = mix(old.normal, add.normal);
-  const l = Math.hypot(n[0], n[1], n[2]) || 1;
-  return { ...old, tris, area, normal: [n[0] / l, n[1] / l, n[2] / l], centroid: mix(old.centroid, add.centroid) };
-}
 
 export function clearPick(slot: Slot) {
   setState((s) => {

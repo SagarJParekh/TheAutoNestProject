@@ -3,7 +3,7 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import {
   clearBridge, clearTriSelection, createBridge, deleteSelectedTriangles, extractMarked, growMarked, hoverShell, invertMarked, liveShellView, loadShells, markAll, previewFixOpenEdges,
-  previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell,
+  previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell, hideSelectedShells, showAllShells, zoomToShells,
 } from '../../state/editActions';
 import type { MarkTool, Part } from '../../state/types';
 import { live as livePreview } from '../../state/livePreview';
@@ -90,7 +90,7 @@ export function ShellsTab({ parts }: { parts: Part[] }) {
           {view.shells.slice(0, 500).map((sh) => (
             <li
               key={sh.id}
-              className={`${sel.has(sh.id) ? 'selected' : ''}`}
+              className={`${sel.has(sh.id) ? 'selected' : ''} ${view.hidden?.includes(sh.id) ? 'hidden-shell' : ''}`}
               onMouseEnter={() => hoverShell(sh.id)}
               onClick={(e) => toggleShell(sh.id, e.ctrlKey || e.metaKey || e.shiftKey)}
             >
@@ -106,6 +106,17 @@ export function ShellsTab({ parts }: { parts: Part[] }) {
         <Check checked={view.isolate} onChange={toggleIsolate}>
           Show only the selected shells
         </Check>
+        <div className="btn-row">
+          <button className="mini" disabled={!view.selected.length} onClick={hideSelectedShells} title="Hide the selected shells in the viewport">
+            Hide selected
+          </button>
+          <button className="mini" disabled={!view.hidden?.length} onClick={showAllShells}>
+            Show all{view.hidden?.length ? ` (${view.hidden.length} hidden)` : ''}
+          </button>
+          <button className="mini" onClick={zoomToShells} title="Zoom the view to the selected shells (all when none are selected)">
+            Zoom to {view.selected.length ? 'selected' : 'all'}
+          </button>
+        </div>
       </Section>
       <Section title={`Selected (${view.selected.length})`}>
         <div className="btn-grid two">

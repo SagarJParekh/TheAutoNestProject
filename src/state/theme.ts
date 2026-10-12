@@ -8,6 +8,8 @@ export interface Appearance {
   background: string;
   /** colour used when background is 'custom' */
   custom: string;
+  /** every selected part is drawn in this one colour */
+  selection: string;
 }
 
 export interface BackgroundPreset {
@@ -30,7 +32,7 @@ export const BACKGROUNDS: BackgroundPreset[] = [
   { id: 'white', label: 'White', css: '#ffffff', light: true },
 ];
 
-export const DEFAULT_APPEARANCE: Appearance = { ui: 'dark', background: 'studio', custom: '#2a3140' };
+export const DEFAULT_APPEARANCE: Appearance = { ui: 'dark', background: 'studio', custom: '#2a3140', selection: '#cfe8ff' };
 
 const KEY = 'autonest.appearance';
 
