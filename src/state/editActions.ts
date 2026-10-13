@@ -13,7 +13,7 @@ import { commit, getState, notify, partById, selectedParts, setState } from './s
 import type { OpenEdgeMethod } from '../geometry';
 import type { Part, ShellView } from './types';
 import { matrixOf, worldMesh } from './math';
-import { analyzePart, newId, partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview } from './actions';
+import { analyzePart, requestEdges, newId, partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview } from './actions';
 import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
 import type { PickInfo } from '../viewer/Viewer';
@@ -463,13 +463,21 @@ export async function onLassoDone(points: [number, number][]) {
 
 export function startPolyline() {
   const s = getState();
-  if (!selectedParts().some((p) => !p.locked)) return notify('warning', 'Select the part to cut first');
+  const part = selectedParts().find((p) => !p.locked);
+  if (!part) return notify('warning', 'Select the part to cut first');
+  // sharp edges for snapping the line to the part
+  requestEdges(part.mesh);
   setState({ polyMode: !s.polyMode, lassoMode: false, preview: null });
 }
 
 /** Called by the viewer when a polyline for the cut has been drawn. */
-export async function onPolylineDone(points: [number, number][]) {
+export async function onPolylineDone(points: [number, number][], closed = false) {
   setState({ polyMode: false });
+  if (closed) {
+    // the line came back to its start: cut out the enclosed shape (through the part, along the view)
+    if (points.length < 3) return notify('warning', 'A closed shape needs at least three points');
+    return cutWithOutline(points, 'Shape cut', ['inside', 'outside']);
+  }
   if (points.length < 2) return notify('warning', 'Click at least two points');
   const vp = document.querySelector('.viewport')?.getBoundingClientRect();
   const reach = vp ? Math.hypot(vp.width, vp.height) * 4 : 20000;
@@ -489,7 +497,7 @@ async function cutWithOutline(outline: [number, number][], label: string, names:
     { name: `${part.name} (${names[1]})`, mesh: r.outside, color: part.color },
   ].filter((p) => p.mesh.indices.length);
   if (pieces.length < 2)
-    return notify('warning', pieces.length ? (label === 'Line cut' ? 'The line must cross the whole part' : 'The lasso does not cross the part') : 'Nothing was cut');
+    return notify('warning', pieces.length ? (label === 'Line cut' ? 'The line must cross the whole part' : label === 'Shape cut' ? 'The shape does not cross the part' : 'The lasso does not cross the part') : 'Nothing was cut');
   setPreview({
     tool: 'cut',
     label,

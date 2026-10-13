@@ -166,6 +166,7 @@ export const useStore = create<AppState>(() => ({
     offset: { mode: 'global', distance: 1, voxel: 0, asCopy: false, smooth: true, angle: 20 },
     blend: { kind: 'fillet', size: 2 },
     cutMode: 'plane',
+    cutSnap: true,
   },
   jobs: [],
   notices: [],

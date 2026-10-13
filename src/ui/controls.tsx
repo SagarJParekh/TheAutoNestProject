@@ -23,7 +23,9 @@ export function NumberField({
     if (!focused.current) setText(fmt(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
-  const commit = (t: string) => {
+  const commit = (raw: string) => {
+    // typographic minus / dashes (keyboards, copy-paste) and a decimal comma count as plain - and .
+    const t = raw.replace(/[\u2212\u2012\u2013\u2014\uFE63\uFF0D]/g, '-').replace(/^(\s*-?\d+),(\d+\s*)$/, '$1.$2');
     let v: number;
     try {
       // allow simple arithmetic like "10+2.5" or "25.4*2"

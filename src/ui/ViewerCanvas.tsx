@@ -155,8 +155,8 @@ export function ViewerCanvas() {
       onRect(x0, y0, x1, y1, erase) {
         onWindowMark(x0, y0, x1, y1, erase);
       },
-      onPolyline(points) {
-        onPolylineDone(points);
+      onPolyline(points, closed) {
+        onPolylineDone(points, closed);
       },
       onBoxSelect(ids, add) {
         const s = getState();

@@ -91,6 +91,53 @@ export function voxelizeInside(
   return inside;
 }
 
+/**
+ * Inside/outside grid that tolerates holes: rays are cast along X, Y and Z
+ * and a voxel is inside when at least two of the three agree. A hole lets
+ * rays along one axis leak, but the other two still see the walls. Closed
+ * meshes use the single Z pass.
+ */
+export function voxelizeInsideRobust(
+  mesh: MeshData,
+  origin: [number, number, number],
+  nx: number,
+  ny: number,
+  nz: number,
+  h: number,
+  closed = false,
+): Uint8Array {
+  const zIn = voxelizeInside(mesh, origin, nx, ny, nz, h);
+  if (closed) return zIn;
+  const p = mesh.positions;
+  // rays along X: treat (y, z, x) as (x, y, z)
+  const px = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    px[i] = p[i + 1];
+    px[i + 1] = p[i + 2];
+    px[i + 2] = p[i];
+  }
+  const xIn = voxelizeInside({ positions: px, indices: mesh.indices }, [origin[1], origin[2], origin[0]], ny, nz, nx, h);
+  // rays along Y: treat (z, x, y) as (x, y, z)
+  const py = new Float32Array(p.length);
+  for (let i = 0; i < p.length; i += 3) {
+    py[i] = p[i + 2];
+    py[i + 1] = p[i];
+    py[i + 2] = p[i + 1];
+  }
+  const yIn = voxelizeInside({ positions: py, indices: mesh.indices }, [origin[2], origin[0], origin[1]], nz, nx, ny, h);
+  const out = new Uint8Array(nx * ny * nz);
+  for (let k = 0; k < nz; k++)
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const n = i + nx * (j + ny * k);
+        // index in the permuted grids
+        const nX = j + ny * (k + nz * i);
+        const nY = k + nz * (i + nx * j);
+        out[n] = zIn[n] + xIn[nX] + yIn[nY] >= 2 ? 1 : 0;
+      }
+  return out;
+}
+
 /** 1D squared distance transform (Felzenszwalb & Huttenlocher). */
 function edt1d(f: Float32Array, n: number, d: Float32Array, v: Int32Array, z: Float32Array) {
   let k = 0;

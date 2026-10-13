@@ -11,7 +11,8 @@
  */
 import { Vector3 } from 'three';
 import { MeshData, FloatBuffer, IndexBuffer, compactMesh, computeBounds, flipMesh, triangleCount, ProgressFn, noProgress } from './mesh';
-import { gridFor, makeBVH, squaredEDT, voxelizeInside } from './sdf';
+import { gridFor, makeBVH, squaredEDT, voxelizeInsideRobust } from './sdf';
+import { isWatertight } from './analysis';
 import { marchingTetrahedra } from './marching';
 import { meshVolume } from './measure';
 import { simplifyMesh } from './simplify';
@@ -48,7 +49,8 @@ export function offsetMesh(mesh: MeshData, distance: number, opts: OffsetOptions
   const bounds = computeBounds(mesh.positions);
   const { origin, nx, ny, nz } = gridFor(bounds, h, pad);
   onProgress(0.05, 'Voxelizing');
-  const inside = voxelizeInside(mesh, origin, nx, ny, nz, h);
+  // parts with holes: three-axis vote so rays leaking through a hole don't empty the inside
+  const inside = voxelizeInsideRobust(mesh, origin, nx, ny, nz, h, isWatertight(mesh));
   const N = nx * ny * nz;
   onProgress(0.25, 'Distance transform');
   // estimated signed distance (positive inside) from distance transforms on both sides
@@ -83,7 +85,12 @@ export function offsetMesh(mesh: MeshData, distance: number, opts: OffsetOptions
   const shift = iso - h * 1.234e-3;
   for (let i = 0; i < N; i++) data[i] -= shift;
   let out = marchingTetrahedra({ nx, ny, nz, origin, h, data }, (f, m) => onProgress(0.85 + f * 0.05, m));
-  if (!out.indices.length) throw new Error(`Offsetting by ${distance} mm leaves nothing; use a smaller inward offset`);
+  if (!out.indices.length)
+    throw new Error(
+      distance < 0
+        ? `Shrinking by ${-distance} mm leaves nothing: the part is nowhere thicker than ${(-2 * distance).toFixed(2)} mm. Use a smaller inward offset.`
+        : `Offsetting by ${distance} mm gave no surface; repair the part (Repair → Auto repair) and try again.`,
+    );
   if (meshVolume(out) < 0) out = flipMesh(out);
   // the voxel surface is very dense; flat and gently curved areas need far fewer triangles
   if (opts.simplify !== false) out = simplifyMesh(out, 0.01, (f) => onProgress(0.9 + f * 0.09, 'Reducing triangles'), { maxDeviation: h * 0.25 }).mesh;

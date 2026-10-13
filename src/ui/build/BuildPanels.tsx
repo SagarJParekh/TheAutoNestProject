@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { SaveLocationRow } from '../Dialogs';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { Icon } from '../icons';
 import { useStore } from '../../state/store';
@@ -335,6 +336,7 @@ export function BuildsPanel() {
               </button>
             </div>
           )}
+          {g.builds.length > 0 && <SaveLocationRow />}
         </Section>
         <Section
           title={`Parts (${g.parts.length})`}

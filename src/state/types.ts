@@ -260,6 +260,8 @@ export interface ToolSettings {
   };
   blend: { kind: 'fillet' | 'chamfer'; size: number };
   cutMode: 'plane' | 'lasso' | 'polyline';
+  /** drawn cut lines snap their points to the part's corners and sharp edges */
+  cutSnap: boolean;
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

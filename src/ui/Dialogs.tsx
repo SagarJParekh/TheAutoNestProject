@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { canPickFolder, canPickLocation, chooseFolder, folderName, savedFolder, saveMode, setSaveMode } from '../state/save';
+import type { SaveMode } from '../state/save';
 import { Icon } from './icons';
 import { Check, NumberField, Row, Segmented } from './controls';
 import { setState, useStore } from '../state/store';
@@ -27,6 +29,59 @@ function fmtBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+
+/** Where exported files go: ask each time, a remembered folder, or Downloads. */
+export function SaveLocationRow() {
+  const [mode, setMode] = useState<SaveMode>(saveMode());
+  const [folder, setFolder] = useState<string | null>(folderName());
+  useEffect(() => {
+    savedFolder().then((h) => setFolder(h?.name ?? null));
+  }, []);
+  if (!canPickLocation && !canPickFolder)
+    return (
+      <p className="muted small">
+        Files go to your browser's Downloads folder. To choose a folder each time, turn on “Ask where to save each file” in the browser's download
+        settings, or use Chrome / Edge, which let this page ask directly.
+      </p>
+    );
+  const options: { value: SaveMode; label: string }[] = [
+    ...(canPickLocation ? [{ value: 'ask' as const, label: 'Ask where' }] : []),
+    ...(canPickFolder ? [{ value: 'folder' as const, label: folder ? `Folder: ${folder}` : 'A folder…' }] : []),
+    { value: 'downloads', label: 'Downloads' },
+  ];
+  const pick = async () => {
+    const name = await chooseFolder();
+    if (name) {
+      setFolder(name);
+      setMode('folder');
+    }
+  };
+  return (
+    <>
+      <Row label="Save to">
+        <Segmented
+          value={mode}
+          onChange={async (m) => {
+            if (m === 'folder' && !folder) return pick();
+            setSaveMode(m);
+            setMode(m);
+          }}
+          options={options}
+        />
+      </Row>
+      {canPickFolder && (
+        <Row>
+          <button className="mini" onClick={pick} title="Choose the folder exports are saved into">
+            {folder ? 'Change folder…' : 'Choose folder…'}
+          </button>
+          <span className="muted small">
+            {mode === 'ask' ? 'You pick the folder and file name for every export.' : mode === 'folder' ? `Saved straight into “${folder}”.` : 'Saved to the browser’s Downloads folder.'}
+          </span>
+        </Row>
+      )}
+    </>
+  );
 }
 
 export function ExportDialog() {
@@ -137,6 +192,7 @@ export function ExportDialog() {
             One file per part (ZIP)
           </Check>
         </Row>
+        <SaveLocationRow />
         <p className="muted small export-estimate">
           {ratio < 1
             ? `${Math.round(tris).toLocaleString()} → about ${outTris.toLocaleString()} triangles (${Math.round(ratio * 100)}%).`

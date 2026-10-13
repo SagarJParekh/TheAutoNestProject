@@ -52,7 +52,7 @@ export interface ViewerCallbacks {
   /** window marking: rectangle in client coordinates */
   onRect?: (x0: number, y0: number, x1: number, y1: number, erase: boolean) => void;
   /** polyline drawing finished: points in client coordinates */
-  onPolyline?: (points: [number, number][]) => void;
+  onPolyline?: (points: [number, number][], closed: boolean) => void;
   /** box selection with the left button: ids of the parts inside, and whether to add to the selection */
   onBoxSelect?: (ids: string[], add: boolean) => void;
   /** pick & place finished: new positions of the dragged parts */
@@ -118,7 +118,15 @@ export class Viewer {
     items: { obj: PartObject; from: Vector3 }[];
     moved: boolean;
   } | null = null;
-  private poly: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement; dots: SVGGElement; cursor: [number, number] | null } | null = null;
+  private poly: {
+    points: [number, number][];
+    svg: SVGSVGElement;
+    line: SVGPolylineElement;
+    dots: SVGGElement;
+    cursor: [number, number] | null;
+    /** what the cursor snapped to */
+    snap: 'vertex' | 'edge' | 'start' | null;
+  } | null = null;
   private lasso: { points: [number, number][]; svg: SVGSVGElement; line: SVGPolylineElement } | null = null;
   private capsGroup = new Group();
   private objects = new Map<string, PartObject>();
@@ -1731,20 +1739,42 @@ export class Viewer {
     const dots = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     svg.append(line, dots);
     this.container.appendChild(svg);
-    this.poly = { points: [], svg, line, dots, cursor: null };
+    this.poly = { points: [], svg, line, dots, cursor: null, snap: null };
     return this.poly;
   }
 
-  /** Snap to 15° steps (Shift) from the previous point. */
-  private polyPoint(e: PointerEvent | MouseEvent): [number, number] {
+  /**
+   * Where a click / the cursor puts the next point: back on the start point
+   * (closes the shape), on a part corner or sharp edge (snapping on), or in
+   * 15° steps from the previous point (Shift).
+   */
+  private polyPoint(e: PointerEvent | MouseEvent): { p: [number, number]; snap: 'vertex' | 'edge' | 'start' | null } {
     const pts = this.poly?.points ?? [];
     const last = pts[pts.length - 1];
-    if (!e.shiftKey || !last) return [e.clientX, e.clientY];
-    const dx = e.clientX - last[0], dy = e.clientY - last[1];
-    const len = Math.hypot(dx, dy);
-    const step = Math.PI / 12;
-    const a = Math.round(Math.atan2(dy, dx) / step) * step;
-    return [last[0] + Math.cos(a) * len, last[1] + Math.sin(a) * len];
+    if (pts.length >= 3 && Math.hypot(e.clientX - pts[0][0], e.clientY - pts[0][1]) < 10) return { p: [pts[0][0], pts[0][1]], snap: 'start' };
+    if (e.shiftKey && last) {
+      const dx = e.clientX - last[0], dy = e.clientY - last[1];
+      const len = Math.hypot(dx, dy);
+      const step = Math.PI / 12;
+      const a = Math.round(Math.atan2(dy, dx) / step) * step;
+      return { p: [last[0] + Math.cos(a) * len, last[1] + Math.sin(a) * len], snap: null };
+    }
+    if (this.state?.settings.cutSnap && !e.altKey) {
+      const hit = this.pick(e.clientX, e.clientY);
+      if (hit) {
+        const v = this.snapVertex(hit.partId, hit.faceIndex, e.clientX, e.clientY, 10);
+        if (v) return { p: this.toScreen(v), snap: 'vertex' };
+        const seg = this.snapEdge(hit.partId, hit.faceIndex, hit.point, e.clientX, e.clientY, 10);
+        if (seg) {
+          // closest point on the edge, in screen space
+          const [ax, ay] = this.toScreen(seg[0]), [bx, by] = this.toScreen(seg[1]);
+          const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+          const t = l2 > 0 ? Math.max(0, Math.min(1, ((e.clientX - ax) * dx + (e.clientY - ay) * dy) / l2)) : 0;
+          return { p: [ax + dx * t, ay + dy * t], snap: 'edge' };
+        }
+      }
+    }
+    return { p: [e.clientX, e.clientY], snap: null };
   }
 
   private drawPoly() {
@@ -1753,7 +1783,12 @@ export class Viewer {
     const r = this.container.getBoundingClientRect();
     const pts = pl.cursor ? [...pl.points, pl.cursor] : pl.points;
     pl.line.setAttribute('points', pts.map(([x, y]) => `${x - r.left},${y - r.top}`).join(' '));
-    pl.dots.innerHTML = pl.points.map(([x, y]) => `<circle cx="${x - r.left}" cy="${y - r.top}" r="4"></circle>`).join('');
+    pl.svg.classList.toggle('closing', pl.snap === 'start');
+    pl.dots.innerHTML =
+      pl.points.map(([x, y], i) => `<circle class="${i === 0 && pl.snap === 'start' ? 'start' : ''}" cx="${x - r.left}" cy="${y - r.top}" r="${i === 0 && pl.snap === 'start' ? 7 : 4}"></circle>`).join('') +
+      (pl.cursor && (pl.snap === 'vertex' || pl.snap === 'edge')
+        ? `<rect class="snap ${pl.snap}" x="${pl.cursor[0] - r.left - 5}" y="${pl.cursor[1] - r.top - 5}" width="10" height="10"></rect>`
+        : '');
   }
 
   private clickPoly(e: PointerEvent) {
@@ -1761,7 +1796,14 @@ export class Viewer {
     this.pointerDown = null;
     if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     const pl = this.ensurePoly();
-    const q = this.polyPoint(e);
+    const { p: q, snap } = this.polyPoint(e);
+    if (snap === 'start') {
+      // back at the start point: the shape is closed, cut it out
+      const pts = pl.points.slice();
+      this.cancelPolyline();
+      this.cb.onPolyline?.(pts, true);
+      return;
+    }
     const last = pl.points[pl.points.length - 1];
     if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 3) return; // second click of a double-click
     pl.points.push(q);
@@ -1769,8 +1811,12 @@ export class Viewer {
   }
 
   private movePoly(e: PointerEvent) {
-    if (!this.state?.polyMode || !this.poly?.points.length) return;
-    this.poly.cursor = this.polyPoint(e);
+    if (!this.state?.polyMode) return;
+    const pl = this.poly ?? (this.state.settings.cutSnap ? this.ensurePoly() : null);
+    if (!pl) return;
+    const r = this.polyPoint(e);
+    pl.cursor = r.p;
+    pl.snap = r.snap;
     this.drawPoly();
   }
 
@@ -1789,7 +1835,7 @@ export class Viewer {
     const pl = this.poly;
     const pts = pl ? pl.points.slice() : [];
     this.cancelPolyline();
-    if (pts.length >= 2) this.cb.onPolyline?.(pts);
+    if (pts.length >= 2) this.cb.onPolyline?.(pts, false);
   }
 
   cancelPolyline() {

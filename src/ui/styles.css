@@ -406,3 +406,7 @@ table.report tr:last-child td { border-bottom: none; }
 .clip-widget-body { padding: 4px 8px 8px; }
 .preview-host { margin: 8px 0; }
 .shell-list li.hidden-shell { opacity: 0.45; font-style: italic; }
+.poly-svg rect.snap { fill: none; stroke: #22d3ee; stroke-width: 2; }
+.poly-svg rect.snap.edge { transform-box: fill-box; transform-origin: center; transform: rotate(45deg); }
+.poly-svg circle.start { fill: #22c55e; }
+.poly-svg.closing polyline { fill: rgba(34, 197, 94, 0.14); stroke: #22c55e; }

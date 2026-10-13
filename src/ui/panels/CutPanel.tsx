@@ -1,4 +1,4 @@
-import { Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { startLasso, startPolyline } from '../../state/editActions';
 import { getState, setState, useStore } from '../../state/store';
 import { previewCut } from '../../state/actions';
@@ -14,6 +14,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
   const mode = useStore((s) => s.settings.cutMode);
   const lassoing = useStore((s) => s.lassoMode);
   const drawing = useStore((s) => s.polyMode);
+  const snap = useStore((s) => s.settings.cutSnap);
   const setMode = (cutMode: 'plane' | 'lasso' | 'polyline') =>
     setState({ settings: { ...getState().settings, cutMode }, preview: null, lassoMode: false, polyMode: false });
   const modes = (
@@ -35,10 +36,15 @@ export function CutPanel({ parts }: { parts: Part[] }) {
         <button className="btn primary wide" disabled={!target || !!preview} onClick={startPolyline}>
           {drawing ? 'Drawing… (Esc to cancel)' : 'Draw cut line…'}
         </button>
+        <Check checked={snap} onChange={(cutSnap) => setState({ settings: { ...getState().settings, cutSnap } })}>
+          Snap points to the part's corners and edges
+        </Check>
         <Hint>
           Look at the part from the direction you want to cut, then click points to draw a line of straight segments across the whole part (steps,
-          zig-zags, notches…). Hold Shift to snap to 15° angles; Backspace removes the last point; double-click or Enter finishes. The part is split
-          along the line, all the way through along your line of sight. Needs a watertight part.
+          zig-zags, notches…). With snapping on, points jump to corners (square marker) and sharp edges (diamond) under the cursor; hold Alt to place
+          a point freely. Hold Shift for 15° angles; Backspace removes the last point; double-click or Enter finishes an open line, which splits the
+          part all the way through along your line of sight. Click the first point again to close the shape: the enclosed area is cut out as its
+          own piece. Needs a watertight part.
         </Hint>
       </Section>
     );

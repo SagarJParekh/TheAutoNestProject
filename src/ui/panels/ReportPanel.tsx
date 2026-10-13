@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { saveFile } from '../../state/save';
 import { Hint, Section, Segmented } from '../controls';
 import { notify, useStore } from '../../state/store';
 import { copyReport, REPORT_HEADER, reportCSV, reportRows } from '../../state/report';
@@ -19,14 +20,9 @@ export function ReportPanel() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   };
-  const download = () => {
-    const blob = new Blob([reportCSV(rows)], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'parts-report.csv';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const download = async () => {
+    const where = await saveFile('parts-report.csv', reportCSV(rows), 'text/csv;charset=utf-8');
+    if (where) notify('success', `Saved the report to ${where}`);
   };
   return (
     <Section title={`Parts report (${rows.length})`}>

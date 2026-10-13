@@ -69,3 +69,18 @@ describe('duplicate triangles', () => {
     expect(r.mesh.indices.length / 3).toBe(20);
   });
 });
+
+import { offsetMesh, computeBounds } from '../src/geometry';
+
+describe('offset of parts with holes', () => {
+  it('shrinks an open box (missing its top) instead of producing nothing', () => {
+    const box = boxMesh([0, 0, 0], [20, 20, 20]);
+    // drop the two top triangles (z = 20)
+    const keep: number[] = [];
+    for (let t = 0; t < 12; t++) if (![0, 1, 2].every((k) => box.positions[box.indices[t * 3 + k] * 3 + 2] === 20)) keep.push(box.indices[t * 3], box.indices[t * 3 + 1], box.indices[t * 3 + 2]);
+    const open = { positions: box.positions, indices: Uint32Array.from(keep) };
+    const r = offsetMesh(open, -1);
+    const b = computeBounds(r.mesh.positions);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(18, 0);
+  }, 60000);
+});

@@ -4,6 +4,7 @@
  * (Build 1, Build 2, …) automatically whenever parts or settings change.
  */
 import { Matrix4, Quaternion, Vector3 } from 'three';
+import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
 import { applyMatrix, fitsPlatform, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, getState, notify, setState, startJob } from './store';
@@ -298,14 +299,6 @@ function buildItems(s: BuildGenState, i: number) {
   });
 }
 
-function download(bytes: Uint8Array, name: string) {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/octet-stream' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
 
 /** Export one build (index) or every build ('all', zipped) as 3MF or STL, parts in their build positions. */
 export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' = '3mf') {
@@ -314,15 +307,18 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
   const printer = currentPrinter(s);
   const safe = (t: string) => t.replace(/[^\w.-]+/g, '_');
   const indices = which === 'all' ? s.builds.map((_, i) => i) : [which];
+  const fileName = (i: number) => `${safe(printer.name)}_${safe(s.builds[i].name)}.${format}`;
+  // pick the location before the slow part (pickers only open straight after a click)
+  const target = await pickSaveTarget(which === 'all' ? `${safe(printer.name)}_builds.zip` : fileName(which));
+  if (!target) return;
   const files: Record<string, Uint8Array> = {};
   for (const i of indices) {
     const r = await runJob(`Exporting ${s.builds[i].name}`, 'export', { format, items: buildItems(s, i), zip: false });
     if (!r) return;
-    files[`${safe(printer.name)}_${safe(s.builds[i].name)}.${format}`] = r.bytes;
+    files[fileName(i)] = r.bytes;
   }
-  if (which === 'all') download(zipSync(files, { level: 0 }), `${safe(printer.name)}_builds.zip`);
-  else download(Object.values(files)[0], Object.keys(files)[0]);
-  notify('success', which === 'all' ? `Exported ${indices.length} builds` : `Exported ${s.builds[which].name}`);
+  const where = await writeSaveTarget(target, (which === 'all' ? zipSync(files, { level: 0 }) : Object.values(files)[0]) as BlobPart);
+  notify('success', `${which === 'all' ? `Exported ${indices.length} builds` : `Exported ${s.builds[which].name}`} to ${where}`);
 }
 
 /** Copy a build into the Prep workspace (parts at their build positions) for further editing. */

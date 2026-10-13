@@ -18,6 +18,7 @@ import {
 } from './math';
 import { viewerApi } from '../viewer/api';
 import { endLive } from './livePreview';
+import { pickSaveTarget, writeSaveTarget } from './save';
 
 let uid = 1;
 export const newId = () => `p${Date.now().toString(36)}${(uid++).toString(36)}`;
@@ -731,6 +732,11 @@ export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selecte
   const s = getState();
   const parts = scope === 'all' ? s.parts : selectedParts();
   if (!parts.length) return notify('warning', 'Nothing to export');
+  const base = parts.length === 1 ? parts[0].name.replace(/[^\w.-]+/g, '_') : 'parts';
+  const name = zip ? `${base}-${format}.zip` : `${base}.${format}`;
+  // choose where to save first: browsers only open the picker straight after the click
+  const target = await pickSaveTarget(name);
+  if (!target) return;
   const items = parts.map((p) => ({ name: p.name, mesh: worldMesh(p) }));
   const quality = opts.quality ?? 1;
   const r = await runJob(quality < 1 ? 'Reducing & exporting' : 'Exporting', 'export', {
@@ -741,20 +747,11 @@ export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selecte
     options: { stlAscii: opts.stlAscii, decimals: opts.decimals },
   });
   if (!r) return;
-  const bytes = r.bytes;
-  const base = parts.length === 1 ? parts[0].name.replace(/[^\w.-]+/g, '_') : 'parts';
-  const name = zip ? `${base}-${format}.zip` : `${base}.${format}`;
-  const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const where = await writeSaveTarget(target, r.bytes as BlobPart);
   const tris = r.trianglesAfter < r.trianglesBefore
     ? ` (${r.trianglesBefore.toLocaleString()} → ${r.trianglesAfter.toLocaleString()} triangles)`
     : ` (${r.trianglesAfter.toLocaleString()} triangles)`;
-  notify('success', `Exported ${parts.length} part${parts.length > 1 ? 's' : ''} as ${name}${tris}`);
+  notify('success', `Exported ${parts.length} part${parts.length > 1 ? 's' : ''} to ${where}${tris}`);
 }
 
 export { matrixOf };
