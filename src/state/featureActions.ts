@@ -312,26 +312,35 @@ export function arrayParts() {
   commit(`Array ${cols}×${rows}`, [...s.parts, ...copies], { selection: [p.id, ...copies.map((c) => c.id)] });
 }
 
+/** Mesh prep arranges without a bed size: parts are simply laid out side by side. */
+const NO_BED: [number, number, number] = [Infinity, Infinity, Infinity];
+
+/** The chosen arrange directions: X, Y or X + Y. */
+function arrangeAxes(): ('x' | 'y')[] {
+  const a = getState().settings.arrange.axes.filter((x): x is 'x' | 'y' => x === 'x' || x === 'y');
+  return a.length ? a : ['x', 'y'];
+}
+
 export function arrangeOnBed() {
   const s = getState();
   const sel = selectedParts();
   const parts = (sel.length > 1 ? sel : s.parts).filter((p) => !p.locked && p.visible);
   if (!parts.length) return notify('warning', 'Nothing to arrange');
-  const { axes, bedWidth, bedDepth, bedHeight, gap } = s.settings.arrange;
-  if (!axes.length) return notify('warning', 'Choose at least one direction (X, Y or Z)');
+  const { gap } = s.settings.arrange;
+  const axes = arrangeAxes();
   const boxes = new Map(parts.map((p) => [p.id, worldBounds(p)]));
-  const { placements, size, overflow } = arrangeBoxes(
+  const { placements, size } = arrangeBoxes(
     parts.map((p) => {
       const b = boxes.get(p.id)!;
       return { id: p.id, size: [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z] as [number, number, number] };
     }),
     axes,
-    [bedWidth, bedDepth, bedHeight],
+    NO_BED,
     gap,
   );
   const at = new Map(placements.map((pl) => [pl.id, pl.min]));
   commit(
-    `Arrange on bed (${axes.join('').toUpperCase()})`,
+    `Arrange (${axes.join(' + ').toUpperCase()})`,
     s.parts.map((p) => {
       const m = at.get(p.id);
       if (!m) return p;
@@ -341,8 +350,8 @@ export function arrangeOnBed() {
     }),
   );
   viewerApi.current?.fitView();
-  const dims = size.map((v) => v.toFixed(0)).join(' × ');
-  notify(overflow ? 'warning' : 'info', `Arranged ${parts.length} parts in ${dims} mm${overflow ? ' — larger than the bed' : ''}`);
+  const dims = size.slice(0, 2).map((v) => v.toFixed(0)).join(' × ');
+  notify('info', `Arranged ${parts.length} parts along ${axes.join(' + ').toUpperCase()} in ${dims} mm`);
 }
 
 /**
@@ -354,7 +363,8 @@ export async function autoArrange() {
   const sel = selectedParts();
   const parts = (sel.length ? sel : s.parts).filter((p) => !p.locked && p.visible);
   if (!parts.length) return notify('warning', 'Nothing to arrange');
-  const { bedWidth, bedDepth, bedHeight, gap, autoAlignXY } = s.settings.arrange;
+  const { gap, autoAlignXY } = s.settings.arrange;
+  const axes = arrangeAxes();
   const results = await withProgress(
     `Auto arranging ${parts.length} parts`,
     parts.map((p) => () => {
@@ -374,13 +384,13 @@ export async function autoArrange() {
     return { ...p, transform: { ...p.transform, rotation } };
   });
   const boxes = new Map(oriented.map((p) => [p.id, worldBounds(p)]));
-  const { placements, size, overflow } = arrangeBoxes(
+  const { placements, size } = arrangeBoxes(
     oriented.map((p) => {
       const b = boxes.get(p.id)!;
       return { id: p.id, size: [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z] as [number, number, number] };
     }),
-    ['x', 'y'],
-    [bedWidth, bedDepth, bedHeight],
+    axes,
+    NO_BED,
     gap,
   );
   const at = new Map(placements.map((pl) => [pl.id, pl.min]));
@@ -400,10 +410,9 @@ export async function autoArrange() {
   const dims = size.slice(0, 2).map((v) => v.toFixed(0)).join(' × ');
   const noFlat = parts.length - flat;
   notify(
-    overflow ? 'warning' : 'success',
-    `Auto arranged ${parts.length} part${parts.length > 1 ? 's' : ''} in ${dims} mm` +
-      (noFlat ? ` · ${noFlat} without a flat face kept their tilt` : '') +
-      (overflow ? ' — larger than the bed' : ''),
+    'success',
+    `Auto arranged ${parts.length} part${parts.length > 1 ? 's' : ''} along ${axes.join(' + ').toUpperCase()} in ${dims} mm` +
+      (noFlat ? ` · ${noFlat} without a flat face kept their tilt` : ''),
   );
 }
 

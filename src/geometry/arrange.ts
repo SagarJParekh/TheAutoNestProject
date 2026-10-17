@@ -70,8 +70,9 @@ export interface Placement3 {
  * Arrange bounding boxes along any combination of axes.
  *
  * - One axis: a single line of parts along it.
- * - Two axes: rows along the first axis (in X, Y, Z order) limited by the
- *   bed size on that axis; new rows step along the second axis.
+ * - Two axes: the parts spread over both axes together — a compact grid in
+ *   the bed's proportions within the bed size, or, with an infinite bed (no
+ *   size), the most square-ish layout.
  * - Three axes: rows along X within the bed width, rows step along Y within
  *   the bed depth, and full layers stack along Z.
  *
@@ -136,14 +137,25 @@ export function arrangeBoxes(
     const widest = Math.max(...sorted.map((it) => it.size[a0]));
     const total = sorted.reduce((sum, it) => sum + it.size[a0] + gap, 0);
     const maxW = Math.max(widest, Math.min(bed[a0], total));
+    // no bed size (infinite): aim for the most compact, square-ish layout instead
+    const bounded = Number.isFinite(bed[a0]) && Number.isFinite(bed[a1]);
     const score = (l: ReturnType<typeof layout>) => {
       const w = l.hi[a0] - l.lo[a0], d = l.hi[a1] - l.lo[a1];
-      return [Math.max(w / bed[a0], d / bed[a1]), w * d] as const;
+      return [bounded ? Math.max(w / bed[a0], d / bed[a1]) : Math.max(w, d), w * d] as const;
     };
     let bs = score(best);
+    // candidate row widths: evenly spread ones, plus the exact widths of the first k parts in a row
+    const wraps: number[] = [];
     const steps = 48;
-    for (let i = 0; i <= steps; i++) {
-      const wrap = widest + ((maxW - widest) * i) / steps;
+    for (let i = 0; i <= steps; i++) wraps.push(widest + ((maxW - widest) * i) / steps);
+    if (sorted.length <= 400) {
+      let run = 0;
+      for (let k = 0; k < sorted.length; k++) {
+        run += (k ? gap : 0) + sorted[k].size[a0];
+        if (run >= widest && run <= maxW + 1e-9) wraps.push(run);
+      }
+    }
+    for (const wrap of wraps) {
       const l = layout(wrap + 1e-6);
       const sc = score(l);
       if (sc[0] < bs[0] - 1e-9 || (Math.abs(sc[0] - bs[0]) <= 1e-9 && sc[1] < bs[1])) {

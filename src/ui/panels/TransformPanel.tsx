@@ -242,58 +242,41 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       <button className="btn wide" disabled={parts.length !== 1 || !!parts[0]?.locked} onClick={arrayParts} title="Copies of the selected part in a grid on the bed">
         Create {arr.cols}×{arr.rows} array
       </button>
-      <h4>Auto arrange</h4>
-      <button className="btn primary wide" onClick={autoArrange} title="Lay every part (selected, or all) on its largest flat face and arrange them on the bed in X and Y">
+      <h4>Arrange</h4>
+      <Row label="Directions">
+        <Segmented
+          value={arr.axes.length === 2 ? 'xy' : arr.axes[0] === 'y' ? 'y' : 'x'}
+          onChange={(v) => setArr({ axes: v === 'xy' ? ['x', 'y'] : [v] })}
+          options={[
+            { value: 'x', label: 'X' },
+            { value: 'y', label: 'Y' },
+            { value: 'xy', label: 'X + Y' },
+          ]}
+        />
+      </Row>
+      <button
+        className="btn primary wide"
+        onClick={autoArrange}
+        title="Lay every part (selected, or all) on its largest flat face and arrange them along the chosen directions"
+      >
         Auto arrange {parts.length ? `${parts.length} selected` : 'all parts'}
       </button>
       <Check checked={arr.autoAlignXY} onChange={(autoAlignXY) => setArr({ autoAlignXY })}>
         Turn parts to line up with X / Y
       </Check>
       <Hint>
-        Finds each part's largest flat face it can stand on (coplanar faces like the bottoms of feet count together), puts it down on the bed, then lays
-        the parts out in X and Y within the bed size below, without stacking. Parts with no flat face keep their tilt.
+        Finds each part's largest flat face it can stand on (coplanar faces like the bottoms of feet count together), puts it down, then lays the parts
+        out along the chosen directions without stacking. Parts with no flat face keep their tilt.
       </Hint>
-      <h4>Arrange on bed</h4>
-      <Row label="Directions">
-        <div className="btn-row axis-toggles">
-          {(['x', 'y', 'z'] as const).map((a) => {
-            const on = arr.axes.includes(a);
-            return (
-              <button
-                key={a}
-                className={`mini ${on ? 'active' : ''}`}
-                aria-pressed={on}
-                title={`${on ? 'Stop arranging' : 'Arrange'} along ${a.toUpperCase()}`}
-                onClick={() => {
-                  const next = on ? arr.axes.filter((x) => x !== a) : [...arr.axes, a];
-                  if (next.length) setArr({ axes: (['x', 'y', 'z'] as const).filter((x) => next.includes(x)) });
-                }}
-              >
-                {a.toUpperCase()}
-              </button>
-            );
-          })}
-        </div>
-      </Row>
-      <Row label="Bed X × Y">
-        <NumberField value={arr.bedWidth} min={10} step={10} suffix="mm" onChange={(bedWidth) => setArr({ bedWidth })} />
-        <NumberField value={arr.bedDepth} min={10} step={10} suffix="mm" onChange={(bedDepth) => setArr({ bedDepth })} />
-      </Row>
-      <Row label="Bed Z (height)">
-        <NumberField value={arr.bedHeight} min={10} step={10} suffix="mm" onChange={(bedHeight) => setArr({ bedHeight })} />
-      </Row>
-      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) without overlaps along the chosen directions">
-        Arrange along {arr.axes.map((a) => a.toUpperCase()).join(' + ')}
+      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) without overlaps along the chosen directions, keeping their orientation">
+        Arrange along {arr.axes.map((a) => a.toUpperCase()).join(' + ')} (keep orientation)
       </button>
       <Hint>{arrangeHint(arr.axes)}</Hint>
     </Section>
   );
 }
 
-function arrangeHint(axes: ('x' | 'y' | 'z')[]): string {
-  const A = axes.map((a) => a.toUpperCase());
-  if (axes.length === 1) return `One line of parts along ${A[0]}${axes[0] === 'z' ? ', stacked up from the bed' : ''}, spaced by the gap.`;
-  if (axes.length === 2)
-    return `Parts spread over ${A[0]} and ${A[1]} together: a grid in the proportions of the bed (rows along ${A[0]}, rows stepping along ${A[1]}${axes[1] === 'z' ? ', stacked' : ''}), as compact as possible within the bed size.`;
-  return 'Rows along X within the bed width, rows along Y within the bed depth, then full layers stacked along Z.';
+function arrangeHint(axes: ('x' | 'y')[]): string {
+  if (axes.length === 1) return `One line of parts along ${axes[0].toUpperCase()}, spaced by the gap.`;
+  return 'Parts spread over X and Y together in a compact, roughly square grid, spaced by the gap. No bed or grid size is used.';
 }

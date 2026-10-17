@@ -94,3 +94,27 @@ describe('arrange in X and Y together', () => {
     expect(r.size[1]).toBeCloseTo(20, 5);
   });
 });
+
+describe('arrange without a bed size', () => {
+  const inf: [number, number, number] = [Infinity, Infinity, Infinity];
+  const cubes = (n: number) => Array.from({ length: n }, (_, i) => ({ id: String(i), size: [20, 20, 10] as [number, number, number] }));
+  it('X + Y makes a compact square-ish grid', () => {
+    const r = arrange2(cubes(9), ['x', 'y'], inf, 5);
+    expect(r.size[0]).toBeCloseTo(70, 5);
+    expect(r.size[1]).toBeCloseTo(70, 5);
+    expect(r.overflow).toBe(false);
+  });
+  it('X alone and Y alone make single lines, however many parts', () => {
+    const x = arrange2(cubes(30), ['x'], inf, 5);
+    expect(x.size[0]).toBeCloseTo(30 * 20 + 29 * 5, 5);
+    expect(x.size[1]).toBeCloseTo(20, 5);
+    const y = arrange2(cubes(30), ['y'], inf, 5);
+    expect(y.size[1]).toBeCloseTo(30 * 20 + 29 * 5, 5);
+    expect(y.size[0]).toBeCloseTo(20, 5);
+  });
+  it('large sets go beyond any bed size', () => {
+    const r = arrange2(cubes(100), ['x', 'y'], inf, 5);
+    expect(r.size[0]).toBeCloseTo(245, 5);
+    expect(r.size[1]).toBeCloseTo(245, 5);
+  });
+});

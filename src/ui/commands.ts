@@ -75,14 +75,14 @@ export function buildCommands(): Command[] {
     { id: 'send-build', label: 'Send parts to Build generation', group: 'File', keywords: 'build platform printer nest pack', run: sendPartsToBuild },
     { id: 'auto-arrange', label: 'Auto arrange (flattest face down, arrange in X / Y)', group: 'Transform', keywords: 'orient lay flat nest pack bed bottom', run: autoArrange },
     { id: 'arrange', label: 'Arrange parts on bed', group: 'Transform', keywords: 'layout pack nest 2d', run: arrangeOnBed },
-    ...(['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz'] as const).map((ax) => ({
+    ...(['x', 'y', 'xy'] as const).map((ax) => ({
       id: `arrange-${ax}`,
-      label: `Arrange on bed along ${ax.toUpperCase().split('').join(' + ')}`,
+      label: `Arrange along ${ax.toUpperCase().split('').join(' + ')}`,
       group: 'Transform',
       keywords: 'layout pack nest stack direction axis',
       run: () => {
         const st = getState();
-        setState({ settings: { ...st.settings, arrange: { ...st.settings.arrange, axes: ax.split('') as ('x' | 'y' | 'z')[] } } });
+        setState({ settings: { ...st.settings, arrange: { ...st.settings.arrange, axes: ax.split('') as ('x' | 'y')[] } } });
         arrangeOnBed();
       },
     })),
