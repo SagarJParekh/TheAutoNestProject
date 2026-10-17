@@ -56,6 +56,7 @@ Add files (or take parts from Mesh prep) and builds are generated automatically:
 - parts that are too tall or too big for the printer are turned corner to corner or tilted automatically (smallest angle first) until they fit;
 - quantities per part, parts that cannot fit the printer are listed with the reason;
 - each build is shown in the printer's volume; export one build or all builds (3MF or STL, parts in place), or open a build in Mesh prep.
+- **packing density** per build: total part volume ÷ the printer's full build volume (X × Y × Z), and ÷ the volume up to the tallest part plus an allowance (5 mm by default, editable; capped at the printer height). Shown on every build in the list and in detail for the active build.
 
 **Saving files** (Export, build export, report CSV): **Save to** → *Ask where* (pick the folder and file name each time), *A folder* (choose once, every export goes straight into it; remembered between visits) or *Downloads*. Choosing a location needs Chrome or Edge; Firefox and Safari save to Downloads (turn on "Ask where to save each file" in their download settings to be asked).
 

@@ -316,6 +316,8 @@ export interface BuildGenState {
   margin: number;
   gap: number;
   zOffset: number;
+  /** packing density: height allowance above the tallest part, mm */
+  densityAllowance?: number;
   /** tilt parts automatically when they are too tall or too big for the platform */
   autoTilt: boolean;
   /** tilts chosen automatically in the last generation, by part id */

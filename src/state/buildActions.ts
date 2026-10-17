@@ -6,7 +6,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, fitsPlatform, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, fitsPlatform, meshVolume, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, getState, notify, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, runJob } from './actions';
@@ -384,4 +384,61 @@ export function setBuildRotationLock(ids: string[], lock: boolean) {
   const set = new Set(ids);
   setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, lockRotation: lock, tilt: lock ? null : p.tilt } : p)) });
   scheduleRegenerate();
+}
+
+// ---------------------------------------------------------------- packing density
+
+const volCache = new WeakMap<MeshData, number>();
+function partVolume(mesh: MeshData): number {
+  let v = volCache.get(mesh);
+  if (v === undefined) volCache.set(mesh, (v = Math.abs(meshVolume(mesh))));
+  return v;
+}
+
+export interface BuildDensity {
+  /** total volume of the parts on the build, mm³ */
+  partsVolume: number;
+  /** full printer build volume X × Y × Z, mm³ */
+  fullVolume: number;
+  /** parts volume / full build volume, 0..1 */
+  full: number;
+  /** height used for the reduced volume: tallest part + allowance, capped at the printer height, mm */
+  usedHeight: number;
+  /** X × Y × usedHeight, mm³ */
+  usedVolume: number;
+  /** parts volume / reduced volume, 0..1 */
+  used: number;
+}
+
+/**
+ * Packing density of a build: the parts' volume against the printer's whole
+ * build volume, and against the volume up to the tallest part plus an
+ * allowance (what the printer actually has to build through).
+ */
+export function buildDensity(i: number, s: BuildGenState = bg()): BuildDensity | null {
+  const b = s.builds[i];
+  if (!b) return null;
+  const [X, Y, Z] = currentPrinter(s).volume;
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  let partsVolume = 0;
+  for (const pl of b.placements) {
+    const p = byId.get(pl.partId);
+    if (p) partsVolume += partVolume(p.mesh);
+  }
+  const fullVolume = X * Y * Z;
+  const usedHeight = Math.min(Z, b.height + (s.densityAllowance ?? 5));
+  const usedVolume = X * Y * usedHeight;
+  return {
+    partsVolume,
+    fullVolume,
+    full: fullVolume > 0 ? partsVolume / fullVolume : 0,
+    usedHeight,
+    usedVolume,
+    used: usedVolume > 0 ? partsVolume / usedVolume : 0,
+  };
+}
+
+/** Change the height allowance used for the packing density (no regeneration needed). */
+export function setDensityAllowance(mm: number) {
+  setState((st) => ({ buildGen: { ...st.buildGen, densityAllowance: Math.max(0, mm) } }));
 }

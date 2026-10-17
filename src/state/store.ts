@@ -99,6 +99,7 @@ export const useStore = create<AppState>(() => ({
     margin: 5,
     gap: 3,
     zOffset: 5,
+    densityAllowance: 5,
     autoTilt: true,
     autoTilts: {},
     autoOrient: true,

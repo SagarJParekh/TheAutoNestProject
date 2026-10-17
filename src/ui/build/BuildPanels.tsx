@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -13,6 +13,42 @@ import { importableExtensions } from '../../loaders/registry';
 import type { BuildPart, Tilt } from '../../state/types';
 
 const f1 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const pct = (v: number) => `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: v < 0.1 ? 2 : 1 })}%`;
+const cm3 = (mm3: number) => `${(mm3 / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} cm³`;
+
+/** Packing density of the active build: against the whole build volume and up to the tallest part + an allowance. */
+function DensityBox() {
+  const g = useStore((s) => s.buildGen);
+  const d = buildDensity(g.active, g);
+  if (!d) return null;
+  const [X, Y, Z] = currentPrinter(g).volume;
+  const b = g.builds[g.active];
+  const capped = d.usedHeight >= Z - 1e-9 && b.height + (g.densityAllowance ?? 5) > Z;
+  return (
+    <div className="density-box">
+      <h4>Packing density · {b.name}</h4>
+      <dl className="info">
+        <dt>Parts volume</dt>
+        <dd>{cm3(d.partsVolume)}</dd>
+        <dt title={`${f1(X)} × ${f1(Y)} × ${f1(Z)} mm = ${cm3(d.fullVolume)}`}>Full build volume</dt>
+        <dd>
+          <b>{pct(d.full)}</b> <span className="muted small">of {cm3(d.fullVolume)}</span>
+        </dd>
+        <dt title={`${f1(X)} × ${f1(Y)} × ${f1(d.usedHeight)} mm = ${cm3(d.usedVolume)}`}>Up to {f1(d.usedHeight)} mm</dt>
+        <dd>
+          <b>{pct(d.used)}</b> <span className="muted small">of {cm3(d.usedVolume)}</span>
+        </dd>
+      </dl>
+      <Row label="Above tallest part">
+        <NumberField value={g.densityAllowance ?? 5} min={0} step={1} suffix="mm" title="Height allowance added to the tallest part for the second density" onChange={setDensityAllowance} />
+      </Row>
+      <Hint>
+        Tallest part {f1(b.height)} mm + {f1(g.densityAllowance ?? 5)} mm{capped ? `, capped at the printer height ${f1(Z)} mm` : ''}. Density = total part volume ÷ build volume
+        (X × Y × height).
+      </Hint>
+    </div>
+  );
+}
 
 const TILT_PRESETS = [0, 15, 30, 45];
 const DIRECTIONS: { value: string; label: string; azimuth: number }[] = [
@@ -308,6 +344,14 @@ export function BuildsPanel() {
                 <span className="util" title="Platform area used">
                   <i style={{ width: `${Math.min(100, Math.round(b.utilization * 100))}%` }} />
                 </span>
+                {(() => {
+                  const d = buildDensity(i, g);
+                  return d ? (
+                    <span className="density" title="Packing density: parts volume ÷ full build volume · ÷ volume up to the tallest part + allowance">
+                      Density {pct(d.full)} full · {pct(d.used)} to {f1(d.usedHeight)} mm
+                    </span>
+                  ) : null;
+                })()}
               </li>
             ))}
           </ul>
@@ -323,6 +367,7 @@ export function BuildsPanel() {
               </ul>
             </div>
           )}
+          {active && <DensityBox />}
           {active && (
             <div className="btn-grid two">
               <button className="btn primary" onClick={() => exportBuilds(g.active, '3mf')}>

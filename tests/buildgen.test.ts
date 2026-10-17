@@ -167,3 +167,36 @@ describe('auto tilt', () => {
     expect(findFittingTilt(boxMesh([-200, -200, -200], [200, 200, 200]), new Quaternion(), fit)).toBeNull();
   });
 });
+
+
+import { buildDensity } from '../src/state/buildActions';
+import { getState } from '../src/state/store';
+
+describe('packing density', () => {
+  it('parts volume against the full build volume and up to the tallest part + allowance', () => {
+    const g = getState().buildGen;
+    const mesh = boxMesh([-5, -5, -5], [5, 5, 5]); // 1000 mm³
+    const s = {
+      ...g,
+      printerId: 'form3l', // 335 × 200 × 300
+      densityAllowance: 5,
+      parts: [{ id: 'a', name: 'a', color: '#fff', mesh, quantity: 3, tilt: null }],
+      builds: [
+        {
+          name: 'Build 1',
+          height: 15, // 5 mm platform distance + 10 mm part
+          utilization: 0,
+          placements: [0, 1, 2].map((c) => ({ key: `a#${c}`, partId: 'a', copy: c, position: [0, 0, 0] as [number, number, number], quaternion: [0, 0, 0, 1] as [number, number, number, number] })),
+        },
+      ],
+    };
+    const d = buildDensity(0, s)!;
+    expect(d.partsVolume).toBeCloseTo(3000, 6);
+    expect(d.full).toBeCloseTo(3000 / (335 * 200 * 300), 9);
+    expect(d.usedHeight).toBe(20);
+    expect(d.used).toBeCloseTo(3000 / (335 * 200 * 20), 9);
+    // the allowance can't take the height past the printer
+    const d2 = buildDensity(0, { ...s, densityAllowance: 1000 })!;
+    expect(d2.usedHeight).toBe(300);
+  });
+});
