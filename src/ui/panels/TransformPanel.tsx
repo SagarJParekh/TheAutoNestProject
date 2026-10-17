@@ -294,6 +294,6 @@ function arrangeHint(axes: ('x' | 'y' | 'z')[]): string {
   const A = axes.map((a) => a.toUpperCase());
   if (axes.length === 1) return `One line of parts along ${A[0]}${axes[0] === 'z' ? ', stacked up from the bed' : ''}, spaced by the gap.`;
   if (axes.length === 2)
-    return `Rows along ${A[0]} up to the bed ${A[0]} size; new rows step along ${A[1]}${axes[1] === 'z' ? ' (stacked)' : ''}.`;
+    return `Parts spread over ${A[0]} and ${A[1]} together: a grid in the proportions of the bed (rows along ${A[0]}, rows stepping along ${A[1]}${axes[1] === 'z' ? ', stacked' : ''}), as compact as possible within the bed size.`;
   return 'Rows along X within the bed width, rows along Y within the bed depth, then full layers stacked along Z.';
 }

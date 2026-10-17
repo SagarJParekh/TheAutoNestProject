@@ -63,3 +63,34 @@ describe('auto arrange: flattest face', () => {
   });
 
 });
+
+import { arrangeBoxes as arrange2 } from '../src/geometry';
+
+describe('arrange in X and Y together', () => {
+  it('spreads parts over both directions instead of one long row', () => {
+    const items = Array.from({ length: 9 }, (_, i) => ({ id: String(i), size: [20, 20, 10] as [number, number, number] }));
+    const r = arrange2(items, ['x', 'y'], [250, 210, 200], 5);
+    // a 3 × 3 grid: 3·20 + 2·5 = 70 mm each way
+    expect(r.size[0]).toBeCloseTo(70, 5);
+    expect(r.size[1]).toBeCloseTo(70, 5);
+    expect(r.overflow).toBe(false);
+    // no overlaps
+    for (let i = 0; i < 9; i++)
+      for (let j = i + 1; j < 9; j++) {
+        const a = r.placements[i].min, b = r.placements[j].min;
+        expect(Math.abs(a[0] - b[0]) >= 20 - 1e-6 || Math.abs(a[1] - b[1]) >= 20 - 1e-6).toBe(true);
+      }
+  });
+  it('follows the bed proportions for a long bed', () => {
+    const items = Array.from({ length: 8 }, (_, i) => ({ id: String(i), size: [20, 20, 10] as [number, number, number] }));
+    const r = arrange2(items, ['x', 'y'], [400, 100, 200], 5);
+    expect(r.size[0]).toBeGreaterThan(r.size[1]);
+    expect(r.size[1]).toBeGreaterThan(20);
+  });
+  it('X only still makes one row', () => {
+    const items = Array.from({ length: 4 }, (_, i) => ({ id: String(i), size: [20, 20, 10] as [number, number, number] }));
+    const r = arrange2(items, ['x'], [250, 210, 200], 5);
+    expect(r.size[0]).toBeCloseTo(95, 5);
+    expect(r.size[1]).toBeCloseTo(20, 5);
+  });
+});

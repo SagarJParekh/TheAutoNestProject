@@ -96,34 +96,63 @@ export function arrangeBoxes(
     }
     return 0;
   });
-  const placements: Placement3[] = [];
-  const c = [0, 0, 0];
-  let row = 0, layer = 0;
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (const it of sorted) {
-    const s = it.size;
-    if (a1 !== undefined && c[a0] > 0 && c[a0] + s[a0] > bed[a0] + 1e-9) {
-      c[a0] = 0;
-      c[a1] += row + gap;
-      row = 0;
-      if (a2 !== undefined && c[a1] > 0 && c[a1] + s[a1] > bed[a1] + 1e-9) {
-        c[a1] = 0;
-        c[a2] += layer + gap;
-        layer = 0;
+  // Lay the parts out with rows that wrap at `wrap` along a0 (and layers that wrap at the bed along a1).
+  const layout = (wrap: number) => {
+    const placements: Placement3[] = [];
+    const c = [0, 0, 0];
+    let row = 0, layer = 0;
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const it of sorted) {
+      const s = it.size;
+      if (a1 !== undefined && c[a0] > 0 && c[a0] + s[a0] > wrap + 1e-9) {
+        c[a0] = 0;
+        c[a1] += row + gap;
+        row = 0;
+        if (a2 !== undefined && c[a1] > 0 && c[a1] + s[a1] > bed[a1] + 1e-9) {
+          c[a1] = 0;
+          c[a2] += layer + gap;
+          layer = 0;
+        }
+      }
+      const min: [number, number, number] = [0, 0, 0];
+      for (let k = 0; k < 3; k++) {
+        if (order.includes(k)) min[k] = c[k];
+        else min[k] = k === 2 ? 0 : -s[k] / 2;
+        lo[k] = Math.min(lo[k], min[k]);
+        hi[k] = Math.max(hi[k], min[k] + s[k]);
+      }
+      placements.push({ id: it.id, min });
+      c[a0] += s[a0] + gap;
+      if (a1 !== undefined) row = Math.max(row, s[a1]);
+      if (a2 !== undefined) layer = Math.max(layer, s[a2]);
+    }
+    return { placements, lo, hi };
+  };
+  let best = layout(bed[a0]);
+  if (a1 !== undefined && sorted.length > 1) {
+    // Two directions: don't just fill one long row along a0 — try row widths from the widest part up to
+    // the bed and keep the layout that uses the least of the bed in its tightest direction (so the parts
+    // spread over X and Y in the bed's proportions), then the smaller footprint.
+    const widest = Math.max(...sorted.map((it) => it.size[a0]));
+    const total = sorted.reduce((sum, it) => sum + it.size[a0] + gap, 0);
+    const maxW = Math.max(widest, Math.min(bed[a0], total));
+    const score = (l: ReturnType<typeof layout>) => {
+      const w = l.hi[a0] - l.lo[a0], d = l.hi[a1] - l.lo[a1];
+      return [Math.max(w / bed[a0], d / bed[a1]), w * d] as const;
+    };
+    let bs = score(best);
+    const steps = 48;
+    for (let i = 0; i <= steps; i++) {
+      const wrap = widest + ((maxW - widest) * i) / steps;
+      const l = layout(wrap + 1e-6);
+      const sc = score(l);
+      if (sc[0] < bs[0] - 1e-9 || (Math.abs(sc[0] - bs[0]) <= 1e-9 && sc[1] < bs[1])) {
+        best = l;
+        bs = sc;
       }
     }
-    const min: [number, number, number] = [0, 0, 0];
-    for (let k = 0; k < 3; k++) {
-      if (order.includes(k)) min[k] = c[k];
-      else min[k] = k === 2 ? 0 : -s[k] / 2;
-      lo[k] = Math.min(lo[k], min[k]);
-      hi[k] = Math.max(hi[k], min[k] + s[k]);
-    }
-    placements.push({ id: it.id, min });
-    c[a0] += s[a0] + gap;
-    if (a1 !== undefined) row = Math.max(row, s[a1]);
-    if (a2 !== undefined) layer = Math.max(layer, s[a2]);
   }
+  const { placements, lo, hi } = best;
   if (!placements.length) return { placements, size: [0, 0, 0], overflow: false };
   const size: [number, number, number] = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
   for (const k of [0, 1]) {
