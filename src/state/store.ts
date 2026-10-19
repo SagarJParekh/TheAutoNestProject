@@ -40,6 +40,10 @@ export interface AppState {
   buildGen: BuildGenState;
   /** set only on the view state handed to the viewer in the build workspace */
   buildView?: { volume: [number, number, number]; margin: number; zOffset: number };
+  /** set only on the view state: red markers (collision locations) */
+  markers?: [number, number, number][] | null;
+  /** Build generation: how the mouse edits parts (select only, move gizmo, rotate gizmo, drag on the platform) */
+  buildEdit: 'select' | 'move' | 'rotate' | 'drag';
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
@@ -102,6 +106,10 @@ export const useStore = create<AppState>(() => ({
     gap: 3,
     zOffset: 5,
     densityAllowance: 5,
+    nest3d: true,
+    clearance3d: 1,
+    maxHeight: 0,
+    nestDetail: 'normal',
     autoTilt: true,
     autoTilts: {},
     autoOrient: true,
@@ -130,6 +138,7 @@ export const useStore = create<AppState>(() => ({
   triEdit: null,
   errorFocus: null,
   thickness: {},
+  buildEdit: 'select',
   showSearch: false,
   preview: null,
   analysis: {},

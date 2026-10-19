@@ -417,3 +417,5 @@ table.report tr:last-child td { border-bottom: none; }
 .info dd.path { word-break: break-all; }
 .thk-legend { height: 12px; border-radius: 3px; margin: 6px 0 2px; border: 1px solid var(--line); }
 .thk-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.manual-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; margin: 4px 0 8px; border: 1px solid #f59e0b; border-radius: 6px; background: rgba(245, 158, 11, 0.1); font-size: 12px; }
+.manual-banner span { flex: 1 1 100%; color: var(--muted); }

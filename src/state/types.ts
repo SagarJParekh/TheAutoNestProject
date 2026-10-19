@@ -335,6 +335,22 @@ export interface BuildGenState {
   zOffset: number;
   /** packing density: height allowance above the tallest part, mm */
   densityAllowance?: number;
+  /** powder bed: nest parts by their shape in X, Y and Z (instead of boxes on the platform) */
+  nest3d: boolean;
+  /** powder bed: minimum distance between parts, mm (0.5 and up) */
+  clearance3d: number;
+  /** build up to this height above the platform, mm (0 = the printer's full height) */
+  maxHeight: number;
+  /** 3D nesting resolution */
+  nestDetail: 'fast' | 'normal' | 'fine';
+  /** voxel size used by the last 3D nesting, mm */
+  nestVoxel?: number;
+  /** builds were edited by hand: automatic re-arranging is paused */
+  manual?: boolean;
+  /** settings changed while edits were kept: re-arranging would apply them */
+  stale?: boolean;
+  /** results of the last collision / interlock check */
+  checks?: { build: number; collisions?: import('../geometry').Collision[]; stuck?: string[]; showOnly: boolean } | null;
   /** tilt parts automatically when they are too tall or too big for the platform */
   autoTilt: boolean;
   /** tilts chosen automatically in the last generation, by part id */

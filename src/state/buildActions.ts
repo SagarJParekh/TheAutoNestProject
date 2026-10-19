@@ -80,6 +80,11 @@ export function setPartTilt(id: string, tilt: Tilt | null) {
 }
 
 export function updateBuildSettings(patch: Partial<BuildGenState>) {
+  const before = bg();
+  if (patch.printerId && printerById(patch.printerId).tech === 'powder' && printerById(before.printerId).tech !== 'powder' && !before.tilt.angle && !patch.tilt) {
+    // powder bed: lay parts on their largest flat face, then tilt them 30°
+    patch = { ...patch, tilt: { angle: 30, azimuth: 0 } };
+  }
   setBg(patch);
   scheduleRegenerate();
 }
@@ -165,9 +170,14 @@ export function findFittingTilt(
   return null;
 }
 
-export async function regenerateBuilds() {
-  const run = ++generation;
+export async function regenerateBuilds(force = false) {
   const s0 = bg();
+  if (!force && s0.manual && s0.builds.length) {
+    // builds edited by hand: don't throw the edits away; the panel offers to re-arrange
+    setBg({ stale: true });
+    return;
+  }
+  const run = ++generation;
   if (!s0.parts.length) {
     setBg({ builds: [], unplaced: [], active: 0, busy: false });
     return;
@@ -203,7 +213,11 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
   const s = bg();
   // 2. final rotation and box size of each part; parts that are too tall or too big get tilted automatically
   const printer = currentPrinter(s);
-  const fitParams = { volume: printer.volume, margin: s.margin, gap: s.gap, zOffset: s.zOffset, allowRotate: s.allowRotate };
+  const powder = printer.tech === 'powder';
+  // powder bed: build only up to the chosen height; parts keep the 3D clearance
+  const volume: [number, number, number] = powder && s.maxHeight > 0 ? [printer.volume[0], printer.volume[1], Math.min(printer.volume[2], s.maxHeight)] : printer.volume;
+  const gap = powder && s.nest3d ? Math.max(0.5, s.clearance3d) : s.gap;
+  const fitParams = { volume, margin: s.margin, gap, zOffset: s.zOffset, allowRotate: s.allowRotate };
   const info = new Map<string, { q: Quaternion; min: Vector3; max: Vector3 }>();
   const items: PackItem[] = [];
   const autoTilts: Record<string, Tilt> = {};
@@ -230,6 +244,42 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     }
     info.set(p.id, { q, ...b });
     for (let c = 0; c < p.quantity; c++) items.push({ key: `${p.id}#${c}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z });
+  }
+  if (powder && s.nest3d) {
+    // 3. powder bed: nest by the parts' shape anywhere in the volume (X, Y and Z)
+    job.progress(0.82, 'Nesting in 3D');
+    const nestParts = parts.map((p) => {
+      const inf = info.get(p.id)!;
+      const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
+      return { id: p.id, mesh: applyMatrix(p.mesh, m), count: p.quantity, fixed: !!p.lockRotation || !s.allowRotate };
+    });
+    const r = await runJob('Nesting in 3D', 'nest3d', {
+      parts: nestParts,
+      params: {
+        volume,
+        margin: s.margin,
+        clearance: gap,
+        zOffset: s.zOffset,
+        maxHeight: 0,
+        budget: { fast: 2.5e6, normal: 6e6, fine: 16e6 }[s.nestDetail ?? 'normal'],
+        rotations: s.allowRotate,
+        interlockFree: true,
+      },
+    });
+    if (!r || run !== generation) return setBg({ busy: false });
+    const builds: Build[] = r.builds.map((b, i) => ({
+      name: `Build ${i + 1}`,
+      height: b.height,
+      utilization: b.utilization,
+      placements: b.placements.map((pl): BuildPlacement => {
+        const inf = info.get(pl.partId)!;
+        const q = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (pl.turns * Math.PI) / 2).multiply(inf.q);
+        return { key: pl.key, partId: pl.partId, copy: pl.copy, position: pl.t, quaternion: [q.x, q.y, q.z, q.w] };
+      }),
+    }));
+    const unplaced = r.unplaced.map((u) => ({ partId: partOfKey(u.key), copy: Number(u.key.split('#')[1]), reason: u.reason }));
+    setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null, nestVoxel: r.voxel });
+    return;
   }
   job.progress(0.85, 'Packing builds');
   await new Promise((r) => setTimeout(r, 0)); // let the progress bar paint
@@ -259,7 +309,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     }),
   }));
   const unplaced = result.unplaced.map((u) => ({ partId: partOfKey(u.key), copy: Number(u.key.split('#')[1]), reason: u.reason }));
-  setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false });
+  setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null });
 }
 
 // ---------------------------------------------------------------- display / export
@@ -281,6 +331,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active): Part
       locked: false,
       mesh: p.mesh,
       transform: { position: pl.position, rotation: eulerDegFromQuaternion(new Quaternion(...pl.quaternion)), scale: [1, 1, 1] },
+      lockRotation: p.lockRotation,
     });
   }
   return out;
@@ -357,6 +408,11 @@ export function selectedBuildPartIds(selection = getState().selection): string[]
 /** Click on a part (viewport or list): replace the selection, or with Ctrl / Shift toggle it. */
 export function selectBuildPart(partId: string | null, toggle = false) {
   if (!partId) return toggle ? undefined : setState({ selection: [] });
+  if ((getState().buildEdit ?? 'select') !== 'select') {
+    // editing by hand: select the very copy that was clicked
+    const cur = getState().selection;
+    return setState({ selection: !toggle ? [partId] : cur.includes(partId) ? cur.filter((k) => k !== partId) : [...cur, partId] });
+  }
   const key = `${partOfKey(partId)}#0`;
   const cur = selectedBuildPartIds();
   if (!toggle) return setState({ selection: [key] });
@@ -441,4 +497,76 @@ export function buildDensity(i: number, s: BuildGenState = bg()): BuildDensity |
 /** Change the height allowance used for the packing density (no regeneration needed). */
 export function setDensityAllowance(mm: number) {
   setState((st) => ({ buildGen: { ...st.buildGen, densityAllowance: Math.max(0, mm) } }));
+}
+
+// ---------------------------------------------------------------- manual editing and checks
+
+/** Move / turn placed parts of the active build by hand (keys = placement keys). */
+export function editPlacements(changes: { key: string; position?: Vec3; quaternion?: Quat }[]) {
+  const s = bg();
+  const b = s.builds[s.active];
+  if (!b || !changes.length) return;
+  const by = new Map(changes.map((c) => [c.key, c]));
+  const placements = b.placements.map((pl) => {
+    const c = by.get(pl.key);
+    return c ? { ...pl, position: c.position ?? pl.position, quaternion: c.quaternion ?? pl.quaternion } : pl;
+  });
+  // new height of the build
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  let height = 0;
+  for (const pl of placements) {
+    const p = byId.get(pl.partId);
+    if (!p) continue;
+    const m = new Matrix4().compose(new Vector3(...pl.position), new Quaternion(...pl.quaternion), new Vector3(1, 1, 1)).elements;
+    const pos = p.mesh.positions;
+    for (let i = 0; i < pos.length; i += 3) height = Math.max(height, m[2] * pos[i] + m[6] * pos[i + 1] + m[10] * pos[i + 2] + m[14]);
+  }
+  const builds = s.builds.map((x, i) => (i === s.active ? { ...x, placements, height } : x));
+  setBg({ builds, manual: true, checks: null });
+}
+
+/** Throw away hand edits and arrange everything again with the current settings. */
+export function rearrangeBuilds() {
+  setBg({ manual: false, stale: false });
+  void regenerateBuilds(true);
+}
+
+function activeItems(s: BuildGenState) {
+  const b = s.builds[s.active];
+  if (!b) return [];
+  return buildItems(s, s.active).map((it, i) => ({ key: b.placements[i].key, mesh: it.mesh }));
+}
+
+/** Check the active build for parts that cross, sit inside each other or are closer than the clearance. */
+export async function checkCollisions() {
+  const s = bg();
+  const items = activeItems(s);
+  if (!items.length) return notify('warning', 'There is no build to check');
+  const clearance = currentPrinter(s).tech === 'powder' && s.nest3d ? Math.max(0.5, s.clearance3d) : s.gap;
+  const r = await runJob('Checking collisions', 'collisions', { items, clearance: Math.max(0, clearance - 0.01) });
+  if (!r) return;
+  setBg({ checks: { build: s.active, collisions: r, showOnly: r.length > 0 } });
+  if (!r.length) notify('success', `${s.builds[s.active].name}: no collisions, every gap is at least ${clearance} mm`);
+  else notify('warning', `${s.builds[s.active].name}: ${r.length} collision${r.length > 1 ? 's' : ''} found — showing only those parts`);
+}
+
+/** Test the active build for parts hooked into each other (can every part slide out, one after the other?). */
+export async function checkInterlocking() {
+  const s = bg();
+  const items = activeItems(s);
+  if (!items.length) return notify('warning', 'There is no build to test');
+  const r = await runJob('Testing for interlocking', 'interlockTest', { items, volume: currentPrinter(s).volume });
+  if (!r) return;
+  setBg({ checks: { build: s.active, stuck: r.stuck, showOnly: r.stuck.length > 0 } });
+  if (!r.stuck.length) notify('success', `${s.builds[s.active].name}: no interlocking — every part can be taken out`);
+  else notify('warning', `${s.builds[s.active].name}: ${r.stuck.length} part${r.stuck.length > 1 ? 's are' : ' is'} interlocked — showing only those parts`);
+}
+
+export function clearChecks() {
+  setBg({ checks: null });
+}
+
+export function setChecksShowOnly(showOnly: boolean) {
+  const c = bg().checks;
+  if (c) setBg({ checks: { ...c, showOnly } });
 }

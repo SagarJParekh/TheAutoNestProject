@@ -2,10 +2,10 @@ import { useRef, useState } from 'react';
 import { SaveLocationRow } from '../Dialogs';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { Icon } from '../icons';
-import { useStore } from '../../state/store';
+import { setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -15,6 +15,85 @@ import type { BuildPart, Tilt } from '../../state/types';
 const f1 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const pct = (v: number) => `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: v < 0.1 ? 2 : 1 })}%`;
 const cm3 = (mm3: number) => `${(mm3 / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} cm³`;
+
+/** Move / rotate / drag parts of the active build by hand. */
+function EditBox() {
+  const edit = useStore((s) => s.buildEdit ?? 'select');
+  return (
+    <div className="density-box">
+      <h4>Edit by hand</h4>
+      <Segmented
+        value={edit}
+        onChange={(buildEdit) => setState({ buildEdit, selection: [] })}
+        options={[
+          { value: 'select', label: 'Select' },
+          { value: 'move', label: 'Move' },
+          { value: 'rotate', label: 'Rotate' },
+          { value: 'drag', label: 'Drag' },
+        ]}
+      />
+      <Hint>
+        Click a part, then use the Move / Rotate handles, or Drag it across the platform (Shift-drag moves it up / down). Run Check collisions afterwards.
+      </Hint>
+    </div>
+  );
+}
+
+/** Collision check and interlocking test of the active build. */
+function ChecksBox() {
+  const g = useStore((s) => s.buildGen);
+  const c = g.checks && g.checks.build === g.active ? g.checks : null;
+  const name = (key: string) => {
+    const p = g.parts.find((x) => x.id === partOfKey(key));
+    return p ? (p.quantity > 1 ? `${p.name} (${Number(key.split('#')[1]) + 1})` : p.name) : key;
+  };
+  return (
+    <div className="density-box">
+      <h4>Checks</h4>
+      <div className="btn-grid two">
+        <button className="btn" onClick={checkCollisions} title="Find parts that cross, sit inside each other or are closer than the clearance">
+          Check collisions
+        </button>
+        <button className="btn" onClick={checkInterlocking} title="Can every part be taken out, one after the other, by sliding it straight out?">
+          Test interlocking
+        </button>
+      </div>
+      {c?.collisions && (
+        <>
+          <div className={`verdict ${c.collisions.length ? 'bad' : 'ok'} small`}>
+            {c.collisions.length ? `${c.collisions.length} collision${c.collisions.length > 1 ? 's' : ''}` : 'No collisions'}
+          </div>
+          {c.collisions.length > 0 && (
+            <ul className="err-list">
+              {c.collisions.map((x, i) => (
+                <li key={i}>
+                  <span className="err-text">
+                    {name(x.a)} ↔ {name(x.b)}: {x.kind === 'intersect' ? 'surfaces cross' : x.kind === 'inside' ? 'one inside the other' : `only ${x.distance?.toFixed(2)} mm apart`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {c?.stuck && (
+        <div className={`verdict ${c.stuck.length ? 'bad' : 'ok'} small`}>
+          {c.stuck.length ? `Interlocked: ${c.stuck.map(name).join(', ')}` : 'No interlocking: every part can be taken out'}
+        </div>
+      )}
+      {c && ((c.collisions?.length ?? 0) > 0 || (c.stuck?.length ?? 0) > 0) && (
+        <div className="btn-row">
+          <Check checked={c.showOnly} onChange={setChecksShowOnly}>
+            Show only these parts
+          </Check>
+          <button className="mini" onClick={clearChecks}>
+            Clear
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Packing density of the active build: against the whole build volume and up to the tallest part + an allowance. */
 function DensityBox() {
@@ -209,9 +288,22 @@ export function BuildSetupPanel() {
           <Hint>{TECHNOLOGIES.find((t) => t.id === printer.tech)!.note}{printer.provisional ? ' Build volume to be confirmed.' : ''}</Hint>
         </Section>
         <Section title="Spacing">
-          <Row label="Clearance between parts">
-            <NumberField value={g.gap} min={0} step={0.5} suffix="mm" onChange={(gap) => updateBuildSettings({ gap })} />
-          </Row>
+          {printer.tech === 'powder' && g.nest3d ? (
+            <Row label="Clearance between parts">
+              <NumberField
+                value={g.clearance3d}
+                min={0.5}
+                step={0.5}
+                suffix="mm"
+                title="Smallest distance between the surfaces of two parts (0.5 mm and up)"
+                onChange={(clearance3d) => updateBuildSettings({ clearance3d: Math.max(0.5, clearance3d) })}
+              />
+            </Row>
+          ) : (
+            <Row label="Clearance between parts">
+              <NumberField value={g.gap} min={0} step={0.5} suffix="mm" onChange={(gap) => updateBuildSettings({ gap })} />
+            </Row>
+          )}
           <Row label="Margin at the edges">
             <NumberField value={g.margin} min={0} step={1} suffix="mm" onChange={(margin) => updateBuildSettings({ margin })} />
           </Row>
@@ -230,13 +322,44 @@ export function BuildSetupPanel() {
             Allow turning parts 90° to fit
           </Check>
           {printer.tech === 'powder' && (
-            <Check checked={g.stack} onChange={(stack) => updateBuildSettings({ stack })}>
-              Stack parts in Z (powder bed)
-            </Check>
+            <>
+              <Check checked={g.nest3d} onChange={(nest3d) => updateBuildSettings({ nest3d })}>
+                Nest by part shape in X, Y and Z (3D nesting)
+              </Check>
+              {!g.nest3d && (
+                <Check checked={g.stack} onChange={(stack) => updateBuildSettings({ stack })}>
+                  Stack parts in Z (powder bed)
+                </Check>
+              )}
+              <Row label="Max build height">
+                <NumberField
+                  value={g.maxHeight}
+                  min={0}
+                  step={10}
+                  suffix="mm"
+                  title={`Build only up to this height above the platform (0 = the printer's full ${printer.volume[2]} mm)`}
+                  onChange={(maxHeight) => updateBuildSettings({ maxHeight: Math.max(0, maxHeight) })}
+                />
+              </Row>
+              {g.nest3d && (
+                <Row label="Nesting detail">
+                  <Segmented
+                    value={g.nestDetail ?? 'normal'}
+                    onChange={(nestDetail) => updateBuildSettings({ nestDetail })}
+                    options={[
+                      { value: 'fast', label: 'Fast' },
+                      { value: 'normal', label: 'Normal' },
+                      { value: 'fine', label: 'Fine' },
+                    ]}
+                  />
+                </Row>
+              )}
+            </>
           )}
           <Hint>
-            Each build is filled completely before a new one is started. Parts are placed tallest first, so similar heights end up together; when
-            everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.
+            {printer.tech === 'powder' && g.nest3d
+              ? `3D nesting: parts are packed by their real shape (not their bounding box), into each other's free space and up in Z, with at least the clearance between surfaces${g.nestVoxel ? ` (resolution ${g.nestVoxel.toFixed(2)} mm)` : ''}. A part is only placed where it can slide straight out, so parts never interlock. Largest parts go first; parts lie on their largest flat face and are tilted by the Tilt below (30° by default for powder).`
+              : 'Each build is filled completely before a new one is started. Parts are placed tallest first, so similar heights end up together; when everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.'}
           </Hint>
         </Section>
         <TiltSection />
@@ -367,6 +490,17 @@ export function BuildsPanel() {
               </ul>
             </div>
           )}
+          {g.manual && (
+            <div className="manual-banner">
+              <b>Edited by hand</b>
+              <span>{g.stale ? 'Settings or parts changed since: re-arrange to apply them (your edits will be replaced).' : 'Automatic re-arranging is paused so your edits stay.'}</span>
+              <button className="mini" onClick={rearrangeBuilds}>
+                Re-arrange
+              </button>
+            </div>
+          )}
+          {active && <EditBox />}
+          {active && <ChecksBox />}
           {active && <DensityBox />}
           {active && (
             <div className="btn-grid two">

@@ -457,6 +457,7 @@ export class Viewer {
     this.syncOverlays(s);
     this.syncAnnotations(s);
     this.syncDimensions(s);
+    this.syncMarkers(s);
     this.updateGridSize(s);
     this.requestRender();
   }
@@ -1984,6 +1985,29 @@ export class Viewer {
    * Dimensions tab: exact world bounding box of each selected part with
    * X / Y / Z dimension lines and labels.
    */
+  private markerKey: unknown = null;
+  private markerGroup = new Group();
+
+  /** Red markers (e.g. where parts collide), always on top. */
+  private syncMarkers(s: AppState) {
+    const m = s.markers ?? null;
+    if (m === this.markerKey) return;
+    this.markerKey = m;
+    if (!this.markerGroup.parent) this.scene.add(this.markerGroup);
+    disposeChildren(this.markerGroup);
+    this.markerGroup.clear();
+    if (m && m.length) {
+      const pos = new Float32Array(m.flat());
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(pos, 3));
+      const ring = new Points(g, new PointsMaterial({ color: 0xff1744, size: 22, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.45 }));
+      const dot = new Points(g.clone(), new PointsMaterial({ color: 0xffffff, size: 6, sizeAttenuation: false, depthTest: false }));
+      ring.renderOrder = dot.renderOrder = 1006;
+      ring.raycast = dot.raycast = () => {};
+      this.markerGroup.add(ring, dot);
+    }
+    this.requestRender();
+  }
+
   private syncDimensions(s: AppState) {
     const parts = s.tool === 'dimensions' ? s.parts.filter((p) => p.visible && s.selection.includes(p.id)) : [];
     const opt = s.settings.dimensions;

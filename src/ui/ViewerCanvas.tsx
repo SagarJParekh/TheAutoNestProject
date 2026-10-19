@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
-import { buildDisplayParts, currentPrinter, partOfKey, selectBuildPart } from '../state/buildActions';
+import { buildDisplayParts, currentPrinter, editPlacements, partOfKey, selectBuildPart } from '../state/buildActions';
+import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
@@ -50,15 +51,26 @@ function viewState(s: AppState): AppState {
   if (lastView && lastView.src === s) return lastView.view;
   if (!lastBuild || lastBuild.gen !== s.buildGen) lastBuild = { gen: s.buildGen, parts: buildDisplayParts(s.buildGen) };
   const printer = currentPrinter(s.buildGen);
+  const checks = s.buildGen.checks && s.buildGen.checks.build === s.buildGen.active ? s.buildGen.checks : null;
+  // after a collision / interlock check: show only the parts involved, with markers where they collide
+  const involved = checks
+    ? new Set([...(checks.collisions ?? []).flatMap((c) => [c.a, c.b]), ...(checks.stuck ?? [])])
+    : null;
+  const parts = checks?.showOnly && involved?.size ? lastBuild.parts.filter((p) => involved.has(p.id)) : lastBuild.parts;
+  const edit = s.buildEdit ?? 'select';
   const view: AppState = {
     ...s,
-    parts: lastBuild.parts,
-    tool: 'build',
+    parts,
+    tool: edit === 'select' ? 'build' : 'transform',
+    gizmo: edit === 'move' ? 'translate' : edit === 'rotate' ? 'rotate' : edit === 'drag' ? 'place' : 'none',
+    markers: checks?.collisions?.length ? checks.collisions.flatMap((c) => c.points) : null,
     pickMode: null,
     preview: null,
     selection: (() => {
+      // editing by hand works on single copies; otherwise selecting a part selects all its copies
+      if (edit !== 'select') return s.selection.filter((k) => parts.some((p) => p.id === k));
       const ids = new Set(s.selection.map(partOfKey));
-      return lastBuild.parts.filter((p) => ids.has(partOfKey(p.id))).map((p) => p.id);
+      return parts.filter((p) => ids.has(partOfKey(p.id))).map((p) => p.id);
     })(),
     clipEnabled: false,
     zoomWindow: false,
@@ -141,6 +153,12 @@ export function ViewerCanvas() {
         select(info.partId, mods.ctrl ? 'toggle' : mods.shift ? 'add' : 'set');
       },
       onTransformEnd(id, t) {
+        if (getState().workspace === 'build') {
+          // Build generation: hand edits go into the active build
+          const q = quaternionOf(t);
+          editPlacements([{ key: id, position: t.position, quaternion: [q.x, q.y, q.z, q.w] }]);
+          return;
+        }
         setTransform(id, t, 'Move / rotate');
       },
       onZoomDone() {
@@ -168,6 +186,10 @@ export function ViewerCanvas() {
         setState({ selection: add ? [...new Set([...s.selection, ...ids])] : ids });
       },
       onPlaceEnd(moves) {
+        if (getState().workspace === 'build') {
+          editPlacements(moves.map((m) => ({ key: m.id, position: m.position })));
+          return;
+        }
         const at = new Map(moves.map((m) => [m.id, m.position]));
         updateParts(moves.length > 1 ? `Place ${moves.length} parts` : 'Place part', [...at.keys()], (p) => ({
           ...p,

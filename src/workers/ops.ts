@@ -282,6 +282,21 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async nest3d(args: { parts: G.NestPart[]; params: G.NestParams }, progress: Progress): Promise<Result<G.NestResult>> {
+    const r = G.nest3d(args.parts, args.params, (f, m) => progress(f, m));
+    return { result: r };
+  },
+
+  async collisions(args: { items: { key: string; mesh: MeshData }[]; clearance: number }, progress: Progress): Promise<Result<G.Collision[]>> {
+    progress(0.05, 'Checking collisions');
+    return { result: G.findCollisions(args.items, args.clearance, 12, (f) => progress(0.05 + 0.95 * f, 'Checking collisions')) };
+  },
+
+  async interlockTest(args: { items: { key: string; mesh: MeshData }[]; volume: [number, number, number] }, progress: Progress): Promise<Result<{ stuck: string[]; voxel: number }>> {
+    progress(0.1, 'Testing for interlocking');
+    return { result: G.interlockTest(args.items, args.volume) };
+  },
+
   async thickness(args: { mesh: MeshData }, progress: Progress): Promise<Result<G.ThicknessResult>> {
     progress(0.05, 'Measuring wall thickness');
     const r = G.triangleThickness(args.mesh, (f) => progress(0.05 + f * 0.9, 'Measuring wall thickness'));
