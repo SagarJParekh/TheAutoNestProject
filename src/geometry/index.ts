@@ -28,6 +28,7 @@ export * from './shells';
 export * from './align';
 export * from './props';
 export * from './errorGroups';
+export * from './thickness';
 export * from './measure3d';
 export * from './label';
 export * from './texture';

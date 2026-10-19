@@ -171,3 +171,38 @@ function useEntity(entity: MEntity, label: string) {
     draw: { points: [r.from, r.to], segments: [[r.from, r.to]], circles, label: { pos: midpoint(r.from, r.to), text: fmt(r.distance, 'mm') } },
   });
 }
+
+// ---------------------------------------------------------------- wall thickness analysis
+
+/** Measure the wall thickness of a part (heat map in the Measure tool). */
+export async function analyzeThickness(partId: string) {
+  const part = partById(partId);
+  if (!part) return notify('warning', 'Select a part to analyse');
+  const r = await runJob(`Wall thickness of ${part.name}`, 'thickness', { mesh: part.mesh });
+  if (!r) return;
+  setState((s) => ({ thickness: { ...s.thickness, [partId]: { mesh: part.mesh, result: r } } }));
+  const missing = r.values.reduce((n, v) => n + (Number.isFinite(v) ? 0 : 1), 0);
+  if (missing > r.values.length * 0.05)
+    notify('warning', `${part.name}: no opposite wall found for ${Math.round((missing / r.values.length) * 100)}% of the surface (open or flipped areas, shown grey) — repair the part for a full analysis`);
+}
+
+export function clearThickness(partId?: string) {
+  setState((s) => {
+    if (!partId) return { thickness: {} };
+    const t = { ...s.thickness };
+    delete t[partId];
+    return { thickness: t };
+  });
+}
+
+/** Area (mm²) and share of the measured surface thinner than `limit`. */
+export function thinArea(r: { values: Float32Array; areas: Float32Array }, limit: number): { area: number; total: number } {
+  let area = 0, total = 0;
+  for (let i = 0; i < r.values.length; i++) {
+    const v = r.values[i];
+    if (!Number.isFinite(v)) continue;
+    total += r.areas[i];
+    if (v < limit) area += r.areas[i];
+  }
+  return { area, total };
+}

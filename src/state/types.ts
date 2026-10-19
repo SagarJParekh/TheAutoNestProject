@@ -21,6 +21,10 @@ export interface Part {
   mesh: MeshData;
   transform: Transform;
   source?: string;
+  /** where the file came from, as far as the browser tells: folder path inside a dropped / chosen folder + file name */
+  sourcePath?: string;
+  /** when the part was imported (ms since epoch) */
+  importedAt?: number;
   /** bounding-box centre of the body in the source file (used to keep placement when re-importing) */
   importCenter?: Vec3;
   /** orientation locked: the part can be moved in X / Y / Z but never rotated (Mesh prep and Build generation) */
@@ -227,6 +231,19 @@ export interface ToolSettings {
   texture: Omit<TextureParams, 'heightmap'> & { scope: 'face' | 'part'; smooth: boolean; angleTolerance: number };
   arrange: { autoAlignXY: boolean; axes: ('x' | 'y')[]; gap: number; cols: number; rows: number; mirrorCopy: boolean };
   measure: { mode: MeasureMode; pickAs: MeasurePickAs; ortho: boolean };
+  /** Dimensions tab: what is drawn on the selected parts */
+  dimensions: { showDims: boolean; showName: boolean; showPath: boolean };
+  /** Measure tool: wall thickness analysis */
+  thickness: {
+    show: boolean;
+    /** heat map of all thicknesses, or only the areas thinner than the limit */
+    view: 'heat' | 'thin';
+    /** areas thinner than this are flagged, mm */
+    limit: number;
+    /** colour scale range, mm (0 = automatic from the part) */
+    scaleMin: number;
+    scaleMax: number;
+  };
   importQuality: 'draft' | 'normal' | 'fine' | 'ultra';
   align2: { location: 'center' | 'left' | 'right' | 'front' | 'back'; axis: 'x' | 'y' | 'both'; beside: boolean; distance: number };
   perforateExtra: { keepPlugs: boolean };

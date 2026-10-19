@@ -1,7 +1,7 @@
 import {
   AmbientLight, Box3, Box3Helper, BufferAttribute, BufferGeometry, Color, CylinderGeometry, DecrementWrapStencilOp,
   DirectionalLight, DoubleSide, FrontSide, BackSide, GridHelper, Group, HemisphereLight, IncrementWrapStencilOp,
-  LineBasicMaterial, LineSegments, Matrix3, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, NotEqualStencilFunc,
+  LineBasicMaterial, LineSegments, Matrix3, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, MeshStandardMaterial, NotEqualStencilFunc,
   Object3D, OrthographicCamera, PerspectiveCamera, Plane, PlaneGeometry, Quaternion, Raycaster, ReplaceStencilOp, Scene,
   Sphere, Vector2, Vector3, WebGLRenderer, AlwaysStencilFunc, Material, Line, Line3, Points, PointsMaterial, Sprite, SpriteMaterial,
   CanvasTexture, SRGBColorSpace,
@@ -12,6 +12,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { highlightColors } from '../state/contrast';
+import { thicknessColor } from '../geometry/thickness';
 import { viewportBackground } from '../state/theme';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData, Vec3 } from '../geometry';
@@ -740,6 +741,8 @@ export class Viewer {
       // problems stay highlighted in every repair tab (fix, shells, combine, edit)
       const analysis = a && a.mesh === obj.part.mesh && s.tool === 'repair' ? a : null;
       const ef = s.tool === 'repair' && s.errorFocus?.partId === obj.part.id && s.errorFocus.mesh === obj.part.mesh ? s.errorFocus : null;
+      const thk = s.tool === 'measure' && s.settings.thickness.show && s.thickness[obj.part.id]?.mesh === obj.part.mesh ? s.thickness[obj.part.id] : null;
+      const thkSet = s.settings.thickness;
       const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate') ? s.faceSelection : null;
       const hl = s.settings.highlight;
       const inRepair = s.tool === 'repair';
@@ -760,7 +763,7 @@ export class Viewer {
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
       const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
-      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}`;
+      const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}|${thk ? `${this.refId(thk.result)}:${thkSet.view}:${thkSet.limit}:${thkSet.scaleMin}:${thkSet.scaleMax}` : ''}`;
       // hidden shells: draw only the other triangles (draw groups need a material array)
       const hiddenKey = sv && sv.hidden?.length ? this.refId(sv.hidden) + ':' + this.refId(sv.shellOfTri) : '';
       if ((obj.hiddenKey ?? '') !== hiddenKey) {
@@ -892,6 +895,34 @@ export class Viewer {
             }
             obj.overlay.add(lines(seg, 0xffd23f, true));
           }
+        }
+      }
+      if (thk) {
+        // wall thickness heat map (or only the thin areas), drawn over the part
+        const r = thk.result;
+        const lo = thkSet.scaleMin > 0 ? thkSet.scaleMin : r.min;
+        const hi = thkSet.scaleMax > 0 ? thkSet.scaleMax : r.p95;
+        const nt = r.values.length;
+        const thinOnly = thkSet.view === 'thin';
+        const keep: number[] = [];
+        for (let t = 0; t < nt; t++) if (!thinOnly || r.values[t] < thkSet.limit) keep.push(t);
+        const pos = new Float32Array(keep.length * 9), col = new Float32Array(keep.length * 9);
+        const c: [number, number, number] = [0, 0, 0];
+        keep.forEach((t, i) => {
+          pos.set(r.display.subarray(t * 9, t * 9 + 9), i * 9);
+          if (thinOnly) c.splice(0, 3, 1, 0.1, 0.45);
+          else thicknessColor(r.values[t], lo, hi, c);
+          for (let k = 0; k < 3; k++) col.set(c, i * 9 + k * 3);
+        });
+        if (keep.length) {
+          const g = new BufferGeometry();
+          g.setAttribute('position', new BufferAttribute(pos, 3));
+          g.setAttribute('color', new BufferAttribute(col, 3));
+          g.computeVertexNormals();
+          const m = new Mesh(g, new MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }));
+          m.raycast = () => {};
+          m.renderOrder = 2;
+          obj.overlay.add(m);
         }
       }
       if (ef) {
@@ -1955,7 +1986,8 @@ export class Viewer {
    */
   private syncDimensions(s: AppState) {
     const parts = s.tool === 'dimensions' ? s.parts.filter((p) => p.visible && s.selection.includes(p.id)) : [];
-    const key: unknown[] = [parts.length, ...parts.flatMap((p) => [p.mesh, p.transform])];
+    const opt = s.settings.dimensions;
+    const key: unknown[] = [parts.length, opt.showDims, opt.showName, opt.showPath, ...parts.flatMap((p) => [p.mesh, p.transform, p.name, p.sourcePath])];
     if (key.length === this.dimKey.length && key.every((k, i) => k === this.dimKey[i])) return;
     this.dimKey = key;
     disposeChildren(this.dimGroup);
@@ -1967,6 +1999,12 @@ export class Viewer {
       const off = mx * 0.08;
       const tick = mx * 0.025;
       const { min: lo, max: hi } = b;
+      // part name and file path above the part
+      const labels = [opt.showName ? p.name : '', opt.showPath ? p.sourcePath ?? p.source ?? '' : ''].filter(Boolean);
+      labels.forEach((t, i) =>
+        this.dimGroup.add(textSprite(t, [(lo.x + hi.x) / 2, (lo.y + hi.y) / 2, hi.z + off * 0.6], i === 0 && opt.showName ? 0.034 : 0.026, [0.5, -0.25 - (labels.length - 1 - i) * 1.25])),
+      );
+      if (!opt.showDims) continue;
       const box: number[] = [];
       const corners = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [i & 1 ? hi.x : lo.x, i & 2 ? hi.y : lo.y, i & 4 ? hi.z : lo.z]);
       for (const [i, j] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) box.push(...corners[i], ...corners[j]);

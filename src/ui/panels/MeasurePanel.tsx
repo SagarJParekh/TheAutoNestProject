@@ -1,7 +1,8 @@
 import { Fragment } from 'react';
-import { Check, Hint, Row, Section, Segmented } from '../controls';
+import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
-import { clearMeasurements, deleteMeasurement, resetPending } from '../../state/measureActions';
+import { analyzeThickness, clearMeasurements, clearThickness, deleteMeasurement, resetPending, thinArea } from '../../state/measureActions';
+import { thicknessColor } from '../../geometry/thickness';
 import type { MeasureMode, MeasurePickAs } from '../../state/types';
 
 const PICKS: Record<MeasureMode, { value: MeasurePickAs; label: string; title: string }[]> = {
@@ -125,6 +126,96 @@ export function MeasurePanel() {
           ))}
         </ul>
       </Section>
+      <ThicknessSection />
     </>
+  );
+}
+
+const fmm = (v: number) => `${v.toLocaleString(undefined, { maximumFractionDigits: v < 10 ? 2 : 1 })} mm`;
+
+/** Wall thickness of the selected part: heat map, or only the areas thinner than a limit. */
+function ThicknessSection() {
+  const st = useStore((s) => s.settings.thickness);
+  const selection = useStore((s) => s.selection);
+  const part = useStore((s) => (s.selection.length === 1 ? s.parts.find((p) => p.id === s.selection[0]) : undefined));
+  const entry = useStore((s) => (part ? s.thickness[part.id] : undefined));
+  const r = entry && part && entry.mesh === part.mesh ? entry.result : null;
+  const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, thickness: { ...getState().settings.thickness, ...patch } } });
+  const lo = st.scaleMin > 0 ? st.scaleMin : (r?.min ?? 0);
+  const hi = st.scaleMax > 0 ? st.scaleMax : (r?.p95 ?? 0);
+  const thin = r ? thinArea(r, st.limit) : null;
+  const grad = Array.from({ length: 11 }, (_, i) => {
+    const c = thicknessColor(lo + ((hi - lo) * i) / 10, lo, hi);
+    return `rgb(${c.map((v) => Math.round(v * 255)).join(',')}) ${i * 10}%`;
+  }).join(', ');
+  return (
+    <Section
+      title="Thickness analysis"
+      actions={
+        r && part ? (
+          <button className="mini" onClick={() => clearThickness(part.id)}>
+            Clear
+          </button>
+        ) : undefined
+      }
+    >
+      {!part ? (
+        <Hint>{selection.length > 1 ? 'Select one part to analyse its wall thickness.' : 'Select a part, then analyse its wall thickness.'}</Hint>
+      ) : (
+        <button className="btn primary wide" onClick={() => analyzeThickness(part.id)}>
+          {r ? 'Analyse again' : `Analyse wall thickness of ${part.name}`}
+        </button>
+      )}
+      {r && (
+        <>
+          <Check checked={st.show} onChange={(show) => set({ show })}>
+            Show on the part
+          </Check>
+          <Row label="Show">
+            <Segmented
+              value={st.view}
+              onChange={(view) => set({ view })}
+              options={[
+                { value: 'heat', label: 'Heat map' },
+                { value: 'thin', label: 'Thinner than limit' },
+              ]}
+            />
+          </Row>
+          {st.view === 'heat' && (
+            <>
+              <div className="thk-legend" style={{ background: `linear-gradient(to right, ${grad})` }} />
+              <div className="thk-scale">
+                <span>{fmm(lo)} thin</span>
+                <span>{fmm((lo + hi) / 2)}</span>
+                <span>thick {fmm(hi)}{st.scaleMax > 0 || !r || hi >= r.max ? '' : '+'}</span>
+              </div>
+              <Row label="Colour range">
+                <NumberField value={st.scaleMin} min={0} step={0.5} suffix="mm" title="Thinnest colour (0 = the part's minimum)" onChange={(scaleMin) => set({ scaleMin })} />
+                <NumberField value={st.scaleMax} min={0} step={0.5} suffix="mm" title="Thickest colour (0 = automatic: 95% of the surface is thinner)" onChange={(scaleMax) => set({ scaleMax })} />
+              </Row>
+            </>
+          )}
+          <Row label="Limit">
+            <NumberField value={st.limit} min={0.01} step={0.1} suffix="mm" title="Areas thinner than this are flagged" onChange={(limit) => set({ limit })} />
+          </Row>
+          <dl className="info">
+            <dt>Thinnest</dt>
+            <dd>{fmm(r.min)}</dd>
+            <dt>Thickest</dt>
+            <dd>{fmm(r.max)}</dd>
+            <dt>Average</dt>
+            <dd>{fmm(r.mean)}</dd>
+            <dt>Thinner than {fmm(st.limit)}</dt>
+            <dd className={thin && thin.area > 0 ? 'warn' : 'okc'}>
+              {thin && thin.total > 0 ? `${(thin.area / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })} cm² (${((thin.area / thin.total) * 100).toFixed(1)}%)` : '—'}
+            </dd>
+          </dl>
+          <Hint>
+            Thickness at each point = distance straight into the part to the opposite wall. Use "Thinner than limit" to show only the planes and surfaces
+            below the limit (pink). Grey = no opposite wall found (open or flipped areas).
+          </Hint>
+        </>
+      )}
+    </Section>
   );
 }

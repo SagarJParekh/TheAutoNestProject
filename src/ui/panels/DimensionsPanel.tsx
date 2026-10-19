@@ -1,10 +1,30 @@
-import { Hint, Section } from '../controls';
-import { useStore } from '../../state/store';
+import { Check, Hint, Section } from '../controls';
+import { getState, setState, useStore } from '../../state/store';
 import { meshEntry } from '../../state/meshCache';
 import { partShellsLabel, usePartStats } from './dimensionsData';
 import type { Part } from '../../state/types';
 
 const f = (v: number, d = 2) => (Math.abs(v) < 0.5 * 10 ** -d ? 0 : v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+
+function DimToggles() {
+  const d = useStore((s) => s.settings.dimensions);
+  const set = (patch: Partial<typeof d>) => setState({ settings: { ...getState().settings, dimensions: { ...getState().settings.dimensions, ...patch } } });
+  return (
+    <Section title="Show on the part">
+      <div className="btn-row">
+        <Check checked={d.showDims} onChange={(showDims) => set({ showDims })}>
+          Dimensions
+        </Check>
+        <Check checked={d.showName} onChange={(showName) => set({ showName })}>
+          Part name
+        </Check>
+        <Check checked={d.showPath} onChange={(showPath) => set({ showPath })}>
+          Part path
+        </Check>
+      </div>
+    </Section>
+  );
+}
 
 export function DimensionsPanel({ parts }: { parts: Part[] }) {
   useStore((s) => s.meshInfoVersion);
@@ -16,6 +36,7 @@ export function DimensionsPanel({ parts }: { parts: Part[] }) {
     );
   return (
     <>
+      <DimToggles />
       {parts.length > 1 && <Combined parts={parts} />}
       {parts.map((p) => (
         <PartDims key={p.id} part={p} />
@@ -63,6 +84,16 @@ function PartDims({ part }: { part: Part }) {
         <em>mm</em>
       </div>
       <dl className="info">
+        <dt>Part name</dt>
+        <dd>{part.name}</dd>
+        <dt title="Browsers only reveal the file name, plus the folder path when a folder was dropped or chosen">File / path</dt>
+        <dd className="path">{part.sourcePath ?? part.source ?? '—'}</dd>
+        {part.importedAt && (
+          <>
+            <dt>Imported</dt>
+            <dd>{new Date(part.importedAt).toLocaleString()}</dd>
+          </>
+        )}
         <dt>Min</dt>
         <dd>{m.bounds.min.map((v) => f(v)).join(', ')}</dd>
         <dt>Max</dt>

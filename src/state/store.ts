@@ -4,7 +4,7 @@ import type {
   Preview, RepairTab, ToolId, ToolSettings, Transform, PointPick, PointSlot, Measurement, MeasurePending, Heightmap, ShellView, TriEdit,
   BlendEdgePick, BuildGenState,
 } from './types';
-import type { ErrorGroup, MeshData } from '../geometry';
+import type { ErrorGroup, MeshData, ThicknessResult } from '../geometry';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
@@ -56,6 +56,8 @@ export interface AppState {
   polyMode: boolean;
   shellView: ShellView | null;
   triEdit: TriEdit | null;
+  /** wall thickness analysis per part (Measure tool) */
+  thickness: Record<string, { mesh: MeshData; result: ThicknessResult }>;
   /** problem cluster the repair tool is zoomed to */
   errorFocus: { partId: string; mesh: MeshData; index: number; group: ErrorGroup } | null;
   showSearch: boolean;
@@ -127,6 +129,7 @@ export const useStore = create<AppState>(() => ({
   shellView: null,
   triEdit: null,
   errorFocus: null,
+  thickness: {},
   showSearch: false,
   preview: null,
   analysis: {},
@@ -150,6 +153,8 @@ export const useStore = create<AppState>(() => ({
     },
     arrange: { autoAlignXY: true, axes: ['x', 'y'], gap: 5, cols: 2, rows: 2, mirrorCopy: false },
     measure: { mode: 'distance', pickAs: 'point', ortho: true },
+    dimensions: { showDims: true, showName: true, showPath: true },
+    thickness: { show: true, view: 'heat', limit: 1, scaleMin: 0, scaleMax: 0 },
     importQuality: (() => {
       try {
         const q = localStorage.getItem('autonest.importQuality');

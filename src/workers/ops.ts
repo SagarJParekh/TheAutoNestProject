@@ -282,6 +282,12 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async thickness(args: { mesh: MeshData }, progress: Progress): Promise<Result<G.ThicknessResult>> {
+    progress(0.05, 'Measuring wall thickness');
+    const r = G.triangleThickness(args.mesh, (f) => progress(0.05 + f * 0.9, 'Measuring wall thickness'));
+    return { result: r, transfer: [r.values.buffer as ArrayBuffer, r.areas.buffer as ArrayBuffer, r.display.buffer as ArrayBuffer] };
+  },
+
   async fitFeature(args: { mesh: MeshData; seed: number; kind: 'cylinder' | 'sphere'; angle?: number }): Promise<Result<{ c: Vec3; axis?: Vec3; r: number; rms: number }>> {
     const region = G.growSmoothRegion(args.mesh, args.seed, args.angle ?? 20);
     if (args.kind === 'sphere') return { result: G.fitSphereRegion(args.mesh, region) };

@@ -129,9 +129,12 @@ export async function importFiles(files: File[]) {
       notify('success', `Added ${file.name} to Build Generation (${r.bodies.length} part${r.bodies.length > 1 ? 's' : ''})`);
       return;
     }
+    const rel = (file as File & { relPath?: string }).relPath || file.webkitRelativePath || '';
     const parts = r.bodies.map((b) => ({
       ...makePart(r.bodies.length > 1 ? b.name : b.name || file.name, b.mesh, b.center, file.name),
       importCenter: b.center,
+      sourcePath: rel ? rel.replace(/^\/+/, '') : file.name,
+      importedAt: Date.now(),
     }));
     const s = getState();
     commit(`Import ${file.name}`, [...s.parts, ...parts], { selection: parts.map((p) => p.id) });
@@ -338,7 +341,8 @@ export function replaceWithWorldMeshes(label: string, partId: string, results: {
   if (!old) return;
   const created = results.map((r, i) => {
     const np = partFromWorld(r.name, r.mesh, r.color ?? (i === 0 ? old.color : undefined), old.source);
-    return np;
+    // results of an edit keep the original file's path
+    return { ...np, sourcePath: old.sourcePath, importedAt: old.importedAt };
   });
   const idx = s.parts.findIndex((p) => p.id === partId);
   const parts = [...s.parts.slice(0, idx), ...created, ...s.parts.slice(idx + 1)];
