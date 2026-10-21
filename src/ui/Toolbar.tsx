@@ -3,7 +3,7 @@ import { Icon } from './icons';
 import { ThemeMenu } from './ThemeMenu';
 import { BuildTabs } from './build/BuildPanels';
 import { setWorkspace } from '../state/buildActions';
-import { getState, redo, setState, undo, useStore } from '../state/store';
+import { getState, redo, setState, undo, undoLabel, useStore } from '../state/store';
 import { importFiles, setImportQuality, setTool } from '../state/actions';
 import { viewerApi } from '../viewer/api';
 import { importableExtensions } from '../loaders/registry';
@@ -36,10 +36,10 @@ export function Toolbar() {
   const grid = useStore((s) => s.showGrid);
   const zooming = useStore((s) => s.zoomWindow);
   const importQuality = useStore((s) => s.settings.importQuality);
-  const canUndo = useStore((s) => s.past.length > 0);
-  const canRedo = useStore((s) => s.future.length > 0);
-  const undoLabel = useStore((s) => s.past[s.past.length - 1]?.label);
-  const redoLabel = useStore((s) => s.future[0]?.label);
+  const undoText = useStore((s) => undoLabel(s));
+  const redoText = useStore((s) => undoLabel(s, true));
+  const canUndo = undoText !== null;
+  const canRedo = redoText !== null;
   const accept = [...importableExtensions(), 'f3d', 'bin'].map((e) => '.' + e).join(',');
 
   return (
@@ -92,16 +92,16 @@ export function Toolbar() {
           }}
         />
       </div>
-      {workspace === 'prep' && (
-      <>
       <div className="tb-group">
-        <button className="tb icon" disabled={!canUndo} title={`Undo ${undoLabel ?? ''} (Ctrl+Z)`} onClick={undo}>
+        <button className="tb icon" disabled={!canUndo} title={`Undo ${undoText ?? ''} (Ctrl+Z)`} onClick={undo}>
           {Icon.undo}
         </button>
-        <button className="tb icon" disabled={!canRedo} title={`Redo ${redoLabel ?? ''} (Ctrl+Shift+Z)`} onClick={redo}>
+        <button className="tb icon" disabled={!canRedo} title={`Redo ${redoText ?? ''} (Ctrl+Shift+Z)`} onClick={redo}>
           {Icon.redo}
         </button>
       </div>
+      {workspace === 'prep' && (
+      <>
       <div className="tb-group">
         <button
           className={`tb icon ${tool === 'transform' && gizmo === 'translate' ? 'active' : ''}`}

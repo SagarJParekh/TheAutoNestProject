@@ -6,14 +6,15 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, chooseNestVoxel, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, type NestPart, type NestParams, type NestResult, type MeshData, type PackItem, type Vec3 } from '../geometry';
-import { commit, getState, notify, setState, startJob } from './store';
+import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, type NestPart, type NestParams, type NestResult, type NestVariant, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { commit, commitBuild, getState, notify, setBuildRestoreHook, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
-import { makePart, newId, runJob } from './actions';
+import { makePart, newId, runJob, setTool } from './actions';
+import { meshEntry } from './meshCache';
 import { pool, CancelledError } from '../workers/client';
 import { nextColor } from './palette';
 import { printerById, type Printer } from './printers';
-import type { Build, BuildGenState, BuildPart, BuildPlacement, Part, Tilt } from './types';
+import type { Build, BuildGenState, BuildPart, BuildPlacement, CopyLock, Part, Tilt } from './types';
 import { eulerDegFromQuaternion } from './math';
 
 type Quat = [number, number, number, number];
@@ -33,9 +34,10 @@ export function currentPrinter(s: BuildGenState = bg()): Printer {
 
 // ---------------------------------------------------------------- parts
 
-export function addBuildParts(items: { name: string; mesh: MeshData; color?: string; quantity?: number; lockRotation?: boolean }[]) {
-  if (!items.length) return;
-  const parts: BuildPart[] = items.map((it) => ({
+type NewBuildPart = { name: string; mesh: MeshData; color?: string; quantity?: number; lockRotation?: boolean; watertight?: boolean; fromPrep?: string };
+
+function newBuildPart(it: NewBuildPart): BuildPart {
+  return {
     id: newId(),
     name: it.name,
     color: it.color ?? nextColor(),
@@ -43,40 +45,114 @@ export function addBuildParts(items: { name: string; mesh: MeshData; color?: str
     quantity: Math.max(1, Math.round(it.quantity ?? 1)),
     tilt: null,
     lockRotation: !!it.lockRotation,
-  }));
-  setBg({ parts: [...bg().parts, ...parts] });
+    watertight: it.watertight,
+    fromPrep: it.fromPrep,
+  };
+}
+
+export function addBuildParts(items: NewBuildPart[]) {
+  if (!items.length) return;
+  const parts = items.map(newBuildPart);
+  commitBuild(parts.length > 1 ? `Add ${parts.length} parts` : `Add ${parts[0].name}`, { parts: [...bg().parts, ...parts] });
+  checkWatertight(parts);
   scheduleRegenerate();
 }
 
-/** Copy parts from the Prep workspace (selected ones, or all) as they are placed there. */
+/** Check in the background whether build parts are watertight (parts whose answer is not known yet). */
+function checkWatertight(parts: BuildPart[]) {
+  for (const p of parts) {
+    if (p.watertight !== undefined) continue;
+    void runJob(`Checking ${p.name}`, 'watertight', { mesh: p.mesh }, { silent: true, quietErrors: true }).then((w) => {
+      if (w === null) return;
+      // not an undo step: it only describes the mesh
+      setBg({ parts: bg().parts.map((q) => (q.id === p.id && q.mesh === p.mesh ? { ...q, watertight: w } : q)) });
+    });
+  }
+}
+
+/**
+ * Copy parts from the Prep workspace (selected ones, or all) as they are
+ * placed there. A part that was sent before (or came from Build for a
+ * repair) replaces its build part's mesh; quantity and settings are kept.
+ */
 export function addPartsFromPrep() {
   const s = getState();
   const sel = s.parts.filter((p) => s.selection.includes(p.id));
   const src = (sel.length ? sel : s.parts).filter((p) => p.visible);
   if (!src.length) return notify('warning', 'There are no parts in the Prep workspace yet');
-  addBuildParts(src.map((p) => ({ name: p.name, mesh: worldMesh(p), color: p.color, lockRotation: p.lockRotation })));
-  notify('success', `Added ${src.length} part${src.length > 1 ? 's' : ''} from Prep`);
+  const items = src.map((p) => ({ name: p.name, mesh: worldMesh(p), color: p.color, lockRotation: p.lockRotation, watertight: meshEntry(p.mesh).watertight, fromPrep: p.id }));
+  const linked = new Map(bg().parts.filter((b) => b.fromPrep).map((b) => [b.fromPrep!, b]));
+  const updated: BuildPart[] = [];
+  const added: BuildPart[] = [];
+  const parts = bg().parts.slice();
+  for (const it of items) {
+    const old = linked.get(it.fromPrep);
+    if (old) {
+      const fresh = { ...newBuildPart(it), id: old.id, color: old.color, quantity: old.quantity, tilt: old.tilt, group: old.group, lockRotation: old.lockRotation };
+      parts[parts.indexOf(old)] = fresh;
+      updated.push(fresh);
+    } else {
+      const p = newBuildPart(it);
+      parts.push(p);
+      added.push(p);
+    }
+  }
+  commitBuild(updated.length ? `Update ${updated.length + added.length} parts from Prep` : `Add ${added.length} parts`, { parts });
+  checkWatertight([...updated, ...added]);
+  scheduleRegenerate();
+  const msg = [added.length && `added ${added.length}`, updated.length && `updated ${updated.length} (quantities kept)`].filter(Boolean).join(', ');
+  notify('success', `Parts from Prep: ${msg}`);
+}
+
+/**
+ * Open build parts in Mesh prep for repairing: their Prep originals are
+ * selected (or copies are made there), with the Repair tool open. Sending
+ * them back to Build replaces the build parts' meshes.
+ */
+export function repairBuildPartsInPrep(ids: string[]) {
+  const s = getState();
+  const targets = bg().parts.filter((p) => ids.includes(p.id));
+  if (!targets.length) return;
+  const prepIds = new Set(s.parts.map((p) => p.id));
+  const created: Part[] = [];
+  const links = new Map<string, string>();
+  for (const b of targets) {
+    if (b.fromPrep && prepIds.has(b.fromPrep)) continue;
+    const box = computeBounds(b.mesh.positions);
+    const part = makePart(b.name, b.mesh, [0, 0, -box.min[2]], undefined, b.color);
+    created.push(part);
+    links.set(b.id, part.id);
+  }
+  if (created.length) {
+    commit(`Bring ${created.length} part${created.length > 1 ? 's' : ''} from Build`, [...s.parts, ...created]);
+    setBg({ parts: bg().parts.map((p) => (links.has(p.id) ? { ...p, fromPrep: links.get(p.id) } : p)) });
+  }
+  const sel = targets.map((b) => links.get(b.id) ?? b.fromPrep!);
+  setWorkspace('prep');
+  setTool('repair');
+  setState({ selection: sel });
+  notify('info', `Repair ${sel.length > 1 ? 'these parts' : 'this part'}, then press Send to Build: the build parts are updated, their quantities kept`);
 }
 
 export function removeBuildPart(id: string) {
-  setBg({ parts: bg().parts.filter((p) => p.id !== id) });
+  commitBuild(`Remove ${bg().parts.find((p) => p.id === id)?.name ?? 'part'}`, { parts: bg().parts.filter((p) => p.id !== id) });
   setState((s) => ({ selection: s.selection.filter((k) => !k.startsWith(id + '#')) }));
   scheduleRegenerate();
 }
 
 export function clearBuildParts() {
-  setBg({ parts: [], builds: [], unplaced: [], active: 0 });
+  commitBuild('Clear parts', { parts: [], builds: [], unplaced: [], active: 0 });
   setState({ selection: [] });
 }
 
 export function setPartQuantity(id: string, quantity: number) {
-  setBg({ parts: bg().parts.map((p) => (p.id === id ? { ...p, quantity: Math.max(1, Math.min(999, Math.round(quantity || 1))) } : p)) });
+  commitBuild('Quantity', { parts: bg().parts.map((p) => (p.id === id ? { ...p, quantity: Math.max(1, Math.min(999, Math.round(quantity || 1))) } : p)) });
   scheduleRegenerate();
 }
 
 /** Tilt one part (null = follow the global tilt). */
 export function setPartTilt(id: string, tilt: Tilt | null) {
-  setBg({ parts: bg().parts.map((p) => (p.id === id ? { ...p, tilt } : p)) });
+  commitBuild('Tilt', { parts: bg().parts.map((p) => (p.id === id ? { ...p, tilt } : p)) });
   scheduleRegenerate();
 }
 
@@ -86,7 +162,7 @@ export function updateBuildSettings(patch: Partial<BuildGenState>) {
     // powder bed: lay parts on their largest flat face, then tilt them 30°
     patch = { ...patch, tilt: { angle: 30, azimuth: 0 } };
   }
-  setBg(patch);
+  commitBuild('Build settings', patch);
   // switching automatic nesting off changes nothing to arrange
   if (Object.keys(patch).length === 1 && patch.autoNest === false) return;
   scheduleRegenerate();
@@ -104,6 +180,12 @@ export const partOfKey = (key: string) => key.split('#')[0];
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let generation = 0;
+// undo / redo in Build generation: a nesting still running would overwrite the restored state
+setBuildRestoreHook(() => {
+  generation++;
+  if (timer) clearTimeout(timer);
+  timer = null;
+});
 
 export function scheduleRegenerate(delay = 150) {
   if (timer) clearTimeout(timer);
@@ -201,19 +283,52 @@ export async function regenerateBuilds(force = false) {
   }
 }
 
-/** Run nesting jobs in parallel workers under one progress card (Cancel stops all); returns the densest result. */
-async function runNestJobs(jobs: { parts: NestPart[]; params: NestParams }[]): Promise<NestResult | null> {
-  const progress = jobs.map(() => 0);
-  let handles: ReturnType<typeof pool.run<'nest3d'>>[] = [];
-  const job = startJob('Nesting in 3D', () => handles.forEach((h) => h.cancel()));
-  handles = jobs.map((args, i) =>
-    pool.run('nest3d', args, (f, m) => {
-      progress[i] = f;
-      job.progress(progress.reduce((a, b) => a + b, 0) / jobs.length, jobs.length > 1 ? `${m ?? ''} · trying ${jobs.length} ways in parallel` : m);
-    }),
-  );
+/**
+ * Nest with a plan (one job per worker), under one progress card (Cancel
+ * stops everything): every part is voxelized once per voxel size, in parallel
+ * workers, and the voxels are shared by all nesting jobs; returns the densest
+ * result.
+ */
+async function runNesting(parts: NestPart[], plan: { budget: number; variants: NestVariant[] }[], params: Omit<NestParams, 'budget' | 'variants'>): Promise<NestResult | null> {
+  const hOf = (budget: number) => chooseNestVoxel({ ...params, budget });
+  const hs = [...new Set(plan.map((jb) => hOf(jb.budget)))];
+  let handles: { cancel: () => void }[] = [];
+  let cancelled = false;
+  const job = startJob('Nesting in 3D', () => {
+    cancelled = true;
+    handles.forEach((h) => h.cancel());
+  });
   try {
-    return pickNest(...(await Promise.all(handles.map((h) => h.promise))));
+    // 1. voxels: one job per part and voxel size
+    const vjobs = parts.flatMap((part, pi) => hs.map((h) => ({ part, pi, h })));
+    let vdone = 0;
+    const vh = vjobs.map(({ part, h }) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
+    handles = vh;
+    job.progress(0.02, `Voxelizing ${parts.length} part${parts.length > 1 ? 's' : ''}`);
+    const voxels = await Promise.all(
+      vh.map((x) =>
+        x.promise.then((v) => {
+          vdone++;
+          job.progress(0.3 * (vdone / vjobs.length), `Voxelizing ${vdone} / ${vjobs.length}`);
+          return v;
+        }),
+      ),
+    );
+    if (cancelled) return null;
+    const vox = new Map(vjobs.map((x, i) => [`${x.pi}@${x.h}`, voxels[i]]));
+    // 2. nesting jobs side by side
+    const empty = { positions: new Float32Array(0), indices: new Uint32Array(0) };
+    const progress = plan.map(() => 0);
+    const nh = plan.map((jb, i) => {
+      const h = hOf(jb.budget);
+      const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: vox.get(`${pi}@${h}`) }));
+      return pool.run('nest3d', { parts: jobParts, params: { ...params, budget: jb.budget, voxel: h, variants: jb.variants } }, (f, m) => {
+        progress[i] = f;
+        job.progress(0.3 + (0.7 * progress.reduce((a, b) => a + b, 0)) / plan.length, plan.length > 1 ? `${m ?? ''} · trying ${plan.length} ways in parallel` : m);
+      });
+    });
+    handles = nh;
+    return pickNest(...(await Promise.all(nh.map((h) => h.promise))));
   } catch (e) {
     handles.forEach((h) => h.cancel());
     if (e instanceof CancelledError) notify('info', 'Nesting cancelled');
@@ -300,11 +415,26 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
   if (powder && s.nest3d) {
     // 3. powder bed: nest by the parts' shape anywhere in the volume (X, Y and Z)
     job.progress(0.82, 'Nesting in 3D');
-    const nestParts = parts.map((p) => {
+    // copies locked by the user go in as their own parts, in their locked place / rotation
+    const locks = s.locks ?? {};
+    const lockQ = (L: CopyLock) => (L.r.some(Boolean) ? new Quaternion(...L.quaternion) : null);
+    const nestParts: NestPart[] = [];
+    for (const p of parts) {
       const inf = info.get(p.id)!;
-      const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
-      return { id: p.id, mesh: applyMatrix(p.mesh, m), count: p.quantity, fixed: !!lead(p).lockRotation || !s.allowRotate };
-    });
+      const copies = Array.from({ length: p.quantity }, (_, c) => c);
+      const free = copies.filter((c) => !locks[`${p.id}#${c}`]);
+      if (free.length) {
+        const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
+        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: free.length, copies: free, fixed: !!lead(p).lockRotation || !s.allowRotate });
+      }
+      for (const c of copies) {
+        const L = locks[`${p.id}#${c}`];
+        if (!L) continue;
+        const m = new Matrix4().makeRotationFromQuaternion(lockQ(L) ?? inf.q).elements;
+        const at = L.t.map((on, i) => (on ? L.position[i] : null)) as [number | null, number | null, number | null];
+        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: 1, copies: [c], fixed: true, lock: { build: L.build, at } });
+      }
+    }
     const params = {
       volume,
       margin: s.margin,
@@ -319,7 +449,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     const base = chooseNestVoxel({ ...params, budget: plan[0].budget });
     // a bigger budget that does not make the (clearance-aligned) grid finer would only repeat the work
     plan = plan.filter((jb, i) => i === 0 || jb.budget === plan[0].budget || chooseNestVoxel({ ...params, budget: jb.budget }) < base - 1e-9);
-    const r = await runNestJobs(plan.map((jb) => ({ parts: nestParts, params: { ...params, budget: jb.budget, variants: jb.variants } })));
+    const r = await runNesting(nestParts, plan, params);
     if (!r || run !== generation) return setBg({ busy: false });
     const builds: Build[] = r.builds.map((b, i) => ({
       name: `Build ${i + 1}`,
@@ -327,12 +457,23 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
       utilization: b.utilization,
       placements: b.placements.map((pl): BuildPlacement => {
         const inf = info.get(pl.partId)!;
-        const q = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (pl.turns * Math.PI) / 2).multiply(inf.q);
+        const L = pl.locked ? locks[pl.key] : undefined;
+        const q = (L && lockQ(L)) || new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (pl.turns * Math.PI) / 2).multiply(inf.q);
         return { key: pl.key, partId: pl.partId, copy: pl.copy, position: pl.t, quaternion: [q.x, q.y, q.z, q.w] };
       }),
     }));
     const unplaced = r.unplaced.map((u) => ({ partId: partOfKey(u.key), copy: Number(u.key.split('#')[1]), reason: u.reason }));
-    setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null, nestVoxel: r.voxel });
+    // locked copies: remember where they ended up (free axes may have moved)
+    const newLocks: Record<string, CopyLock> = {};
+    builds.forEach((b, bi) =>
+      b.placements.forEach((pl) => {
+        const L = locks[pl.key];
+        if (L) newLocks[pl.key] = { ...L, build: bi, position: pl.position, quaternion: pl.quaternion };
+      }),
+    );
+    for (const [k, L] of Object.entries(locks)) if (!newLocks[k] && bg().parts.some((p) => p.id === partOfKey(k) && Number(k.split('#')[1]) < p.quantity)) newLocks[k] = L;
+    commitBuild('Nesting', {
+      locks: newLocks, builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null, nestVoxel: r.voxel });
     return;
   }
   job.progress(0.85, 'Packing builds');
@@ -363,7 +504,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     }),
   }));
   const unplaced = result.unplaced.map((u) => ({ partId: partOfKey(u.key), copy: Number(u.key.split('#')[1]), reason: u.reason }));
-  setBg({ builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null });
+  commitBuild('Arrange builds', { builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), busy: false, manual: false, stale: false, checks: null });
 }
 
 // ---------------------------------------------------------------- display / export
@@ -460,9 +601,14 @@ export function selectedBuildPartIds(selection = getState().selection): string[]
 }
 
 /** Click on a part (viewport or list): replace the selection, or with Ctrl / Shift toggle it. */
+/** Do clicks select single copies (editing by hand, or chosen), not every copy of a part? */
+export function pickingCopies(s = getState()): boolean {
+  return (s.buildEdit ?? 'select') !== 'select' || s.buildPickCopies;
+}
+
 export function selectBuildPart(partId: string | null, toggle = false) {
   if (!partId) return toggle ? undefined : setState({ selection: [] });
-  if ((getState().buildEdit ?? 'select') !== 'select') {
+  if (pickingCopies()) {
     // editing by hand: select the very copy that was clicked
     const cur = getState().selection;
     return setState({ selection: !toggle ? [partId] : cur.includes(partId) ? cur.filter((k) => k !== partId) : [...cur, partId] });
@@ -475,7 +621,36 @@ export function selectBuildPart(partId: string | null, toggle = false) {
 }
 
 export function selectAllBuildParts() {
-  setState({ selection: bg().parts.map((p) => `${p.id}#0`) });
+  if (pickingCopies()) setState({ selection: (bg().builds[bg().active]?.placements ?? []).map((p) => p.key) });
+  else setState({ selection: bg().parts.map((p) => `${p.id}#0`) });
+}
+
+// ---------------------------------------------------------------- hiding
+
+/** Is a placement (key) hidden, by itself or with its whole part? */
+export function isHiddenKey(s: BuildGenState, key: string): boolean {
+  const h = s.hidden;
+  return !!h?.length && (h.includes(key) || h.includes(partOfKey(key)));
+}
+
+/** Hide the selected parts (whole parts, or single copies when picking copies). */
+export function hideBuildSelection() {
+  const sel = getState().selection;
+  if (!sel.length) return notify('info', 'Select the parts to hide first');
+  const add = pickingCopies() ? sel : selectedBuildPartIds(sel);
+  setBg({ hidden: [...new Set([...(bg().hidden ?? []), ...add])] });
+  setState({ selection: [] });
+}
+
+/** Show or hide every copy of a part. */
+export function toggleBuildPartHidden(id: string) {
+  const h = bg().hidden ?? [];
+  const hidden = h.includes(id) || h.some((k) => partOfKey(k) === id);
+  setBg({ hidden: hidden ? h.filter((k) => partOfKey(k) !== id) : [...h, id] });
+}
+
+export function showAllBuildParts() {
+  setBg({ hidden: [] });
 }
 
 /** Give several parts their own tilt (null = follow the tilt for all parts again). */
@@ -485,7 +660,7 @@ export function setTiltFor(ids: string[], tilt: Tilt | null) {
   ids = ids.filter((id) => !lockedIds.has(id));
   if (!ids.length) return;
   const set = new Set(ids);
-  setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p)) });
+  commitBuild('Tilt', { parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p)) });
   scheduleRegenerate();
 }
 
@@ -497,14 +672,14 @@ export function groupBuildParts(ids: string[]) {
   // joining parts that are already grouped merges their groups
   const groups = new Set(bg().parts.filter((p) => set.has(p.id) && p.group).map((p) => p.group!));
   const group = newId();
-  setBg({ parts: bg().parts.map((p) => (set.has(p.id) || (p.group && groups.has(p.group)) ? { ...p, group, tilt: null } : p)) });
+  commitBuild('Group as assembly', { parts: bg().parts.map((p) => (set.has(p.id) || (p.group && groups.has(p.group)) ? { ...p, group, tilt: null } : p)) });
   notify('success', `${ids.length} parts grouped as an assembly: they keep the same orientation`);
   scheduleRegenerate();
 }
 
 export function ungroupBuildParts(ids: string[]) {
   const groups = new Set(bg().parts.filter((p) => ids.includes(p.id) && p.group).map((p) => p.group!));
-  setBg({ parts: bg().parts.map((p) => (p.group && groups.has(p.group) ? { ...p, group: undefined } : p)) });
+  commitBuild('Ungroup', { parts: bg().parts.map((p) => (p.group && groups.has(p.group) ? { ...p, group: undefined } : p)) });
   scheduleRegenerate();
 }
 
@@ -517,7 +692,7 @@ export function groupLabels(parts: BuildPart[]): Map<string, string> {
 
 export function setBuildRotationLock(ids: string[], lock: boolean) {
   const set = new Set(ids);
-  setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, lockRotation: lock, tilt: lock ? null : p.tilt } : p)) });
+  commitBuild(lock ? 'Lock orientation' : 'Unlock orientation', { parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, lockRotation: lock, tilt: lock ? null : p.tilt } : p)) });
   scheduleRegenerate();
 }
 
@@ -586,9 +761,20 @@ export function editPlacements(changes: { key: string; position?: Vec3; quaterni
   const b = s.builds[s.active];
   if (!b || !changes.length) return;
   const by = new Map(changes.map((c) => [c.key, c]));
+  const locks = { ...(s.locks ?? {}) };
   const placements = b.placements.map((pl) => {
     const c = by.get(pl.key);
-    return c ? { ...pl, position: c.position ?? pl.position, quaternion: c.quaternion ?? pl.quaternion } : pl;
+    if (!c) return pl;
+    let position = c.position ?? pl.position;
+    let quaternion = c.quaternion ?? pl.quaternion;
+    const L = locks[pl.key];
+    if (L) {
+      // locked axes stay where they are
+      position = position.map((v, i) => (L.t[i] ? pl.position[i] : v)) as Vec3;
+      if (L.r.every(Boolean)) quaternion = pl.quaternion;
+      locks[pl.key] = { ...L, position, quaternion };
+    }
+    return { ...pl, position, quaternion };
   });
   // new height of the build
   const byId = new Map(s.parts.map((p) => [p.id, p]));
@@ -601,10 +787,40 @@ export function editPlacements(changes: { key: string; position?: Vec3; quaterni
     for (let i = 0; i < pos.length; i += 3) height = Math.max(height, m[2] * pos[i] + m[6] * pos[i + 1] + m[10] * pos[i + 2] + m[14]);
   }
   const builds = s.builds.map((x, i) => (i === s.active ? { ...x, placements, height } : x));
-  setBg({ builds, manual: true, checks: null });
+  commitBuild('Edit by hand', { builds, locks, manual: true, checks: null });
 }
 
-/** Throw away hand edits and arrange everything again with the current settings. */
+/**
+ * Lock (or unlock) translation / rotation axes of copies in the active build:
+ * `keys` are placement keys; axes set to true lock, false unlock, undefined
+ * keep. A copy with no locked axis left is unlocked.
+ */
+export function setCopyLocks(keys: string[], t: (boolean | undefined)[], r: (boolean | undefined)[]) {
+  const s = bg();
+  const b = s.builds[s.active];
+  if (!b || !keys.length) return;
+  const locks = { ...(s.locks ?? {}) };
+  for (const pl of b.placements) {
+    if (!keys.includes(pl.key)) continue;
+    const old = locks[pl.key];
+    const lt = [0, 1, 2].map((i) => t[i] ?? old?.t[i] ?? false) as [boolean, boolean, boolean];
+    const lr = [0, 1, 2].map((i) => r[i] ?? old?.r[i] ?? false) as [boolean, boolean, boolean];
+    if (!lt.some(Boolean) && !lr.some(Boolean)) delete locks[pl.key];
+    else locks[pl.key] = { t: lt, r: lr, build: s.active, position: pl.position, quaternion: pl.quaternion };
+  }
+  const any = [...t, ...r].some(Boolean);
+  commitBuild(any ? `Lock ${keys.length} cop${keys.length > 1 ? 'ies' : 'y'}` : `Unlock ${keys.length} cop${keys.length > 1 ? 'ies' : 'y'}`, { locks });
+}
+
+/** Placement keys the lock controls act on: the selected copies, or every copy of the selected parts in the active build. */
+export function lockTargets(st = getState()): string[] {
+  const b = st.buildGen.builds[st.buildGen.active];
+  if (!b) return [];
+  if (pickingCopies(st)) return st.selection.filter((k) => b.placements.some((p) => p.key === k));
+  const ids = new Set(selectedBuildPartIds(st.selection));
+  return b.placements.filter((p) => ids.has(p.partId)).map((p) => p.key);
+}
+
 /** Start nesting: arrange all parts now (replaces hand edits). */
 export function rearrangeBuilds() {
   setBg({ manual: false, stale: false });

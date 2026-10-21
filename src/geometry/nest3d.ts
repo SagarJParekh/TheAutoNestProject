@@ -38,6 +38,35 @@ export interface NestPart {
   count: number;
   /** orientation locked: no 90° turns */
   fixed?: boolean;
+  /** voxels made beforehand (see nestVoxels); used when made with the voxel size this nest uses, else the mesh is voxelized */
+  voxels?: NestVoxels;
+  /** copy numbers used in the keys (`id#copy`), default 0 … count − 1 */
+  copies?: number[];
+  /**
+   * Copy locked in place by the user (count 1, never turned): world
+   * translation `at` on the locked axes (null = free), in build `build`. A
+   * copy locked on all three axes stays exactly there; one locked on some
+   * axes is placed along the others. Locked copies go in before all others.
+   */
+  lock?: { build: number; at: [number | null, number | null, number | null] };
+}
+
+/** A part's voxels for nesting, made once and shared by several nesting runs. */
+export type NestVoxels = PartVoxels & { h: number; align?: (number | null)[] };
+
+/** Voxelize a part for nest3d ahead of time (e.g. once, in its own worker, for several parallel nests). */
+export function nestVoxels(mesh: MeshData, h: number, align?: (number | null)[]): NestVoxels {
+  return { ...voxelizePart(mesh, h, isWatertight(mesh), align), h, align };
+}
+
+/**
+ * Grid alignment for a locked copy: per axis the offset (in the part's own
+ * coordinates) of the build grid, so the copy's voxels line up with the
+ * build's voxels exactly at its locked translation.
+ */
+export function lockAlign(p: Pick<NestParams, 'volume' | 'margin' | 'zOffset'>, at: (number | null)[]): (number | null)[] {
+  const origin = [-p.volume[0] / 2 + p.margin, -p.volume[1] / 2 + p.margin, p.zOffset];
+  return at.map((t, c) => (t === null ? null : origin[c] - t));
 }
 
 export interface NestParams {
@@ -88,6 +117,8 @@ export interface NestPlacement {
   t: Vec3;
   /** placed in the regular pattern of its copies */
   pattern?: boolean;
+  /** a copy locked by the user */
+  locked?: boolean;
 }
 
 export interface NestBuild {
@@ -175,7 +206,7 @@ function triBoxOverlap(c: number[], hs: number, v0: number[], v1: number[], v2: 
  * voxel test), everything inside, and cavities that are closed off from the
  * outside (a part could never be put in there).
  */
-export function voxelizePart(mesh: MeshData, h: number, closed = isWatertight(mesh)): PartVoxels {
+export function voxelizePart(mesh: MeshData, h: number, closed = isWatertight(mesh), align?: (number | null)[]): PartVoxels {
   const p = mesh.positions,
     idx = mesh.indices;
   const min: Vec3 = [Infinity, Infinity, Infinity],
@@ -184,6 +215,12 @@ export function voxelizePart(mesh: MeshData, h: number, closed = isWatertight(me
     for (let c = 0; c < 3; c++) {
       if (p[i + c] < min[c]) min[c] = p[i + c];
       if (p[i + c] > max[c]) max[c] = p[i + c];
+    }
+  // grid lines through `align` on the given axes (the grid starts at or below the part)
+  if (align)
+    for (let c = 0; c < 3; c++) {
+      const a = align[c];
+      if (a !== null && a !== undefined) min[c] = a + Math.floor((min[c] - a) / h + 1e-9) * h;
     }
   const nx = Math.max(1, Math.floor((max[0] - min[0]) / h + 1e-9) + 1);
   const ny = Math.max(1, Math.floor((max[1] - min[1]) / h + 1e-9) + 1);
@@ -194,14 +231,26 @@ export function voxelizePart(mesh: MeshData, h: number, closed = isWatertight(me
     v1 = [0, 0, 0],
     v2 = [0, 0, 0],
     c = [0, 0, 0];
+  const n3 = [nx, ny, nz];
+  const lo = [0, 0, 0],
+    hi = [0, 0, 0];
   for (let t = 0; t < idx.length; t += 3) {
+    let single = true;
     for (let q = 0; q < 3; q++) {
-      v0[q] = p[idx[t] * 3 + q] - min[q];
-      v1[q] = p[idx[t + 1] * 3 + q] - min[q];
-      v2[q] = p[idx[t + 2] * 3 + q] - min[q];
+      const a = (v0[q] = p[idx[t] * 3 + q] - min[q]),
+        b = (v1[q] = p[idx[t + 1] * 3 + q] - min[q]),
+        c = (v2[q] = p[idx[t + 2] * 3 + q] - min[q]);
+      const mn = a < b ? (a < c ? a : c) : b < c ? b : c,
+        mx = a > b ? (a > c ? a : c) : b > c ? b : c;
+      lo[q] = Math.max(0, Math.floor(mn / h - 1e-6));
+      hi[q] = Math.min(n3[q] - 1, Math.floor(mx / h + 1e-6));
+      if (lo[q] !== hi[q]) single = false;
     }
-    const lo = [0, 1, 2].map((q) => Math.max(0, Math.floor(Math.min(v0[q], v1[q], v2[q]) / h - 1e-6)));
-    const hi = [0, 1, 2].map((q, qi) => Math.min([nx, ny, nz][qi] - 1, Math.floor(Math.max(v0[q], v1[q], v2[q]) / h + 1e-6)));
+    if (single) {
+      // a small triangle inside one voxel (most triangles of a fine mesh): no overlap test needed
+      solid[lo[0] + nx * (lo[1] + ny * lo[2])] = 1;
+      continue;
+    }
     for (let k = lo[2]; k <= hi[2]; k++)
       for (let j = lo[1]; j <= hi[1]; j++)
         for (let i = lo[0]; i <= hi[0]; i++) {
@@ -257,17 +306,19 @@ function turnCells(cells: Uint8Array, nx: number, ny: number, nz: number): Uint8
 /** Fill empty voxels that cannot be reached from outside the part's box. */
 function fillEnclosed(solid: Uint8Array, nx: number, ny: number, nz: number) {
   const seen = new Uint8Array(solid.length);
-  const stack: number[] = [];
+  // every cell is pushed at most once
+  const stack = new Int32Array(solid.length);
+  let top = 0;
   const push = (i: number) => {
     if (!solid[i] && !seen[i]) {
       seen[i] = 1;
-      stack.push(i);
+      stack[top++] = i;
     }
   };
   for (let k = 0; k < nz; k++)
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1) push(i + nx * (j + ny * k));
-  while (stack.length) {
-    const c = stack.pop()!;
+  while (top) {
+    const c = stack[--top];
     const i = c % nx,
       j = ((c / nx) | 0) % ny,
       k = (c / (nx * ny)) | 0;
@@ -720,6 +771,27 @@ class Build {
     return null;
   }
 
+  /** First spot (lowest first) with the given indices on the fixed axes (null = free) where the shape fits and can slide out. */
+  findFixed(s: Shape, interlockFree: boolean, fixed: [number | null, number | null, number | null]): [number, number, number] | null {
+    const { gx, gy, gz } = this;
+    const { nx, ny, nz } = s.v;
+    const range = (f: number | null, n: number, g: number): [number, number] => (f === null ? [0, g - n] : [f, f]);
+    const [x0, x1] = range(fixed[0], nx, gx),
+      [y0, y1] = range(fixed[1], ny, gy),
+      [z0, z1] = range(fixed[2], nz, gz);
+    if (x0 < 0 || y0 < 0 || z0 < 0 || x1 + nx > gx || y1 + ny > gy || z1 + nz > gz) return null;
+    const hint = new Int32Array(6).fill(-1);
+    const escHint = new Int32Array(6);
+    for (let Z = z0; Z <= z1; Z++)
+      for (let Y = y0; Y <= y1; Y++)
+        for (let X = x0; X <= x1; ) {
+          const skip = this.fits(s, X, Y, Z, hint);
+          if (skip < 0 && (!interlockFree || this.escapes(s, X, Y, Z, escHint))) return [X, Y, Z];
+          X += skip > 0 ? skip : 1;
+        }
+    return null;
+  }
+
   stamp(s: Shape, X: number, Y: number, Z: number) {
     const { gx, gy, gz } = this;
     const r = s.v.runs;
@@ -896,10 +968,12 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   // voxelize every part in every allowed turn
   onProgress(0, 'Voxelizing parts');
   const shapes = parts.map((part, pi) => {
-    const closed = isWatertight(part.mesh);
-    const turns = part.fixed || !p.rotations ? [0] : [0, 1, 2, 3];
+    const turns = part.fixed || part.lock || !p.rotations ? [0] : [0, 1, 2, 3];
+    // locked copies: voxels lined up with the build grid at the locked translation
+    const align = part.lock ? lockAlign(p, part.lock.at) : undefined;
+    const sameAlign = (a?: (number | null)[]) => (!a && !align) || (!!a && !!align && a.every((x, i) => (x === null ? align[i] === null : align[i] !== null && Math.abs(x - align[i]!) < 1e-9)));
     // voxelize once; the other turns are the same voxels turned
-    let v = voxelizePart(part.mesh, h, closed);
+    let v: PartVoxels = part.voxels && Math.abs(part.voxels.h - h) < 1e-9 && sameAlign(part.voxels.align) ? part.voxels : voxelizePart(part.mesh, h, isWatertight(part.mesh), align);
     let keep = dilate(v, d);
     const vox: { k: number; s: Shape }[] = [];
     for (let k = 0; k < 4; k++) {
@@ -922,7 +996,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   };
   const queueOf = (order: NestOrder) => {
     const q: { sh: (typeof shapes)[number]; copy: number }[] = [];
-    for (const sh of [...shapes].sort(sorters[order])) for (let c = 0; c < sh.part.count; c++) q.push({ sh, copy: c });
+    for (const sh of [...shapes].sort(sorters[order])) if (!sh.part.lock) for (let c = 0; c < sh.part.count; c++) q.push({ sh, copy: sh.part.copies?.[c] ?? c });
     return q;
   };
   const anyCopies = parts.some((x) => x.count > 1);
@@ -978,6 +1052,35 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     const unplaced: NestResult['unplaced'] = [];
     const full = new Map<Build, Set<string>>();
     let done = 0;
+    // locked copies first: fully locked ones exactly where they are, then the partly locked ones
+    const locked = shapes.filter((x) => x.part.lock).sort((a, b) => a.part.lock!.at.filter((t) => t === null).length - b.part.lock!.at.filter((t) => t === null).length);
+    for (const sh of locked) {
+      const L = sh.part.lock!;
+      const key = `${sh.part.id}#${sh.part.copies?.[0] ?? 0}`;
+      const s = sh.vox[0].s;
+      const fixed = L.at.map((t, c) => (t === null ? null : Math.round((s.v.min[c] + t - origin[c]) / h))) as [number | null, number | null, number | null];
+      while (builds.length <= L.build) builds.push(new Build(gx, gy, gz));
+      const b = builds[L.build];
+      let pos: [number, number, number] | null = null;
+      if (fixed.every((x) => x !== null)) {
+        const [X, Y, Z] = fixed as [number, number, number];
+        if (X >= 0 && Y >= 0 && Z >= 0 && X + s.v.nx <= gx && Y + s.v.ny <= gy && Z + s.v.nz <= gz) pos = [X, Y, Z];
+        else unplaced.push({ key, reason: 'Its locked position is outside the build volume (margins, platform gap, height)' });
+      } else {
+        pos = b.findFixed(s, interlockFree, fixed);
+        if (!pos) unplaced.push({ key, reason: 'No room for it along its free axes at its locked position' });
+      }
+      if (!pos) continue;
+      b.stamp(s, pos[0], pos[1], pos[2]);
+      b.placements.push({
+        key,
+        partId: sh.part.id,
+        copy: sh.part.copies?.[0] ?? 0,
+        turns: 0,
+        t: [0, 1, 2].map((c) => L.at[c] ?? origin[c] + pos![c] * h - s.v.min[c]) as Vec3,
+        locked: true,
+      });
+    }
     for (const { sh, copy } of queue) {
       const key = `${sh.part.id}#${copy}`;
       if (!sh.vox.some(({ s }) => s.v.nx <= gx && s.v.ny <= gy && s.v.nz <= gz)) {
@@ -1096,7 +1199,8 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
       if ((done & 3) === 0 || done === queue.length)
         onProgress(p0 + (p1 - p0) * (done / queue.length), `${symmetric ? 'Arranging in patterns' : 'Nesting'} ${done} / ${queue.length} parts`);
     }
-    return { builds, unplaced };
+    // a build that only existed for a locked copy that could not go in
+    return { builds: builds.filter((b) => b.placements.length), unplaced };
   }
 }
 

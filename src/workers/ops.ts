@@ -282,6 +282,16 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async watertight(args: { mesh: MeshData }): Promise<Result<boolean>> {
+    return { result: G.isWatertight(args.mesh) };
+  },
+
+  async nestVoxels(args: { mesh: MeshData; h: number; align?: (number | null)[] }, progress: Progress): Promise<Result<G.NestVoxels>> {
+    progress(0.1, 'Voxelizing');
+    const v = G.nestVoxels(args.mesh, args.h, args.align);
+    return { result: v, transfer: [v.solid.buffer as ArrayBuffer, v.runs.buffer as ArrayBuffer] };
+  },
+
   async nest3d(args: { parts: G.NestPart[]; params: G.NestParams }, progress: Progress): Promise<Result<G.NestResult>> {
     const r = G.nest3d(args.parts, args.params, (f, m) => progress(f, m));
     return { result: r };

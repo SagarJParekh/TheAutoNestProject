@@ -308,6 +308,21 @@ export interface BuildPart {
   orient?: { mesh: MeshData; q: [number, number, number, number] };
   /** assembly group: all parts of a group get the same orientation (taken from the largest one) */
   group?: string;
+  /** closed, consistently oriented surface (undefined while being checked) */
+  watertight?: boolean;
+  /** the Mesh prep part it came from: sending that part again replaces this one's mesh (e.g. after a repair) */
+  fromPrep?: string;
+}
+
+/** A copy fixed by the user: locked translation / rotation axes and where it was when locked (or last edited). */
+export interface CopyLock {
+  /** translation locked along X, Y, Z */
+  t: [boolean, boolean, boolean];
+  /** rotation locked about X, Y, Z */
+  r: [boolean, boolean, boolean];
+  build: number;
+  position: Vec3;
+  quaternion: [number, number, number, number];
 }
 
 export interface BuildPlacement {
@@ -345,6 +360,10 @@ export interface BuildGenState {
   maxHeight: number;
   /** 3D nesting resolution */
   nestDetail: 'fast' | 'normal' | 'fine';
+  /** copies locked by the user, by placement key: nesting keeps them (on their locked axes) and arranges the rest around them */
+  locks?: Record<string, CopyLock>;
+  /** hidden in the view: part ids (every copy) or placement keys (one copy) */
+  hidden?: string[];
   /** arrange copies of a part in a regular pattern where that costs no packing density */
   symmetric: boolean;
   /** nest again automatically after every change (otherwise only on Start nesting) */

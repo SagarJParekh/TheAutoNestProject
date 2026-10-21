@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
-import { buildDisplayParts, currentPrinter, editPlacements, partOfKey, selectBuildPart } from '../state/buildActions';
+import { buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
@@ -56,7 +56,8 @@ function viewState(s: AppState): AppState {
   const involved = checks
     ? new Set([...(checks.collisions ?? []).flatMap((c) => [c.a, c.b]), ...(checks.stuck ?? [])])
     : null;
-  const parts = checks?.showOnly && involved?.size ? lastBuild.parts.filter((p) => involved.has(p.id)) : lastBuild.parts;
+  const shown = s.buildGen.hidden?.length ? lastBuild.parts.filter((p) => !isHiddenKey(s.buildGen, p.id)) : lastBuild.parts;
+  const parts = checks?.showOnly && involved?.size ? shown.filter((p) => involved.has(p.id)) : shown;
   const edit = s.buildEdit ?? 'select';
   const view: AppState = {
     ...s,
@@ -67,19 +68,55 @@ function viewState(s: AppState): AppState {
     pickMode: null,
     preview: null,
     selection: (() => {
-      // editing by hand works on single copies; otherwise selecting a part selects all its copies
-      if (edit !== 'select') return s.selection.filter((k) => parts.some((p) => p.id === k));
+      // editing by hand (or picking copies) works on single copies; otherwise selecting a part selects all its copies
+      if (pickingCopies(s)) return s.selection.filter((k) => parts.some((p) => p.id === k));
       const ids = new Set(s.selection.map(partOfKey));
       return parts.filter((p) => ids.has(partOfKey(p.id))).map((p) => p.id);
     })(),
-    clipEnabled: false,
+    clipEnabled: s.buildClip.on,
+    clip: { axis: 'z', azimuth: 0, elevation: 0, offset: s.buildClip.z, flip: s.buildClip.above },
     zoomWindow: false,
     lassoMode: false,
     polyMode: false,
     buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset },
+    // locked copies: the gizmo only offers their free axes, pick & place only moves them along free axes
+    gizmoLocks: s.selection.length === 1 ? (s.buildGen.locks?.[s.selection[0]] ?? null) : null,
+    placeLocks: s.buildGen.locks ? Object.fromEntries(Object.entries(s.buildGen.locks).map(([k, L]) => [k, L.t])) : null,
   };
   lastView = { src: s, view };
   return view;
+}
+
+/** Build generation: vertical slider that cuts the build at a height, to look inside. */
+function BuildClipSlider() {
+  const clip = useStore((s) => s.buildClip);
+  const top = useStore((s) => {
+    const b = s.buildGen.builds[s.buildGen.active];
+    return Math.ceil(Math.max(b?.height ?? 0, 10) + 1);
+  });
+  const set = (patch: Partial<typeof clip>) => setState((s) => ({ buildClip: { ...s.buildClip, ...patch } }));
+  const z = Math.min(clip.z, top);
+  return (
+    <div className={`clip-slider ${clip.on ? 'on' : ''}`} title="Cut the build at a height to look inside">
+      <label className="clip-toggle">
+        <input type="checkbox" checked={clip.on} onChange={(e) => set({ on: e.target.checked, z })} />Z cut
+      </label>
+      <span className="clip-value">{z.toFixed(1)} mm</span>
+      <input
+        type="range"
+        min={0}
+        max={top}
+        step={0.5}
+        value={z}
+        disabled={!clip.on}
+        onChange={(e) => set({ z: Number(e.target.value) })}
+        aria-label="Cut height"
+      />
+      <button className="mini" disabled={!clip.on} onClick={() => set({ above: !clip.above })} title="Show the parts below or above the cut">
+        {clip.above ? 'Showing above' : 'Showing below'}
+      </button>
+    </div>
+  );
 }
 
 export function ViewerCanvas() {
@@ -90,6 +127,7 @@ export function ViewerCanvas() {
   const drawing = useStore((s) => s.polyMode);
   const measuring = useStore((s) => s.tool === 'measure');
   const placing = useStore((s) => s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode);
+  const building = useStore((s) => s.workspace === 'build');
 
   useEffect(() => {
     const el = ref.current!;
@@ -179,6 +217,10 @@ export function ViewerCanvas() {
       onBoxSelect(ids, add) {
         const s = getState();
         if (s.workspace === 'build') {
+          if (pickingCopies(s)) {
+            setState({ selection: add ? [...new Set([...s.selection, ...ids])] : ids });
+            return;
+          }
           const keys = [...new Set(ids.map((k) => `${partOfKey(k)}#0`))];
           setState({ selection: add ? [...new Set([...s.selection.map((k) => `${partOfKey(k)}#0`), ...keys])] : keys });
           return;
@@ -212,6 +254,7 @@ export function ViewerCanvas() {
 
   return (
     <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''} ${placing ? 'placing' : ''}`} ref={ref}>
+      {building && <BuildClipSlider />}
       {lassoing && (
         <div className="pick-banner">
           Drag around the area to cut out

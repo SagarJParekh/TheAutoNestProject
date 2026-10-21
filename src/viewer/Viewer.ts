@@ -674,15 +674,30 @@ export class Viewer {
 
   // ------------------------------------------------------------------ gizmo
 
+  /** pick & place snap step, mm (0 = off) */
+  private placeSnap = 0;
+  /** pick & place: translation axes locked per part id */
+  private placeLocks: Record<string, [boolean, boolean, boolean]> | null = null;
+
   private syncGizmo(s: AppState) {
+    const snap = s.snap?.on ? s.snap : null;
+    this.gizmo.setTranslationSnap(snap && snap.move > 0 ? snap.move : null);
+    this.gizmo.setRotationSnap(snap && snap.rotate > 0 ? (snap.rotate * Math.PI) / 180 : null);
+    this.placeSnap = snap && snap.move > 0 ? snap.move : 0;
     const sel = s.selection.length === 1 ? this.objects.get(s.selection[0]) : undefined;
     const can =
       sel && !sel.part.locked && sel.part.visible && s.tool === 'transform' && s.gizmo !== 'none' && s.gizmo !== 'place' && !s.preview && !s.pickMode &&
       !(s.gizmo === 'rotate' && sel.part.lockRotation);
-    if (can) {
+    // locked axes (Build generation): hide their handles; rotation rings are then about the world axes
+    const locks = s.gizmoLocks ? (s.gizmo === 'rotate' ? s.gizmoLocks.r : s.gizmoLocks.t) : null;
+    this.gizmo.showX = !locks?.[0];
+    this.gizmo.showY = !locks?.[1];
+    this.gizmo.showZ = !locks?.[2];
+    this.placeLocks = s.placeLocks ?? null;
+    if (can && !(locks && locks.every(Boolean))) {
       if (this.gizmo.object !== sel.group) this.gizmo.attach(sel.group);
       this.gizmo.setMode(s.gizmo === 'rotate' ? 'rotate' : 'translate');
-      this.gizmo.setSpace(s.gizmo === 'rotate' ? 'local' : 'world');
+      this.gizmo.setSpace(s.gizmo === 'rotate' && !s.gizmoLocks ? 'local' : 'world');
       this.gizmoHelper.visible = true;
     } else {
       if (this.gizmo.object) this.gizmo.detach();
@@ -1647,11 +1662,19 @@ export class Viewer {
     const d = hit.sub(pl.start);
     if (pl.vertical) d.set(0, 0, d.z);
     else d.z = 0;
-    // Ctrl / Cmd snaps the move to whole millimetres
-    if (e.ctrlKey || e.metaKey) d.set(Math.round(d.x), Math.round(d.y), Math.round(d.z));
+    // snapping (setting), or Ctrl / Cmd for whole millimetres: snap where the part ends up, not the distance
+    const step = this.placeSnap || (e.ctrlKey || e.metaKey ? 1 : 0);
+    if (step && pl.items.length) {
+      const f = pl.items[0].from;
+      const snapTo = (v: number, from: number) => Math.round((from + v) / step) * step - from;
+      d.set(snapTo(d.x, f.x), snapTo(d.y, f.y), snapTo(d.z, f.z));
+      if (pl.vertical) d.x = d.y = 0;
+      else d.z = 0;
+    }
     if (d.lengthSq() > 1e-12) pl.moved = true;
     for (const it of pl.items) {
-      it.obj.group.position.copy(it.from).add(d);
+      const lk = this.placeLocks?.[it.obj.part.id];
+      it.obj.group.position.copy(it.from).add(lk ? new Vector3(lk[0] ? 0 : d.x, lk[1] ? 0 : d.y, lk[2] ? 0 : d.z) : d);
       it.obj.group.updateMatrixWorld(true);
     }
     this.requestRender();

@@ -1,4 +1,5 @@
 import { Icon } from '../icons';
+import { SnapControls } from '../SnapControls';
 import { Check, Hint, NumberField, Row, Section, Segmented, VecRow } from '../controls';
 import { getState, setState, updateParts, useStore } from '../../state/store';
 import { centerOnOrigin, dropToBed, mirrorParts, setRotationLock } from '../../state/actions';
@@ -61,8 +62,9 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           ]}
         />
       </Row>
+      <SnapControls />
       {gizmo === 'place' && (
-        <Hint>Drag any part with the mouse to move it on the bed. Shift-drag moves it up / down, Ctrl snaps to 1 mm. Right-drag rotates the view, middle-drag pans.</Hint>
+        <Hint>Drag any part with the mouse to move it on the bed. Shift-drag moves it up / down, Ctrl snaps to 1 mm (or to the Snap step when Snap is on). Right-drag rotates the view, middle-drag pans.</Hint>
       )}
       {parts.length === 0 && <Hint>Select a part to transform it.</Hint>}
       {single && (

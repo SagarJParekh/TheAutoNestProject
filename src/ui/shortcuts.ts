@@ -4,6 +4,7 @@ import {
   applyPreview, cancelPreview, centerOnOrigin, deleteParts, dropToBed, duplicateParts, selectAll, setTool, toggleHideOthers,
 } from '../state/actions';
 import { viewerApi } from '../viewer/api';
+import { selectAllBuildParts } from '../state/buildActions';
 import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOL_KEYS: Record<string, ToolId> = {
@@ -28,7 +29,10 @@ export function useShortcuts(openFile: () => void) {
       if (mod) {
         if (k === 'z' && !e.shiftKey) undo();
         else if ((k === 'z' && e.shiftKey) || k === 'y') redo();
-        else if (k === 'a') selectAll();
+        else if (k === 'a') {
+          if (s.workspace === 'build') selectAllBuildParts();
+          else selectAll();
+        }
         else if (k === 'd') duplicateParts();
         else if (k === 'o') openFile();
         else if (k === 'e') setState({ showExport: true });

@@ -12,10 +12,19 @@ export interface HistoryEntry {
   parts: Part[];
 }
 
+/** A Build generation undo step: the whole build state before the change. */
+export interface BuildHistoryEntry {
+  label: string;
+  gen: BuildGenState;
+}
+
 export interface AppState {
   parts: Part[];
   past: HistoryEntry[];
   future: HistoryEntry[];
+  /** Build generation has its own history (Undo / Redo follow the workspace in use) */
+  buildPast: BuildHistoryEntry[];
+  buildFuture: BuildHistoryEntry[];
   selection: string[];
 
   tool: ToolId;
@@ -44,6 +53,15 @@ export interface AppState {
   markers?: [number, number, number][] | null;
   /** Build generation: how the mouse edits parts (select only, move gizmo, rotate gizmo, drag on the platform) */
   buildEdit: 'select' | 'move' | 'rotate' | 'drag';
+  /** Build generation view: cut the build at a height (show what is below, or above with `above`) */
+  buildClip: { on: boolean; z: number; above: boolean };
+  /** Build generation: clicks select single copies instead of every copy of a part */
+  buildPickCopies: boolean;
+  /** snapping of the move / rotate gizmos and of pick & place (both workspaces) */
+  snap: { on: boolean; move: number; rotate: number };
+  /** view only (Build generation): locked axes of the copy under the gizmo, and per part id for pick & place */
+  gizmoLocks?: { t: [boolean, boolean, boolean]; r: [boolean, boolean, boolean] } | null;
+  placeLocks?: Record<string, [boolean, boolean, boolean]> | null;
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
@@ -83,6 +101,8 @@ export const useStore = create<AppState>(() => ({
   parts: [],
   past: [],
   future: [],
+  buildPast: [],
+  buildFuture: [],
   selection: [],
   tool: 'transform',
   gizmo: 'translate',
@@ -141,6 +161,9 @@ export const useStore = create<AppState>(() => ({
   errorFocus: null,
   thickness: {},
   buildEdit: 'select',
+  buildClip: { on: false, z: 50, above: false },
+  buildPickCopies: false,
+  snap: { on: false, move: 1, rotate: 15 },
   showSearch: false,
   preview: null,
   analysis: {},
@@ -245,8 +268,62 @@ export function commit(label: string, parts: Part[], extra: Partial<AppState> = 
   });
 }
 
+// ---------------------------------------------------------------- build history
+
+const BUILD_HISTORY_MAX = 60;
+/** Called after a build undo / redo (Build generation drops nesting still running). */
+let onBuildRestore: () => void = () => {};
+export function setBuildRestoreHook(fn: () => void) {
+  onBuildRestore = fn;
+}
+/** what is kept in a build undo step (no running state, no check results) */
+const buildSnapshot = (g: BuildGenState): BuildGenState => ({ ...g, busy: false, checks: null });
+
+/** Change the build state as one undoable step. */
+export function commitBuild(label: string, patch: Partial<BuildGenState>) {
+  const s = getState();
+  setState({
+    buildGen: { ...s.buildGen, ...patch },
+    buildPast: [...s.buildPast, { label, gen: buildSnapshot(s.buildGen) }].slice(-BUILD_HISTORY_MAX),
+    buildFuture: [],
+  });
+}
+
+function restoreBuild(gen: BuildGenState) {
+  const s = getState();
+  const keys = new Set(gen.builds[gen.active]?.placements.map((p) => p.key) ?? []);
+  const ids = new Set(gen.parts.map((p) => p.id));
+  setState({ buildGen: { ...gen, busy: false, checks: null }, selection: s.selection.filter((k) => keys.has(k) || ids.has(k.split('#')[0])) });
+  onBuildRestore();
+}
+
+function buildUndo() {
+  const s = getState();
+  const prev = s.buildPast[s.buildPast.length - 1];
+  if (!prev) return;
+  setState({ buildPast: s.buildPast.slice(0, -1), buildFuture: [{ label: prev.label, gen: buildSnapshot(s.buildGen) }, ...s.buildFuture] });
+  restoreBuild(prev.gen);
+  notify('info', `Undo: ${prev.label}`);
+}
+
+function buildRedo() {
+  const s = getState();
+  const next = s.buildFuture[0];
+  if (!next) return;
+  setState({ buildPast: [...s.buildPast, { label: next.label, gen: buildSnapshot(s.buildGen) }], buildFuture: s.buildFuture.slice(1) });
+  restoreBuild(next.gen);
+  notify('info', `Redo: ${next.label}`);
+}
+
+/** Label of the step Undo / Redo would take back in the workspace in use, or null. */
+export function undoLabel(s: AppState, redoStep = false): string | null {
+  if (s.workspace === 'build') return (redoStep ? s.buildFuture[0] : s.buildPast[s.buildPast.length - 1])?.label ?? null;
+  return (redoStep ? s.future[0] : s.past[s.past.length - 1])?.label ?? null;
+}
+
 export function undo() {
   const s = getState();
+  if (s.workspace === 'build') return buildUndo();
   const prev = s.past[s.past.length - 1];
   if (!prev) return;
   const ids = new Set(prev.parts.map((p) => p.id));
@@ -263,6 +340,7 @@ export function undo() {
 
 export function redo() {
   const s = getState();
+  if (s.workspace === 'build') return buildRedo();
   const next = s.future[0];
   if (!next) return;
   const ids = new Set(next.parts.map((p) => p.id));

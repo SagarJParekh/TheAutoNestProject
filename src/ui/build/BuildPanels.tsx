@@ -2,10 +2,11 @@ import { useRef, useState } from 'react';
 import { SaveLocationRow } from '../Dialogs';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { Icon } from '../icons';
-import { setState, useStore } from '../../state/store';
+import { SnapControls } from '../SnapControls';
+import { getState, setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -37,9 +38,23 @@ function StartNesting() {
 /** Move / rotate / drag parts of the active build by hand. */
 function EditBox() {
   const edit = useStore((s) => s.buildEdit ?? 'select');
+  const pickCopies = useStore((s) => s.buildPickCopies);
+  const hidden = useStore((s) => s.buildGen.hidden?.length ?? 0);
+  const selCount = useStore((s) => s.selection.length);
   return (
     <div className="density-box">
-      <h4>Edit by hand</h4>
+      <h4>Select & edit by hand</h4>
+      <Check checked={pickCopies || edit !== 'select'} onChange={(buildPickCopies) => setState({ buildPickCopies, selection: [] })}>
+        Pick single copies (not all of a part's quantity)
+      </Check>
+      <div className="btn-grid two">
+        <button className="btn" disabled={!selCount} onClick={hideBuildSelection} title="Hide the selected parts (or copies) in the view">
+          Hide selected
+        </button>
+        <button className="btn" disabled={!hidden} onClick={showAllBuildParts}>
+          Show all{hidden ? ` (${hidden} hidden)` : ''}
+        </button>
+      </div>
       <Segmented
         value={edit}
         onChange={(buildEdit) => setState({ buildEdit, selection: [] })}
@@ -50,9 +65,69 @@ function EditBox() {
           { value: 'drag', label: 'Drag' },
         ]}
       />
+      <SnapControls />
       <Hint>
         Click a part, then use the Move / Rotate handles, or Drag it across the platform (Shift-drag moves it up / down). Run Check collisions afterwards.
       </Hint>
+    </div>
+  );
+}
+
+/** Lock translation / rotation axes of the selected copies: nesting keeps them, the rest is arranged around them. */
+function LockBox() {
+  const buildGen = useStore((s) => s.buildGen);
+  const selection = useStore((s) => s.selection);
+  const buildEdit = useStore((s) => s.buildEdit);
+  const buildPickCopies = useStore((s) => s.buildPickCopies);
+  const locks = buildGen.locks ?? {};
+  const targets = lockTargets({ ...getState(), buildGen, selection, buildEdit, buildPickCopies });
+  const total = Object.keys(locks).length;
+  const state = (kind: 't' | 'r', i: number) => {
+    const n = targets.filter((k) => locks[k]?.[kind][i]).length;
+    return n === 0 ? 'off' : n === targets.length ? 'on' : 'some';
+  };
+  const toggle = (kind: 't' | 'r', i: number) => {
+    const lock = state(kind, i) !== 'on';
+    const t: (boolean | undefined)[] = [undefined, undefined, undefined];
+    const r: (boolean | undefined)[] = [undefined, undefined, undefined];
+    (kind === 't' ? t : r)[i] = lock;
+    setCopyLocks(targets, t, r);
+  };
+  const axisButtons = (kind: 't' | 'r') =>
+    [0, 1, 2].map((i) => (
+      <button key={i} className={`mini lock-axis ${state(kind, i)}`} disabled={!targets.length} onClick={() => toggle(kind, i)} title={`${state(kind, i) === 'on' ? 'Unlock' : 'Lock'} ${kind === 't' ? 'moving along' : 'turning about'} ${'XYZ'[i]}`}>
+        {'XYZ'[i]}
+      </button>
+    ));
+  return (
+    <div className="density-box">
+      <h4>Lock copies in place</h4>
+      <div className="lock-grid">
+        <span>Position</span>
+        {axisButtons('t')}
+        <span>Rotation</span>
+        {axisButtons('r')}
+      </div>
+      <div className="btn-grid two">
+        <button className="btn" disabled={!targets.length} onClick={() => setCopyLocks(targets, [true, true, true], [true, true, true])}>
+          Lock all axes
+        </button>
+        <button className="btn" disabled={!targets.some((k) => locks[k])} onClick={() => setCopyLocks(targets, [false, false, false], [false, false, false])}>
+          Unlock
+        </button>
+      </div>
+      <Hint>
+        {targets.length
+          ? `${targets.length} cop${targets.length > 1 ? 'ies' : 'y'} selected. `
+          : 'Select copies (Pick single copies above, or a whole part). '}
+        Arrange them by hand, lock them, then Start nesting: locked copies stay put on their locked axes (and are not turned), everything else is nested around them.
+        {total ? ` ${total} cop${total > 1 ? 'ies are' : 'y is'} locked.` : ''}
+      </Hint>
+      {total > 0 && (
+        <button className="mini" onClick={() => setCopyLocks(Object.keys(locks), [false, false, false], [false, false, false])}>
+          Unlock every copy
+        </button>
+      )}
     </div>
   );
 }
@@ -531,6 +606,7 @@ export function BuildsPanel() {
             g.parts.length > 0 && (g.stale || !g.builds.length) && <StartNesting />
           )}
           {active && <EditBox />}
+          {active && <LockBox />}
           {active && <ChecksBox />}
           {active && <DensityBox />}
           {active && (
@@ -564,6 +640,26 @@ export function BuildsPanel() {
           }
         >
           {!g.parts.length && <Hint>Add files or take parts from Mesh prep.</Hint>}
+          {(() => {
+            const bad = g.parts.filter((p) => p.watertight === false);
+            if (!bad.length) return null;
+            return (
+              <div className="unplaced">
+                <b>
+                  {bad.length} part{bad.length > 1 ? 's are' : ' is'} not watertight (not repaired)
+                </b>
+                <span>Open edges or holes can print badly, and the nesting cannot tell inside from outside reliably.</span>
+                <div className="btn-grid two">
+                  <button className="btn" onClick={() => setState({ selection: bad.map((p) => `${p.id}#0`), buildPickCopies: false })}>
+                    Select {bad.length > 1 ? 'them' : 'it'}
+                  </button>
+                  <button className="btn primary" onClick={() => repairBuildPartsInPrep(bad.map((p) => p.id))} title="Open them in Mesh prep with the Repair tool; Send to Build afterwards updates them here">
+                    Repair in Mesh prep
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
           <ul className="build-parts">
             {g.parts.map((p) => {
               const st = partStatus(p, g.builds, g.unplaced);
@@ -573,6 +669,11 @@ export function BuildsPanel() {
                   <span className="name" title={p.name}>
                     {p.name}
                   </span>
+                  {p.watertight === false && (
+                    <span className="badge bad" title="Not watertight: repair it in Mesh prep">
+                      !
+                    </span>
+                  )}
                   {p.group && (
                     <span className="badge group" title="Assembly group: printed in the same orientation as the other parts of the group">
                       {groups.get(p.group)}
@@ -586,6 +687,16 @@ export function BuildsPanel() {
                     </span>
                   ) : null}
                   <span className={`where ${st.missing ? 'bad' : ''}`}>{st.missing ? 'too big' : st.where.join(' ')}</span>
+                  <button
+                    className="icon-btn"
+                    title={isHiddenKey(g, p.id) ? 'Hidden — click to show' : 'Hide every copy of this part in the view'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleBuildPartHidden(p.id);
+                    }}
+                  >
+                    {isHiddenKey(g, p.id) ? Icon.eyeOff : Icon.eye}
+                  </button>
                   <button
                     className={`icon-btn ${p.lockRotation ? 'on' : ''}`}
                     title={p.lockRotation ? 'Orientation locked: kept as in Mesh prep, only moved — click to unlock' : 'Lock orientation (no flat-face turn, tilt or 90° turns)'}

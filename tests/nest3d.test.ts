@@ -215,3 +215,41 @@ describe('nesting variants', () => {
     expect(pickNest(r([110], true), r([109]))!.variant!.pattern).toBe(false);
   });
 });
+
+describe('locked copies', () => {
+  const params = { margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: true, volume: [120, 100, 80] as [number, number, number] };
+  const cube = boxMesh([-10, -10, -10], [10, 10, 10]);
+  it('a fully locked copy stays exactly where it is and the others keep clear of it', () => {
+    const at: [number, number, number] = [7.3, -4.6, 22.15];
+    const r = nest3d(
+      [
+        { id: 'c', mesh: cube, count: 1, copies: [3], lock: { build: 0, at } },
+        { id: 'c', mesh: cube, count: 12, copies: [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12] },
+      ],
+      params,
+    );
+    const pl = r.builds[0].placements;
+    const lk = pl.find((p) => p.key === 'c#3')!;
+    expect(lk.locked).toBe(true);
+    expect(lk.t).toEqual(at);
+    expect(new Set(pl.map((p) => p.key)).size).toBe(pl.length);
+    // no other cube within the clearance of the locked one (boxes: gap along some axis >= 1)
+    for (const p of pl) {
+      if (p === lk) continue;
+      const gap = Math.max(...[0, 1, 2].map((c) => Math.abs(p.t[c] - lk.t[c]) - 20));
+      expect(gap).toBeGreaterThanOrEqual(1 - 1e-6);
+    }
+  });
+
+  it('a copy locked only in Z keeps its height and is placed along X and Y', () => {
+    const r = nest3d([{ id: 'c', mesh: cube, count: 1, copies: [0], lock: { build: 0, at: [null, null, 41.7] } }], params);
+    const p = r.builds[0].placements[0];
+    expect(p.t[2]).toBe(41.7);
+    expect(p.locked).toBe(true);
+  });
+
+  it('a locked copy outside the volume is reported, not placed', () => {
+    const r = nest3d([{ id: 'c', mesh: cube, count: 1, lock: { build: 0, at: [500, 0, 20] } }], params);
+    expect(r.unplaced[0].key).toBe('c#0');
+  });
+});
