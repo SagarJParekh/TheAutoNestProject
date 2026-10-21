@@ -306,6 +306,8 @@ export interface BuildPart {
   lockRotation?: boolean;
   /** cached "largest flat face down" orientation for this mesh */
   orient?: { mesh: MeshData; q: [number, number, number, number] };
+  /** assembly group: all parts of a group get the same orientation (taken from the largest one) */
+  group?: string;
 }
 
 export interface BuildPlacement {
@@ -343,6 +345,10 @@ export interface BuildGenState {
   maxHeight: number;
   /** 3D nesting resolution */
   nestDetail: 'fast' | 'normal' | 'fine';
+  /** arrange copies of a part in a regular pattern where that costs no packing density */
+  symmetric: boolean;
+  /** nest again automatically after every change (otherwise only on Start nesting) */
+  autoNest: boolean;
   /** voxel size used by the last 3D nesting, mm */
   nestVoxel?: number;
   /** builds were edited by hand: automatic re-arranging is paused */

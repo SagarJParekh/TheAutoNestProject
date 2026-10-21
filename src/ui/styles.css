@@ -363,6 +363,9 @@ table.report tr:last-child td { border-bottom: none; }
 .build-parts li .field { width: 58px; min-width: 0; }
 .build-parts li .field input { width: 100%; padding: 2px 6px; }
 .build-parts .badge.auto { color: var(--accent-2); }
+.build-parts .badge.group { color: var(--ok); }
+.start-nesting { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.start-nesting .btn.big { padding: 9px 12px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .parts-foot { flex-direction: column; align-items: stretch; gap: 6px; }
 .parts-foot .foot-row { display: flex; gap: 6px; }
 .parts-foot .foot-row .btn { flex: 1; justify-content: center; }

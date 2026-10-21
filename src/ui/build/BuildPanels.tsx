@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -15,6 +15,24 @@ import type { BuildPart, Tilt } from '../../state/types';
 const f1 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const pct = (v: number) => `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: v < 0.1 ? 2 : 1 })}%`;
 const cm3 = (mm3: number) => `${(mm3 / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} cm³`;
+
+/** Start nesting button, with the choice to nest automatically after every change. */
+function StartNesting() {
+  const g = useStore((s) => s.buildGen);
+  if (!g.parts.length) return null;
+  const pending = !g.builds.length || g.stale;
+  return (
+    <div className="start-nesting">
+      <button className={`btn ${pending ? 'primary' : ''} big`} disabled={g.busy} onClick={rearrangeBuilds} title="Arrange all parts and quantities into builds now">
+        {g.busy ? 'Nesting…' : g.builds.length ? 'Start nesting again' : 'Start nesting'}
+      </button>
+      {pending && g.builds.length > 0 && <Hint>Parts or settings changed since the last nesting.</Hint>}
+      <Check checked={!!g.autoNest} onChange={(autoNest) => updateBuildSettings({ autoNest })}>
+        Nest automatically after every change
+      </Check>
+    </div>
+  );
+}
 
 /** Move / rotate / drag parts of the active build by hand. */
 function EditBox() {
@@ -241,7 +259,12 @@ export function BuildSetupPanel() {
               if (files.length) importFiles(files);
             }}
           />
-          <Hint>Builds are created automatically as soon as files are added; you can also drop files on the window.</Hint>
+          <Hint>
+            {g.autoNest
+              ? 'Builds are re-arranged automatically after every change; you can also drop files on the window.'
+              : 'Add all files and set the quantities first (you can also drop files on the window), then press Start nesting.'}
+          </Hint>
+          <StartNesting />
         </Section>
         <Section title="Printer">
           <div className="printer-tree">
@@ -342,6 +365,11 @@ export function BuildSetupPanel() {
                 />
               </Row>
               {g.nest3d && (
+                <Check checked={g.symmetric !== false} onChange={(symmetric) => updateBuildSettings({ symmetric })}>
+                  Arrange copies symmetrically when it costs no density
+                </Check>
+              )}
+              {g.nest3d && (
                 <Row label="Nesting detail">
                   <Segmented
                     value={g.nestDetail ?? 'normal'}
@@ -358,7 +386,7 @@ export function BuildSetupPanel() {
           )}
           <Hint>
             {printer.tech === 'powder' && g.nest3d
-              ? `3D nesting: parts are packed by their real shape (not their bounding box), into each other's free space and up in Z, with at least the clearance between surfaces${g.nestVoxel ? ` (resolution ${g.nestVoxel.toFixed(2)} mm)` : ''}. A part is only placed where it can slide straight out, so parts never interlock. Largest parts go first; parts lie on their largest flat face and are tilted by the Tilt below (30° by default for powder).`
+              ? `3D nesting: parts are packed by their real shape (not their bounding box), into each other's free space (inside trays and U shapes too) and up in Z, with at least the clearance between surfaces${g.nestVoxel ? ` (resolution ${g.nestVoxel.toFixed(2)} mm)` : ''}. A part is only placed where it can slide straight out, so parts never interlock. Packing density comes first; copies are put in a regular pattern only when that needs no more builds and no more height. Fine detail can take a few minutes for large jobs. Largest parts go first; parts lie on their largest flat face and are tilted by the Tilt below (30° by default for powder).`
               : 'Each build is filled completely before a new one is started. Parts are placed tallest first, so similar heights end up together; when everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.'}
           </Hint>
         </Section>
@@ -445,6 +473,7 @@ export function BuildsPanel() {
   const sel = selIds.length === 1 ? (g.parts.find((p) => p.id === selIds[0]) ?? null) : null;
   const active = g.builds[g.active];
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
+  const groups = groupLabels(g.parts);
   return (
     <aside className="panel right">
       <header className="panel-head">
@@ -490,7 +519,7 @@ export function BuildsPanel() {
               </ul>
             </div>
           )}
-          {g.manual && (
+          {g.manual ? (
             <div className="manual-banner">
               <b>Edited by hand</b>
               <span>{g.stale ? 'Settings or parts changed since: re-arrange to apply them (your edits will be replaced).' : 'Automatic re-arranging is paused so your edits stay.'}</span>
@@ -498,6 +527,8 @@ export function BuildsPanel() {
                 Re-arrange
               </button>
             </div>
+          ) : (
+            g.parts.length > 0 && (g.stale || !g.builds.length) && <StartNesting />
           )}
           {active && <EditBox />}
           {active && <ChecksBox />}
@@ -542,7 +573,12 @@ export function BuildsPanel() {
                   <span className="name" title={p.name}>
                     {p.name}
                   </span>
-                  {p.tilt ? (
+                  {p.group && (
+                    <span className="badge group" title="Assembly group: printed in the same orientation as the other parts of the group">
+                      {groups.get(p.group)}
+                    </span>
+                  )}
+                  {p.group ? null : p.tilt ? (
                     <span className="badge" title="Own tilt">{p.tilt.angle}°</span>
                   ) : g.autoTilts[p.id] ? (
                     <span className="badge auto" title="Turned or tilted automatically to fit the printer">
@@ -575,6 +611,16 @@ export function BuildsPanel() {
               </button>
             }
           >
+            <div className="btn-grid two">
+              <button className="btn" onClick={() => groupBuildParts(selIds)} title="Parts that are assembled together: print them all in the same orientation so the mating faces come out alike">
+                Group as assembly
+              </button>
+              {selIds.some((id) => g.parts.find((p) => p.id === id)?.group) && (
+                <button className="btn" onClick={() => ungroupBuildParts(selIds)}>
+                  Ungroup
+                </button>
+              )}
+            </div>
             <Hint>Tilt them together under Tilt → Selected on the left. Click empty space in the view to clear the selection.</Hint>
           </Section>
         )}
@@ -587,7 +633,21 @@ export function BuildsPanel() {
               </button>
             }
           >
-            {sel.tilt ? (
+            {sel.group ? (
+              <>
+                <Hint>
+                  Assembly group {groups.get(sel.group)} with{' '}
+                  {g.parts
+                    .filter((p) => p.group === sel.group && p.id !== sel.id)
+                    .map((p) => p.name)
+                    .join(', ')}
+                  : all parts of the group are printed in the orientation of the largest one (they may be turned about Z, which keeps the angle to the layers).
+                </Hint>
+                <button className="btn" onClick={() => ungroupBuildParts([sel.id])}>
+                  Ungroup
+                </button>
+              </>
+            ) : sel.tilt ? (
               <Hint>
                 Own tilt {sel.tilt.angle}° (change it under Tilt → Selected on the left).
               </Hint>

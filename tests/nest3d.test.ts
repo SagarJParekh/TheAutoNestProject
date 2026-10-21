@@ -118,3 +118,36 @@ describe('collision check', () => {
     expect(findCollisions([{ key: 'a', mesh: a }, { key: 'f', mesh: far }], 1)).toEqual([]);
   });
 });
+
+describe('nest3d: cavities and patterns', () => {
+  const params = { margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: true };
+  it('fills an open tray instead of stacking beside or above it', () => {
+    // 120 × 80 × 40 tray, 4 mm walls, open on top
+    const tray = mergeMeshes([boxMesh([0, 0, 0], [120, 80, 4]), boxMesh([0, 0, 4], [4, 80, 40]), boxMesh([116, 0, 4], [120, 80, 40]), boxMesh([4, 0, 4], [116, 4, 40]), boxMesh([4, 76, 4], [116, 80, 40])]);
+    const cube = boxMesh([0, 0, 0], [20, 20, 20]);
+    const r = nest3d([{ id: 'tray', mesh: tray, count: 1 }, { id: 'cube', mesh: cube, count: 12 }], { ...params, volume: [140, 100, 60] });
+    expect(r.builds.length).toBe(1);
+    expect(r.unplaced.length).toBe(0);
+    // every cube sits on the tray floor, so the build is no taller than the tray
+    expect(r.builds[0].height).toBeLessThanOrEqual(40.5);
+  });
+
+  it('puts copies in a regular pattern when that costs nothing', () => {
+    const cube = boxMesh([0, 0, 0], [20, 20, 20]);
+    const r = nest3d([{ id: 'c', mesh: cube, count: 30 }], { ...params, volume: [200, 200, 100], symmetric: true });
+    const pl = r.builds[0].placements;
+    expect(pl.filter((p) => p.pattern).length).toBeGreaterThanOrEqual(28);
+    // equal spacing along X in the first row
+    const row = pl.filter((p) => Math.abs(p.t[1] - pl[0].t[1]) < 1e-6 && Math.abs(p.t[2] - pl[0].t[2]) < 1e-6).map((p) => p.t[0]).sort((a, b) => a - b);
+    const steps = row.slice(1).map((x, i) => x - row[i]);
+    for (const s of steps) expect(s).toBeCloseTo(steps[0], 6);
+  });
+
+  it('never packs worse with the symmetric option', () => {
+    const L = lPart();
+    const free = nest3d([{ id: 'L', mesh: L, count: 40 }], { ...params, volume: [120, 100, 100], symmetric: false });
+    const sym = nest3d([{ id: 'L', mesh: L, count: 40 }], { ...params, volume: [120, 100, 100], symmetric: true });
+    expect(sym.builds.length).toBeLessThanOrEqual(free.builds.length);
+    expect(sym.builds[sym.builds.length - 1].height).toBeLessThanOrEqual(free.builds[free.builds.length - 1].height + 1e-9);
+  });
+});

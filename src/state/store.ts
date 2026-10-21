@@ -110,6 +110,8 @@ export const useStore = create<AppState>(() => ({
     clearance3d: 1,
     maxHeight: 0,
     nestDetail: 'normal',
+    symmetric: true,
+    autoNest: false,
     autoTilt: true,
     autoTilts: {},
     autoOrient: true,

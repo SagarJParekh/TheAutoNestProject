@@ -86,6 +86,8 @@ export function updateBuildSettings(patch: Partial<BuildGenState>) {
     patch = { ...patch, tilt: { angle: 30, azimuth: 0 } };
   }
   setBg(patch);
+  // switching automatic nesting off changes nothing to arrange
+  if (Object.keys(patch).length === 1 && patch.autoNest === false) return;
   scheduleRegenerate();
 }
 
@@ -172,9 +174,16 @@ export function findFittingTilt(
 
 export async function regenerateBuilds(force = false) {
   const s0 = bg();
-  if (!force && s0.manual && s0.builds.length) {
-    // builds edited by hand: don't throw the edits away; the panel offers to re-arrange
-    setBg({ stale: true });
+  if (!force && s0.parts.length && (s0.manual || !s0.autoNest)) {
+    // builds edited by hand, or nesting only on request: keep the builds (minus removed parts and copies)
+    // and let the panel offer Start nesting / Re-arrange
+    const qty = new Map(s0.parts.map((p) => [p.id, p.quantity]));
+    const builds = s0.builds
+      .map((b) => ({ ...b, placements: b.placements.filter((pl) => pl.copy < (qty.get(pl.partId) ?? 0)) }))
+      .filter((b) => b.placements.length)
+      .map((b, i) => ({ ...b, name: `Build ${i + 1}` }));
+    const unplaced = s0.unplaced.filter((u) => u.copy < (qty.get(u.partId) ?? 0));
+    setBg({ stale: true, builds, unplaced, active: Math.min(s0.active, Math.max(0, builds.length - 1)) });
     return;
   }
   const run = ++generation;
@@ -221,7 +230,26 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
   const info = new Map<string, { q: Quaternion; min: Vector3; max: Vector3 }>();
   const items: PackItem[] = [];
   const autoTilts: Record<string, Tilt> = {};
-  for (const p of parts) {
+  // assembly groups: every member takes the orientation of the group's largest part
+  const leadOf = new Map<string, BuildPart>();
+  for (const p of parts)
+    if (p.group) {
+      const l = leadOf.get(p.group);
+      if (!l || partVolume(p.mesh) > partVolume(l.mesh)) leadOf.set(p.group, p);
+    }
+  const lead = (p: BuildPart) => (p.group ? leadOf.get(p.group)! : p);
+  const ordered = [...parts].sort((a, b) => Number(lead(a) !== a) - Number(lead(b) !== b));
+  for (const p of ordered) {
+    const l = lead(p);
+    if (l !== p) {
+      const q = info.get(l.id)!.q;
+      const b = rotatedBounds(p.mesh, q);
+      info.set(p.id, { q, ...b });
+      if (autoTilts[l.id]) autoTilts[p.id] = autoTilts[l.id];
+      for (let c = 0; c < p.quantity; c++)
+        items.push({ key: `${p.id}#${c}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z, fixed: !!l.lockRotation || undefined });
+      continue;
+    }
     if (p.lockRotation) {
       // locked orientation: exactly as it came from Mesh prep, only moved
       const q0 = new Quaternion();
@@ -251,7 +279,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     const nestParts = parts.map((p) => {
       const inf = info.get(p.id)!;
       const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
-      return { id: p.id, mesh: applyMatrix(p.mesh, m), count: p.quantity, fixed: !!p.lockRotation || !s.allowRotate };
+      return { id: p.id, mesh: applyMatrix(p.mesh, m), count: p.quantity, fixed: !!lead(p).lockRotation || !s.allowRotate };
     });
     const r = await runJob('Nesting in 3D', 'nest3d', {
       parts: nestParts,
@@ -261,9 +289,10 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
         clearance: gap,
         zOffset: s.zOffset,
         maxHeight: 0,
-        budget: { fast: 2.5e6, normal: 6e6, fine: 16e6 }[s.nestDetail ?? 'normal'],
+        budget: { fast: 10e6, normal: 40e6, fine: 320e6 }[s.nestDetail ?? 'normal'],
         rotations: s.allowRotate,
         interlockFree: true,
+        symmetric: s.symmetric !== false,
       },
     });
     if (!r || run !== generation) return setBg({ busy: false });
@@ -436,6 +465,31 @@ export function setTiltFor(ids: string[], tilt: Tilt | null) {
 }
 
 /** Lock or unlock the orientation of build parts. */
+/** Join parts into an assembly group: they all get the same orientation, so mating faces print at the same angle. */
+export function groupBuildParts(ids: string[]) {
+  if (ids.length < 2) return notify('warning', 'Select two or more parts that are assembled together');
+  const set = new Set(ids);
+  // joining parts that are already grouped merges their groups
+  const groups = new Set(bg().parts.filter((p) => set.has(p.id) && p.group).map((p) => p.group!));
+  const group = newId();
+  setBg({ parts: bg().parts.map((p) => (set.has(p.id) || (p.group && groups.has(p.group)) ? { ...p, group, tilt: null } : p)) });
+  notify('success', `${ids.length} parts grouped as an assembly: they keep the same orientation`);
+  scheduleRegenerate();
+}
+
+export function ungroupBuildParts(ids: string[]) {
+  const groups = new Set(bg().parts.filter((p) => ids.includes(p.id) && p.group).map((p) => p.group!));
+  setBg({ parts: bg().parts.map((p) => (p.group && groups.has(p.group) ? { ...p, group: undefined } : p)) });
+  scheduleRegenerate();
+}
+
+/** Short labels (A1, A2, …) for the assembly groups, in list order. */
+export function groupLabels(parts: BuildPart[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of parts) if (p.group && !out.has(p.group)) out.set(p.group, `A${out.size + 1}`);
+  return out;
+}
+
 export function setBuildRotationLock(ids: string[], lock: boolean) {
   const set = new Set(ids);
   setBg({ parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, lockRotation: lock, tilt: lock ? null : p.tilt } : p)) });
@@ -526,6 +580,7 @@ export function editPlacements(changes: { key: string; position?: Vec3; quaterni
 }
 
 /** Throw away hand edits and arrange everything again with the current settings. */
+/** Start nesting: arrange all parts now (replaces hand edits). */
 export function rearrangeBuilds() {
   setBg({ manual: false, stale: false });
   void regenerateBuilds(true);
