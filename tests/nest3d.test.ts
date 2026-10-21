@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxMesh, mergeMeshes, nest3d, interlockTest, turnPositions, voxelizePart, type MeshData } from '../src/geometry';
+import { boxMesh, mergeMeshes, nest3d, nestPlan, pickNest, interlockTest, turnPositions, turnVoxels, voxelizePart, type MeshData, type NestResult } from '../src/geometry';
 
 const move = (m: MeshData, t: [number, number, number]): MeshData => ({ positions: m.positions.map((v, i) => v + t[i % 3]), indices: m.indices });
 const place = (m: MeshData, turns: number, t: [number, number, number]) => move({ positions: turnPositions(m.positions, turns), indices: m.indices }, t);
@@ -149,5 +149,69 @@ describe('nest3d: cavities and patterns', () => {
     const sym = nest3d([{ id: 'L', mesh: L, count: 40 }], { ...params, volume: [120, 100, 100], symmetric: true });
     expect(sym.builds.length).toBeLessThanOrEqual(free.builds.length);
     expect(sym.builds[sym.builds.length - 1].height).toBeLessThanOrEqual(free.builds[free.builds.length - 1].height + 1e-9);
+  });
+});
+
+describe('turned voxels', () => {
+  it('cover the turned part exactly like voxelizing it turned', () => {
+    const m = move(lPart(), [0.37, -2.21, 0.13]);
+    const h = 0.7;
+    let v = voxelizePart(m, h);
+    for (let k = 1; k < 4; k++) {
+      v = turnVoxels(v, h);
+      const turned = { positions: turnPositions(m.positions, k), indices: m.indices };
+      const direct = voxelizePart(turned, h);
+      expect(Math.abs(v.count - direct.count) / direct.count).toBeLessThan(0.15);
+      // every vertex and triangle centre of the turned part lies in an occupied voxel
+      const p = turned.positions, idx = turned.indices;
+      const inCell = (x: number, y: number, z: number) => {
+        const i = Math.floor((x - v.min[0]) / h + 1e-6), j = Math.floor((y - v.min[1]) / h + 1e-6), kk = Math.floor((z - v.min[2]) / h + 1e-6);
+        const ok = (a: number, b: number, c: number) => a >= 0 && b >= 0 && c >= 0 && a < v.nx && b < v.ny && c < v.nz && v.solid[a + v.nx * (b + v.ny * c)] === 1;
+        // on a cell boundary either side counts
+        for (const di of [0, -1]) for (const dj of [0, -1]) for (const dk of [0, -1]) {
+          const fx = (x - v.min[0]) / h, fy = (y - v.min[1]) / h, fz = (z - v.min[2]) / h;
+          if ((di && Math.abs(fx - Math.round(fx)) > 1e-4) || (dj && Math.abs(fy - Math.round(fy)) > 1e-4) || (dk && Math.abs(fz - Math.round(fz)) > 1e-4)) continue;
+          if (ok(i + di, j + dj, kk + dk)) return true;
+        }
+        return false;
+      };
+      for (let t = 0; t < idx.length; t += 3) {
+        const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+        expect(inCell(p[a], p[a + 1], p[a + 2])).toBe(true);
+        expect(inCell((p[a] + p[b] + p[c]) / 3, (p[a + 1] + p[b + 1] + p[c + 1]) / 3, (p[a + 2] + p[b + 2] + p[c + 2]) / 3)).toBe(true);
+      }
+    }
+  });
+});
+
+describe('nesting variants', () => {
+  const params = { margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: true, volume: [120, 100, 100] as [number, number, number] };
+  it('Fine tries everything Normal tries (never less dense)', () => {
+    for (const sym of [true, false]) {
+      const key = (v: { order: string; pattern: boolean }, b: number) => `${b}:${v.order}:${v.pattern}`;
+      const normal = nestPlan('normal', sym).flatMap((j) => j.variants.map((v) => key(v, j.budget)));
+      const fine = new Set(nestPlan('fine', sym).flatMap((j) => j.variants.map((v) => key(v, j.budget))));
+      for (const k of normal) expect(fine.has(k)).toBe(true);
+    }
+  });
+
+  it('keeps the densest variant', () => {
+    const parts = [
+      { id: 'L', mesh: lPart(), count: 10 },
+      { id: 'b', mesh: boxMesh([0, 0, 0], [30, 10, 25]), count: 6 },
+    ];
+    const one = (order: 'volume' | 'height' | 'box' | 'footprint') => nest3d(parts, { ...params, variants: [{ order, pattern: false }] });
+    const singles = (['volume', 'height', 'box', 'footprint'] as const).map(one);
+    const all = nest3d(parts, { ...params, variants: (['volume', 'height', 'box', 'footprint'] as const).map((order) => ({ order, pattern: false })) });
+    const best = Math.min(...singles.map((r) => r.builds[r.builds.length - 1].height + 1000 * r.builds.length));
+    expect(all.builds[all.builds.length - 1].height + 1000 * all.builds.length).toBeCloseTo(best, 6);
+  });
+
+  it('pickNest prefers fewer builds, then a lower last build, and a pattern on a tie', () => {
+    const r = (heights: number[], pattern = false): NestResult => ({ builds: heights.map((height) => ({ placements: [], height, utilization: 0 })), unplaced: [], voxel: 1, variant: { order: 'volume', pattern } });
+    expect(pickNest(r([300, 100]), r([300]))!.builds.length).toBe(1);
+    expect(pickNest(r([120]), r([110]))!.builds[0].height).toBe(110);
+    expect(pickNest(r([110]), r([110], true))!.variant!.pattern).toBe(true);
+    expect(pickNest(r([110], true), r([109]))!.variant!.pattern).toBe(false);
   });
 });

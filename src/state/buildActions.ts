@@ -6,10 +6,11 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, fitsPlatform, meshVolume, packBuilds, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, chooseNestVoxel, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, type NestPart, type NestParams, type NestResult, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, getState, notify, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, runJob } from './actions';
+import { pool, CancelledError } from '../workers/client';
 import { nextColor } from './palette';
 import { printerById, type Printer } from './printers';
 import type { Build, BuildGenState, BuildPart, BuildPlacement, Part, Tilt } from './types';
@@ -200,6 +201,29 @@ export async function regenerateBuilds(force = false) {
   }
 }
 
+/** Run nesting jobs in parallel workers under one progress card (Cancel stops all); returns the densest result. */
+async function runNestJobs(jobs: { parts: NestPart[]; params: NestParams }[]): Promise<NestResult | null> {
+  const progress = jobs.map(() => 0);
+  let handles: ReturnType<typeof pool.run<'nest3d'>>[] = [];
+  const job = startJob('Nesting in 3D', () => handles.forEach((h) => h.cancel()));
+  handles = jobs.map((args, i) =>
+    pool.run('nest3d', args, (f, m) => {
+      progress[i] = f;
+      job.progress(progress.reduce((a, b) => a + b, 0) / jobs.length, jobs.length > 1 ? `${m ?? ''} · trying ${jobs.length} ways in parallel` : m);
+    }),
+  );
+  try {
+    return pickNest(...(await Promise.all(handles.map((h) => h.promise))));
+  } catch (e) {
+    handles.forEach((h) => h.cancel());
+    if (e instanceof CancelledError) notify('info', 'Nesting cancelled');
+    else notify('error', `Nesting failed: ${(e as Error).message}`);
+    return null;
+  } finally {
+    job.end();
+  }
+}
+
 async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof startJob>) {
   // 1. "largest flat face down" orientation, cached per mesh
   const toOrient = s0.parts.filter((p) => s0.autoOrient && !p.lockRotation && !(p.orient && p.orient.mesh === p.mesh)).length;
@@ -281,20 +305,21 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
       const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
       return { id: p.id, mesh: applyMatrix(p.mesh, m), count: p.quantity, fixed: !!lead(p).lockRotation || !s.allowRotate };
     });
-    const r = await runJob('Nesting in 3D', 'nest3d', {
-      parts: nestParts,
-      params: {
-        volume,
-        margin: s.margin,
-        clearance: gap,
-        zOffset: s.zOffset,
-        maxHeight: 0,
-        budget: { fast: 10e6, normal: 40e6, fine: 320e6 }[s.nestDetail ?? 'normal'],
-        rotations: s.allowRotate,
-        interlockFree: true,
-        symmetric: s.symmetric !== false,
-      },
-    });
+    const params = {
+      volume,
+      margin: s.margin,
+      clearance: gap,
+      zOffset: s.zOffset,
+      maxHeight: 0,
+      rotations: s.allowRotate,
+      interlockFree: true,
+    };
+    // several ways of nesting side by side (one per worker); the densest is kept
+    let plan = nestPlan(s.nestDetail ?? 'normal', s.symmetric !== false && nestParts.some((p) => p.count > 1));
+    const base = chooseNestVoxel({ ...params, budget: plan[0].budget });
+    // a bigger budget that does not make the (clearance-aligned) grid finer would only repeat the work
+    plan = plan.filter((jb, i) => i === 0 || jb.budget === plan[0].budget || chooseNestVoxel({ ...params, budget: jb.budget }) < base - 1e-9);
+    const r = await runNestJobs(plan.map((jb) => ({ parts: nestParts, params: { ...params, budget: jb.budget, variants: jb.variants } })));
     if (!r || run !== generation) return setBg({ busy: false });
     const builds: Build[] = r.builds.map((b, i) => ({
       name: `Build ${i + 1}`,

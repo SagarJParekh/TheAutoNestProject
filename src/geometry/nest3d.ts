@@ -5,23 +5,27 @@
  * shapes, corners).
  *
  * Each part is voxelized exactly (every voxel its surface touches, the
- * inside, and cavities closed off from the outside). The voxel size is
- * chosen so the clearance is a whole number of voxels; placed parts are
- * grown by that many voxels ("keep-out"), so the gap between real surfaces
- * is always at least the clearance, without extra slack.
+ * inside, and cavities closed off from the outside), once: the other three
+ * quarter turns are the same voxels turned. The voxel size is chosen so the
+ * clearance is a whole number of voxels. Placed parts keep out every voxel
+ * whose cube comes closer than the clearance to one of their cubes (true
+ * distance, so the keep-out has rounded corners), so the gap between real
+ * surfaces is always at least the clearance.
  *
- * Placement is lowest-first (Z, then Y, then X) over four 90° turns. Copies
- * of the same part first try a regular pattern (rows / columns / layers)
- * next to the earlier copies, but a pattern spot is only taken when it packs
- * at least as well as the free search (packing density comes first).
+ * Placement is lowest-first (Z, then Y, then X) over four 90° turns. A run
+ * can place the copies of a part in a regular pattern (rows / columns /
+ * layers) where that costs nothing. Several variants (order of the parts,
+ * pattern or not) can be tried; the densest is kept.
  *
  * No interlocking: a spot is only accepted if the part can slide straight
  * out of the build (±X, ±Y or ±Z) past every part placed before it; then all
  * parts can be taken out in reverse order.
  *
- * Speed: grids are bit sets (1 bit per voxel) scanned 32 voxels at a time;
- * copies of a part continue their search where the previous copy stopped
- * (spots that failed once can never become free again).
+ * Speed: grids are bit sets (1 bit per voxel) scanned 32 voxels at a time; a
+ * blocked run jumps straight to the next free gap long enough for it; rows
+ * without a long enough free run are skipped whole; copies of a part continue
+ * their search where the previous copy stopped (spots that failed once can
+ * never become free again); the way-out check uses per-column extremes.
  */
 import type { MeshData, Vec3 } from './mesh';
 import { isWatertight } from './analysis';
@@ -57,6 +61,21 @@ export interface NestParams {
   interlockFree?: boolean;
   /** also nest with the copies of each part in regular patterns, and keep that when it needs no more builds and is no taller (default true) */
   symmetric?: boolean;
+  /**
+   * Nest several ways (order of the parts, copies in patterns or not) and keep
+   * the densest: fewest builds, then the lowest last build; a pattern run wins
+   * a tie. Default: largest first, free, plus the same in patterns when
+   * `symmetric`.
+   */
+  variants?: NestVariant[];
+}
+
+/** Order in which parts are placed: largest volume, tallest, largest bounding box or largest footprint first. */
+export type NestOrder = 'volume' | 'height' | 'box' | 'footprint';
+export interface NestVariant {
+  order: NestOrder;
+  /** copies of a part in regular patterns where that costs no density */
+  pattern: boolean;
 }
 
 export interface NestPlacement {
@@ -83,6 +102,8 @@ export interface NestResult {
   builds: NestBuild[];
   unplaced: { key: string; reason: string }[];
   voxel: number;
+  /** the variant that was kept */
+  variant?: NestVariant;
 }
 
 // ---------------------------------------------------------------- part voxels
@@ -207,6 +228,32 @@ export function voxelizePart(mesh: MeshData, h: number, closed = isWatertight(me
   };
 }
 
+/**
+ * The voxels of the part turned a quarter turn about Z ((x, y) → (−y, x)).
+ * A quarter turn maps voxel cubes onto voxel cubes, so this is exactly the
+ * voxelization of the turned part (on a grid anchored at its new corner).
+ */
+export function turnVoxels(v: PartVoxels, h: number): PartVoxels {
+  const { nx, ny, nz } = v;
+  const tx = ny,
+    ty = nx;
+  const solid = turnCells(v.solid, nx, ny, nz);
+  // the new grid's low x corner is where the old grid's high y corner went
+  const min: Vec3 = [-(v.min[1] + ny * h), v.min[0], v.min[2]];
+  return { nx: tx, ny: ty, nz, min, solid, runs: rowRuns(solid, tx, ty, nz), count: v.count };
+}
+
+/** A cell grid turned a quarter turn about Z: cell (i, j, k) goes to (ny − 1 − j, i, k) of an ny × nx × nz grid. */
+function turnCells(cells: Uint8Array, nx: number, ny: number, nz: number): Uint8Array {
+  const out = new Uint8Array(cells.length);
+  for (let k = 0; k < nz; k++)
+    for (let j = 0; j < ny; j++) {
+      const o = nx * (j + ny * k);
+      for (let i = 0; i < nx; i++) if (cells[o + i]) out[ny - 1 - j + ny * (i + nx * k)] = 1;
+    }
+  return out;
+}
+
 /** Fill empty voxels that cannot be reached from outside the part's box. */
 function fillEnclosed(solid: Uint8Array, nx: number, ny: number, nz: number) {
   const seen = new Uint8Array(solid.length);
@@ -252,38 +299,85 @@ function rowRuns(solid: Uint8Array, nx: number, ny: number, nz: number): Int32Ar
   return Int32Array.from(out);
 }
 
-/** Grow a voxel set by d voxels in every direction (cube). Returns a grid padded by d on each side. */
-export function dilate(v: PartVoxels, d: number): { nx: number; ny: number; nz: number; cells: Uint8Array } {
-  const nx = v.nx + 2 * d,
-    ny = v.ny + 2 * d,
-    nz = v.nz + 2 * d;
-  let a = new Uint8Array(nx * ny * nz);
-  for (let k = 0; k < v.nz; k++) for (let j = 0; j < v.ny; j++) for (let i = 0; i < v.nx; i++) if (v.solid[i + v.nx * (j + v.ny * k)]) a[i + d + nx * (j + d + ny * (k + d))] = 1;
-  if (d <= 0) return { nx, ny, nz, cells: a };
-  const pass = (stride: number, n: number, lines: (cb: (start: number) => void) => void) => {
-    const b = new Uint8Array(a.length);
-    lines((start) => {
-      // running count of set cells in the window [i - d, i + d]
-      let count = 0;
-      for (let q = 0; q < Math.min(n, d); q++) count += a[start + q * stride];
-      for (let i = 0; i < n; i++) {
-        if (i + d < n) count += a[start + (i + d) * stride];
-        if (i - d - 1 >= 0) count -= a[start + (i - d - 1) * stride];
-        b[start + i * stride] = count > 0 ? 1 : 0;
-      }
-    });
-    a = b;
+/** 1D squared distance transform (Felzenszwalb & Huttenlocher) of f along a line, in place via scratch arrays. */
+function edt1d(f: Float64Array, n: number, d: Float64Array, v: Int32Array, z: Float64Array) {
+  let k = 0;
+  v[0] = 0;
+  z[0] = -Infinity;
+  z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    if (f[q] === Infinity) continue;
+    if (f[v[k]] === Infinity) {
+      v[k] = q;
+      continue;
+    }
+    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      k--;
+      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k++;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = Infinity;
+  }
+  if (f[v[0]] === Infinity) {
+    d.fill(Infinity, 0, n);
+    return;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+  }
+}
+
+/**
+ * Keep-out of a part: every voxel whose cube comes closer than `r` voxels to
+ * a cube of the part (true distance between the cubes, so the corners are
+ * rounded, not a bigger cube). A part whose voxels stay out of it is at
+ * least r·h away from this one. Returns a grid padded by `pad` on each side.
+ */
+export function dilate(v: PartVoxels, r: number): { nx: number; ny: number; nz: number; pad: number; cells: Uint8Array } {
+  // cubes closer than r ⇔ centres within r of the part grown by one voxel (cube)
+  const pad = Math.max(1, Math.ceil(r - 1e-9)) + 1;
+  const nx = v.nx + 2 * pad,
+    ny = v.ny + 2 * pad,
+    nz = v.nz + 2 * pad;
+  const N = nx * ny * nz;
+  const g = new Float64Array(N).fill(Infinity);
+  for (let k = 0; k < v.nz; k++)
+    for (let j = 0; j < v.ny; j++)
+      for (let i = 0; i < v.nx; i++)
+        if (v.solid[i + v.nx * (j + v.ny * k)])
+          for (let c = -1; c <= 1; c++)
+            for (let b = -1; b <= 1; b++)
+              for (let a = -1; a <= 1; a++) g[i + pad + a + nx * (j + pad + b + ny * (k + pad + c))] = 0;
+  const m = Math.max(nx, ny, nz);
+  const f = new Float64Array(m),
+    d = new Float64Array(m),
+    vv = new Int32Array(m),
+    z = new Float64Array(m + 1);
+  const pass = (n: number, stride: number, starts: number[]) => {
+    for (const s0 of starts) {
+      for (let q = 0; q < n; q++) f[q] = g[s0 + q * stride];
+      edt1d(f, n, d, vv, z);
+      for (let q = 0; q < n; q++) g[s0 + q * stride] = d[q];
+    }
   };
-  pass(1, nx, (cb) => {
-    for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) cb(nx * (j + ny * k));
-  });
-  pass(nx, ny, (cb) => {
-    for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) cb(i + nx * ny * k);
-  });
-  pass(nx * ny, nz, (cb) => {
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) cb(i + nx * j);
-  });
-  return { nx, ny, nz, cells: a };
+  const sx: number[] = [],
+    sy: number[] = [],
+    sz: number[] = [];
+  for (let k = 0; k < nz; k++) for (let j = 0; j < ny; j++) sx.push(nx * (j + ny * k));
+  for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) sy.push(i + nx * ny * k);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) sz.push(i + nx * j);
+  pass(nx, 1, sx);
+  pass(ny, nx, sy);
+  pass(nz, nx * ny, sz);
+  const r2 = r * r - 1e-9;
+  const cells = new Uint8Array(N);
+  for (let i = 0; i < N; i++) if (g[i] < r2) cells[i] = 1;
+  return { nx, ny, nz, pad, cells };
 }
 
 /** A part in one turn, ready for placing: solid runs, keep-out runs, escape profiles. */
@@ -300,10 +394,25 @@ interface Shape {
   /** per (i, k): lowest / highest solid j */
   depLo: Int16Array;
   depHi: Int16Array;
+  /** the longest solid runs (one per row): [j, k, len, …]; a row of the build without a free run that long rules out a whole row of spots */
+  keyRows: Int32Array;
+  /** offsets of the runs in a spread-out test order */
+  order: Int32Array;
+  /** non-empty columns (i + nx·j), rows (j + ny·k) and depth lines (i + nx·k), for the way-out check */
+  cols: Int32Array;
+  rows: Int32Array;
+  deps: Int32Array;
 }
 
-function makeShape(v: PartVoxels, d: number): Shape {
-  const keep = dilate(v, d);
+type Keep = ReturnType<typeof dilate>;
+
+/** The keep-out grid turned with its part (the clearance is the same in every direction). */
+function turnKeep(k: Keep): Keep {
+  return { nx: k.ny, ny: k.nx, nz: k.nz, pad: k.pad, cells: turnCells(k.cells, k.nx, k.ny, k.nz) };
+}
+
+function makeShape(v: PartVoxels, keep: Keep): Shape {
+  const d = keep.pad;
   const kr = rowRuns(keep.cells, keep.nx, keep.ny, keep.nz);
   for (let q = 0; q < kr.length; q += 4) {
     kr[q] -= d;
@@ -331,7 +440,33 @@ function makeShape(v: PartVoxels, d: number): Shape {
         if (depLo[dp] < 0) depLo[dp] = j;
         depHi[dp] = j;
       }
-  return { v, keepRuns: kr, colLo, colHi, rowLo, rowHi, depLo, depHi };
+  // longest run per row, the longest rows first
+  const r = v.runs;
+  const longest = new Map<number, [number, number, number]>();
+  for (let q = 0; q < r.length; q += 4) {
+    const row = r[q] + ny * r[q + 1];
+    const cur = longest.get(row);
+    if (!cur || r[q + 3] > cur[2]) longest.set(row, [r[q], r[q + 1], r[q + 3]]);
+  }
+  const keyRows = Int32Array.from(
+    [...longest.values()]
+      .sort((a, b) => b[2] - a[2])
+      .slice(0, 8)
+      .flat(),
+  );
+  // golden-ratio stride through the runs
+  const m = r.length / 4;
+  const order = new Int32Array(m);
+  let stride = Math.max(1, Math.round(m * 0.618));
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  while (m > 1 && gcd(stride, m) !== 1) stride++;
+  for (let i = 0; i < m; i++) order[i] = ((i * stride) % m) * 4;
+  const nonEmpty = (a: Int16Array) => {
+    const out: number[] = [];
+    for (let i = 0; i < a.length; i++) if (a[i] >= 0) out.push(i);
+    return Int32Array.from(out);
+  };
+  return { v, keepRuns: kr, colLo, colHi, rowLo, rowHi, depLo, depHi, keyRows, order, cols: nonEmpty(colLo), rows: nonEmpty(rowLo), deps: nonEmpty(depLo) };
 }
 
 // ---------------------------------------------------------------- bit grid
@@ -367,6 +502,28 @@ class BitGrid {
     }
     return Math.min(this.gx, (w << 5) + ctz(x));
   }
+  /** first clear bit at index >= from in row (j, k), or gx */
+  nextClear(j: number, k: number, from: number): number {
+    if (from >= this.gx) return this.gx;
+    const b = this.base(j, k);
+    let w = from >> 5;
+    let x = ~this.bits[b + w] & (~0 << (from & 31));
+    while (!x) {
+      if (++w >= this.words) return this.gx;
+      x = ~this.bits[b + w];
+    }
+    return Math.min(this.gx, (w << 5) + ctz(x));
+  }
+  /** longest run of clear bits in row (j, k) */
+  longestClear(j: number, k: number): number {
+    let best = 0;
+    for (let x = this.nextClear(j, k, 0); x < this.gx; ) {
+      const e = this.nextSet(j, k, x);
+      if (e - x > best) best = e - x;
+      x = this.nextClear(j, k, e);
+    }
+    return best;
+  }
   setRange(j: number, k: number, x0: number, len: number) {
     const b = this.base(j, k);
     let x = Math.max(0, x0);
@@ -401,6 +558,17 @@ class Build {
       slot: [number, number, number];
     }
   >();
+  /** longest free (not kept-out) run per row (j, k) */
+  readonly freeRun: Uint16Array;
+  /** extremes of the placed parts' voxels: per column (i, j) in Z, per (i, k) in Y, per row (j, k) in X */
+  readonly zHi: Int16Array;
+  readonly zLo: Int16Array;
+  readonly yHi: Int16Array;
+  readonly yLo: Int16Array;
+  readonly xHi: Int16Array;
+  readonly xLo: Int16Array;
+  private readonly touched: Uint32Array;
+  private stampNo = 0;
   constructor(
     readonly gx: number,
     readonly gy: number,
@@ -408,68 +576,104 @@ class Build {
   ) {
     this.keep = new BitGrid(gx, gy, gz);
     this.raw = new BitGrid(gx, gy, gz);
+    this.freeRun = new Uint16Array(gy * gz).fill(gx);
+    this.zHi = new Int16Array(gx * gy).fill(-1);
+    this.zLo = new Int16Array(gx * gy).fill(gz);
+    this.yHi = new Int16Array(gx * gz).fill(-1);
+    this.yLo = new Int16Array(gx * gz).fill(gy);
+    this.xHi = new Int16Array(gy * gz).fill(-1);
+    this.xLo = new Int16Array(gy * gz).fill(gx);
+    this.touched = new Uint32Array(gy * gz);
   }
 
-  /** -1 when the shape fits at X,Y,Z; otherwise how far X can skip. `hint` = index of the run that failed last time. */
-  fits(s: Shape, X: number, Y: number, Z: number, hint: { r: number }): number {
+  /**
+   * -1 when the shape fits at X,Y,Z; otherwise how far X can skip. Runs are
+   * tested in a spread-out order (neighbouring rows usually agree), the ones
+   * that failed recently first (`hint`, move to front).
+   */
+  fits(s: Shape, X: number, Y: number, Z: number, hint: Int32Array, from = 0, to = s.order.length): number {
     const r = s.v.runs;
-    const n = r.length;
-    for (let t = 0; t < n; t += 4) {
-      // try the run that failed last time first
-      const q = (hint.r + t) % n;
+    const order = s.order;
+    const nh = from ? 0 : hint.length;
+    for (let t = from - nh; t < to; t++) {
+      const q = t < from ? hint[t - from + nh] : order[t];
+      if (q < 0) continue;
       const x0 = X + r[q + 2];
-      const occ = this.keep.nextSet(Y + r[q], Z + r[q + 1], x0);
-      if (occ < x0 + r[q + 3]) {
-        hint.r = q;
-        return occ - x0 + 1;
+      const j = Y + r[q],
+        k = Z + r[q + 1],
+        len = r[q + 3];
+      const occ = this.keep.nextSet(j, k, x0);
+      if (occ < x0 + len) {
+        if (t >= from || t > from - nh) {
+          // move to front
+          let p = nh - 1;
+          for (let i = 0; i < nh; i++)
+            if (hint[i] === q) {
+              p = i;
+              break;
+            }
+          for (let i = p; i > 0; i--) hint[i] = hint[i - 1];
+          hint[0] = q;
+        }
+        // jump to the next free gap of the row that is long enough for this run
+        let a = occ;
+        for (;;) {
+          const e = this.keep.nextClear(j, k, a);
+          if (e >= this.keep.gx) return this.keep.gx;
+          const f = this.keep.nextSet(j, k, e);
+          if (f - e >= len) return e - x0;
+          a = f;
+        }
       }
     }
     return -1;
   }
 
-  /** Can the shape, placed at X,Y,Z, slide straight out of the build past the parts already placed? */
-  escapes(s: Shape, X: number, Y: number, Z: number): boolean {
-    const { gx, gy, gz, raw } = this;
-    const { nx, ny, nz } = s.v;
-    // ±X along rows (whole row from the first solid voxel on, including the part's own holes)
-    let px = true,
-      mx = true;
-    for (let k = 0; k < nz && (px || mx); k++)
-      for (let j = 0; j < ny && (px || mx); j++) {
-        const lo = s.rowLo[j + ny * k];
-        if (lo < 0) continue;
-        const hi = s.rowHi[j + ny * k];
-        if (px && raw.nextSet(Y + j, Z + k, X + lo + 1) < gx) px = false;
-        if (mx) {
-          const first = raw.nextSet(Y + j, Z + k, 0);
-          if (first <= X + hi - 1) mx = false;
+  /** Is direction d (0 up, 1 +X, 2 −X, 3 +Y, 4 −Y, 5 down) blocked for the q-th column / row of the shape at X,Y,Z? */
+  private blockedAt(s: Shape, d: number, q: number, X: number, Y: number, Z: number): boolean {
+    const { nx, ny } = s.v;
+    if (d === 0 || d === 5) {
+      const c = s.cols[q],
+        i = c % nx,
+        j = (c / nx) | 0;
+      const g = X + i + this.gx * (Y + j);
+      return d === 0 ? this.zHi[g] > Z + s.colLo[c] : this.zLo[g] < Z + s.colHi[c];
+    }
+    if (d < 3) {
+      const r = s.rows[q],
+        j = r % ny,
+        k = (r / ny) | 0;
+      const g = Y + j + this.gy * (Z + k);
+      return d === 1 ? this.xHi[g] > X + s.rowLo[r] : this.xLo[g] < X + s.rowHi[r];
+    }
+    const e = s.deps[q],
+      i = e % nx,
+      k = (e / nx) | 0;
+    const g = X + i + this.gx * (Z + k);
+    return d === 3 ? this.yHi[g] > Y + s.depLo[e] : this.yLo[g] < Y + s.depHi[e];
+  }
+
+  /**
+   * Can the shape, placed at X,Y,Z, slide straight out of the build past the
+   * parts already placed (up first: parts are placed lowest first)? `hint`
+   * holds, per direction, the column / row that blocked last time; it is
+   * tested first.
+   */
+  escapes(s: Shape, X: number, Y: number, Z: number, hint: Int32Array = new Int32Array(6)): boolean {
+    for (let d = 0; d < 6; d++) {
+      const n = d === 0 || d === 5 ? s.cols.length : d < 3 ? s.rows.length : s.deps.length;
+      const h0 = hint[d] < n ? hint[d] : 0;
+      if (n && this.blockedAt(s, d, h0, X, Y, Z)) continue;
+      let free = true;
+      for (let q = 0; q < n; q++)
+        if (q !== h0 && this.blockedAt(s, d, q, X, Y, Z)) {
+          hint[d] = q;
+          free = false;
+          break;
         }
-      }
-    if (px || mx) return true;
-    // ±Z along columns
-    let up = true,
-      down = true;
-    for (let j = 0; j < ny && (up || down); j++)
-      for (let i = 0; i < nx && (up || down); i++) {
-        const lo = s.colLo[i + nx * j];
-        if (lo < 0) continue;
-        const hi = s.colHi[i + nx * j];
-        if (up) for (let k = Z + lo + 1; k < gz && up; k++) if (raw.get(X + i, Y + j, k)) up = false;
-        if (down) for (let k = Z + hi - 1; k >= 0 && down; k--) if (raw.get(X + i, Y + j, k)) down = false;
-      }
-    if (up || down) return true;
-    // ±Y
-    let py = true,
-      my = true;
-    for (let k = 0; k < nz && (py || my); k++)
-      for (let i = 0; i < nx && (py || my); i++) {
-        const lo = s.depLo[i + nx * k];
-        if (lo < 0) continue;
-        const hi = s.depHi[i + nx * k];
-        if (py) for (let j = Y + lo + 1; j < gy && py; j++) if (raw.get(X + i, j, Z + k)) py = false;
-        if (my) for (let j = Y + hi - 1; j >= 0 && my; j--) if (raw.get(X + i, j, Z + k)) my = false;
-      }
-    return py || my;
+      if (free) return true;
+    }
+    return false;
   }
 
   /** Lowest spot (Z, then Y, then X) from lex index `from` on where the shape fits (and can slide out). */
@@ -477,60 +681,133 @@ class Build {
     const { gx, gy, gz } = this;
     const { nx, ny, nz } = s.v;
     if (nx > gx || ny > gy || nz > gz) return null;
-    const hint = { r: 0 };
+    const hint = new Int32Array(6).fill(-1);
+    const escHint = new Int32Array(6);
     let Z = Math.floor(from / (gx * gy)),
       Y = Math.floor(from / gx) % gy,
       X = from % gx;
     for (; Z + nz <= gz; Z++, Y = 0)
       for (; Y + ny <= gy; Y++, X = 0) {
+        // a row of the build without a free run as long as one of the part's rows cannot take it anywhere
+        let hopeless = false;
+        const kr = s.keyRows;
+        for (let q = 0; q < kr.length; q += 3)
+          if (this.freeRun[Y + kr[q] + gy * (Z + kr[q + 1])] < kr[q + 2]) {
+            hopeless = true;
+            break;
+          }
+        if (hopeless) continue;
+        const split = Math.min(s.order.length, 48);
         while (X + nx <= gx) {
-          const skip = this.fits(s, X, Y, Z, hint);
+          // a few runs first, then the (cheaper than all runs) way-out check, then the remaining runs
+          let skip = this.fits(s, X, Y, Z, hint, 0, split);
           if (skip > 0) {
             X += skip;
             continue;
           }
-          if (!interlockFree || this.escapes(s, X, Y, Z)) return { pos: [X, Y, Z], lex: X + gx * (Y + gy * Z) };
-          X++;
+          if (interlockFree && !this.escapes(s, X, Y, Z, escHint)) {
+            X++;
+            continue;
+          }
+          skip = this.fits(s, X, Y, Z, hint, split);
+          if (skip > 0) {
+            X += skip;
+            continue;
+          }
+          return { pos: [X, Y, Z], lex: X + gx * (Y + gy * Z) };
         }
       }
     return null;
   }
 
   stamp(s: Shape, X: number, Y: number, Z: number) {
-    const { gy, gz } = this;
+    const { gx, gy, gz } = this;
     const r = s.v.runs;
-    for (let q = 0; q < r.length; q += 4) this.raw.setRange(Y + r[q], Z + r[q + 1], X + r[q + 2], r[q + 3]);
+    for (let q = 0; q < r.length; q += 4) {
+      const j = Y + r[q],
+        k = Z + r[q + 1],
+        x0 = X + r[q + 2],
+        x1 = x0 + r[q + 3] - 1;
+      this.raw.setRange(j, k, x0, r[q + 3]);
+      const row = j + gy * k;
+      if (x1 > this.xHi[row]) this.xHi[row] = x1;
+      if (x0 < this.xLo[row]) this.xLo[row] = x0;
+      for (let x = x0; x <= x1; x++) {
+        const c = x + gx * j,
+          d = x + gx * k;
+        if (k > this.zHi[c]) this.zHi[c] = k;
+        if (k < this.zLo[c]) this.zLo[c] = k;
+        if (j > this.yHi[d]) this.yHi[d] = j;
+        if (j < this.yLo[d]) this.yLo[d] = j;
+      }
+    }
     const kr = s.keepRuns;
+    const no = ++this.stampNo;
     for (let q = 0; q < kr.length; q += 4) {
       const j = Y + kr[q],
         k = Z + kr[q + 1];
       if (j < 0 || j >= gy || k < 0 || k >= gz) continue;
       this.keep.setRange(j, k, X + kr[q + 2], kr[q + 3]);
+      this.touched[j + gy * k] = no;
+    }
+    // longest free runs of the rows that changed
+    for (let q = 0; q < kr.length; q += 4) {
+      const j = Y + kr[q],
+        k = Z + kr[q + 1];
+      if (j < 0 || j >= gy || k < 0 || k >= gz || this.touched[j + gy * k] !== no) continue;
+      this.touched[j + gy * k] = 0;
+      this.freeRun[j + gy * k] = this.keep.longestClear(j, k);
     }
     this.top = Math.max(this.top, Z + s.v.nz);
   }
 }
 
-/** Smallest step along an axis at which a copy of the shape clears the first one (by the clearance). */
+/**
+ * Smallest step along an axis at which a copy of the shape clears the first
+ * one (by the clearance): every pair of a solid run and a keep-out run rules
+ * out the steps at which they would overlap.
+ */
 function patternStep(s: Shape, axis: 0 | 1 | 2): number {
-  const { nx, ny, nz } = s.v;
-  const n = [nx, ny, nz][axis];
-  // keep-out of the first copy as a set
-  const key = (i: number, j: number, k: number) => `${i},${j},${k}`;
-  const keepSet = new Set<string>();
-  const kr = s.keepRuns;
-  for (let q = 0; q < kr.length; q += 4) for (let x = kr[q + 2]; x < kr[q + 2] + kr[q + 3]; x++) keepSet.add(key(x, kr[q], kr[q + 1]));
-  const r = s.v.runs;
-  for (let step = 1; step <= n + 64; step++) {
-    let clash = false;
-    for (let q = 0; q < r.length && !clash; q += 4) {
-      const j = r[q] + (axis === 1 ? step : 0),
-        k = r[q + 1] + (axis === 2 ? step : 0);
-      for (let x = r[q + 2]; x < r[q + 2] + r[q + 3] && !clash; x++) if (keepSet.has(key(x + (axis === 0 ? step : 0), j, k))) clash = true;
+  const r = s.v.runs,
+    kr = s.keepRuns;
+  const n = [s.v.nx, s.v.ny, s.v.nz][axis];
+  const maxS = n + 2 * (Math.max(...[s.v.nx, s.v.ny, s.v.nz]) + 2);
+  const bad = new Uint8Array(maxS + 1);
+  const forbid = (lo: number, hi: number) => {
+    for (let t = Math.max(1, lo); t <= Math.min(maxS, hi); t++) bad[t] = 1;
+  };
+  // group runs: along X by row (j, k); along Y by plane k; along Z by plane j
+  const group = (runs: Int32Array) => {
+    const m = new Map<number, number[]>();
+    for (let q = 0; q < runs.length; q += 4) {
+      const key = axis === 0 ? runs[q] * 100003 + runs[q + 1] : axis === 1 ? runs[q + 1] : runs[q];
+      let l = m.get(key);
+      if (!l) m.set(key, (l = []));
+      l.push(q);
     }
-    if (!clash) return step;
+    return m;
+  };
+  const gs = group(r),
+    gk = group(kr);
+  for (const [key, sl] of gs) {
+    const kl = gk.get(key);
+    if (!kl) continue;
+    for (const a of sl)
+      for (const b of kl) {
+        const a0 = r[a + 2],
+          al = r[a + 3],
+          b0 = kr[b + 2],
+          bl = kr[b + 3];
+        if (axis === 0) forbid(b0 - a0 - al + 1, b0 + bl - a0 - 1);
+        else if (a0 < b0 + bl && b0 < a0 + al) {
+          // overlapping in x: the step that brings the solid row onto the keep-out row
+          const t = axis === 1 ? kr[b] - r[a] : kr[b + 1] - r[a + 1];
+          if (t >= 1 && t <= maxS) bad[t] = 1;
+        }
+      }
   }
-  return n + 64;
+  for (let t = 1; t <= maxS; t++) if (!bad[t]) return t;
+  return maxS + 1;
 }
 
 // ---------------------------------------------------------------- nesting
@@ -550,6 +827,50 @@ export function chooseNestVoxel(p: Pick<NestParams, 'volume' | 'margin' | 'zOffs
   return hb;
 }
 
+/**
+ * What to run for a nesting detail level: one entry per worker, each a voxel
+ * budget and the variants that worker tries (sharing one voxelization). Fine
+ * tries everything Normal does and more, so it is never less dense.
+ */
+export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): { budget: number; variants: NestVariant[] }[] {
+  const v = (order: NestOrder, pattern = false): NestVariant => ({ order, pattern });
+  const pat = (order: NestOrder) => (symmetric ? [v(order, true)] : []);
+  if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume')] }, ...(symmetric ? [{ budget: 40e6, variants: pat('volume') }] : [])];
+  const B = 320e6;
+  if (detail === 'normal')
+    return [
+      { budget: B, variants: [v('volume'), v('height')] },
+      { budget: B, variants: [...pat('volume'), v('box')] },
+    ];
+  return [
+    { budget: B, variants: [v('volume'), v('height')] },
+    { budget: B, variants: [v('box'), v('footprint')] },
+    ...(symmetric ? [{ budget: B, variants: [...pat('volume'), ...pat('height')] }] : []),
+    // a finer grid where it fits in memory (it only gets finer when the clearance divides into smaller voxels)
+    { budget: 700e6, variants: [v('volume'), ...pat('volume')] },
+  ];
+}
+
+/** Compare two nests by density: < 0 when `a` is better (fewer parts left out, fewer builds, lower last build), 0 when equal. */
+function compareNests(a: { unplaced: number; tops: number[] }, b: { unplaced: number; tops: number[] }): number {
+  if (a.unplaced !== b.unplaced) return a.unplaced - b.unplaced;
+  if (a.tops.length !== b.tops.length) return a.tops.length - b.tops.length;
+  if (!a.tops.length) return 0;
+  return a.tops[a.tops.length - 1] - b.tops[b.tops.length - 1];
+}
+
+/** The densest of several nests of the same parts (a pattern one wins a tie). */
+export function pickNest(...results: (NestResult | null | undefined)[]): NestResult | null {
+  let best: NestResult | null = null;
+  const key = (r: NestResult) => ({ unplaced: r.unplaced.length, tops: r.builds.map((b) => Math.round(b.height * 1000)) });
+  for (const r of results) {
+    if (!r) continue;
+    const c = best ? compareNests(key(r), key(best)) : -1;
+    if (c < 0 || (c === 0 && r.variant?.pattern && !best!.variant?.pattern)) best = r;
+  }
+  return best;
+}
+
 export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number, msg: string) => void = () => {}): NestResult {
   const h = p.voxel ?? chooseNestVoxel(p);
   const [VX, VY, VZ] = p.volume;
@@ -558,8 +879,8 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     gy = Math.floor((VY - 2 * p.margin) / h + 1e-9),
     gz = Math.floor(H / h + 1e-9);
   const origin: Vec3 = [-VX / 2 + p.margin, -VY / 2 + p.margin, p.zOffset];
-  // grow placed parts by the clearance (exact surface voxels: gap >= d·h >= clearance)
-  const d = Math.max(1, Math.ceil(p.clearance / h - 1e-6));
+  // grow placed parts by the clearance, in voxels (true distance between voxel cubes >= clearance)
+  const d = p.clearance / h;
   const interlockFree = p.interlockFree !== false;
   const symmetric = p.symmetric !== false;
   const result: NestResult = { builds: [], unplaced: [], voxel: h };
@@ -577,28 +898,57 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   const shapes = parts.map((part, pi) => {
     const closed = isWatertight(part.mesh);
     const turns = part.fixed || !p.rotations ? [0] : [0, 1, 2, 3];
-    const vox = turns.map((k) => {
-      const mesh = k
-        ? {
-            positions: turnPositions(part.mesh.positions, k),
-            indices: part.mesh.indices,
-          }
-        : part.mesh;
-      return { k, s: makeShape(voxelizePart(mesh, h, closed), d) };
-    });
+    // voxelize once; the other turns are the same voxels turned
+    let v = voxelizePart(part.mesh, h, closed);
+    let keep = dilate(v, d);
+    const vox: { k: number; s: Shape }[] = [];
+    for (let k = 0; k < 4; k++) {
+      if (turns.includes(k)) vox.push({ k, s: makeShape(v, keep) });
+      if (k < 3 && turns.length > 1) {
+        v = turnVoxels(v, h);
+        keep = turnKeep(keep);
+      }
+    }
     onProgress(0.2 * ((pi + 1) / parts.length), 'Voxelizing parts');
-    return { part, vox, volume: vox[0].s.v.count, height: vox[0].s.v.nz };
+    const v0 = vox[0].s.v;
+    return { part, vox, volume: v0.count, height: v0.nz, box: v0.nx * v0.ny * v0.nz, footprint: v0.nx * v0.ny };
   });
-  // largest parts first, then the tallest; copies of a part one after the other
-  const queue: { sh: (typeof shapes)[number]; copy: number }[] = [];
-  for (const sh of [...shapes].sort((a, b) => b.volume - a.volume || b.height - a.height)) for (let c = 0; c < sh.part.count; c++) queue.push({ sh, copy: c });
-  // the free nest gives the best density; a run with the copies in regular patterns is kept only when it
-  // needs no more builds and is no taller (it stops as soon as it is worse)
-  const free = pack(false, 0.2, symmetric ? 0.6 : 1)!;
-  const sym = symmetric && queue.some((q) => q.sh.part.count > 1) ? pack(true, 0.6, 1, free.builds) : null;
-  const win = sym && sym.builds.length <= free.builds.length && sym.builds[sym.builds.length - 1].top <= free.builds[free.builds.length - 1].top ? sym : free;
-  result.unplaced.push(...win.unplaced);
-  for (const b of win.builds) {
+  // copies of a part one after the other, parts in the variant's order
+  const sorters: Record<NestOrder, (a: (typeof shapes)[number], b: (typeof shapes)[number]) => number> = {
+    volume: (a, b) => b.volume - a.volume || b.height - a.height,
+    height: (a, b) => b.height - a.height || b.volume - a.volume,
+    box: (a, b) => b.box - a.box || b.volume - a.volume,
+    footprint: (a, b) => b.footprint - a.footprint || b.height - a.height,
+  };
+  const queueOf = (order: NestOrder) => {
+    const q: { sh: (typeof shapes)[number]; copy: number }[] = [];
+    for (const sh of [...shapes].sort(sorters[order])) for (let c = 0; c < sh.part.count; c++) q.push({ sh, copy: c });
+    return q;
+  };
+  const anyCopies = parts.some((x) => x.count > 1);
+  let variants = p.variants ?? [{ order: 'volume' as NestOrder, pattern: false }, ...(symmetric ? [{ order: 'volume' as NestOrder, pattern: true }] : [])];
+  // patterns only matter when a part has copies
+  if (!anyCopies) variants = variants.filter((v, i) => !v.pattern || i === 0).map((v) => ({ ...v, pattern: false }));
+  if (!variants.length) variants = [{ order: 'volume', pattern: false }];
+  // every variant stops as soon as it is worse than the best so far
+  let win: { builds: Build[]; unplaced: NestResult['unplaced'] } | null = null;
+  let winVariant = variants[0];
+  const scoreOf = (r: { builds: Build[]; unplaced: unknown[] }) => ({ unplaced: r.unplaced.length, tops: r.builds.map((b) => b.top) });
+  variants.forEach((v, i) => {
+    const span = 0.8 / variants.length;
+    const r = pack(queueOf(v.order), v.pattern, 0.2 + i * span, 0.2 + (i + 1) * span, win ?? undefined);
+    if (!r) return;
+    const c = win ? compareNests(scoreOf(r), scoreOf(win)) : -1;
+    if (c < 0 || (c === 0 && v.pattern && !winVariant.pattern)) {
+      win = r;
+      winVariant = v;
+    }
+  });
+  result.variant = winVariant;
+  if (!win) return result;
+  const best: { builds: Build[]; unplaced: NestResult['unplaced'] } = win;
+  result.unplaced.push(...best.unplaced);
+  for (const b of best.builds) {
     // platform share under parts (projection onto XY)
     let covered = 0;
     for (let j = 0; j < gy; j++)
@@ -617,7 +967,13 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   }
   return result;
 
-  function pack(symmetric: boolean, p0: number, p1: number, limit?: Build[]): { builds: Build[]; unplaced: NestResult['unplaced'] } | null {
+  function pack(
+    queue: { sh: (typeof shapes)[number]; copy: number }[],
+    symmetric: boolean,
+    p0: number,
+    p1: number,
+    limit?: { builds: Build[]; unplaced: unknown[] },
+  ): { builds: Build[]; unplaced: NestResult['unplaced'] } | null {
     const builds: Build[] = [];
     const unplaced: NestResult['unplaced'] = [];
     const full = new Map<Build, Set<string>>();
@@ -679,7 +1035,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
             }
             const top = Z + s.v.nz;
             if (top > Math.max(best.top, b.top)) break; // a pattern spot higher than the free one would lower the density
-            if (b.fits(s, X, Y, Z, { r: 0 }) < 0 && (!interlockFree || b.escapes(s, X, Y, Z))) {
+            if (b.fits(s, X, Y, Z, new Int32Array(6).fill(-1)) < 0 && (!interlockFree || b.escapes(s, X, Y, Z))) {
               best = { k: pat.turn, pos: [X, Y, Z], s, top, score: 0 };
               pattern = true;
               slot[0]++;
@@ -732,7 +1088,10 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
         }
       }
       // worse than the limit already: more builds, or the last one taller
-      if (limit && (builds.length > limit.length || (builds.length === limit.length && builds[builds.length - 1].top > limit[limit.length - 1].top))) return null;
+      if (limit) {
+        const L = limit.builds;
+        if (unplaced.length > limit.unplaced.length || builds.length > L.length || (builds.length === L.length && builds[builds.length - 1].top > L[L.length - 1].top)) return null;
+      }
       done++;
       if ((done & 3) === 0 || done === queue.length)
         onProgress(p0 + (p1 - p0) * (done / queue.length), `${symmetric ? 'Arranging in patterns' : 'Nesting'} ${done} / ${queue.length} parts`);
