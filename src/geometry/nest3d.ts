@@ -99,8 +99,12 @@ export interface NestParams {
   variants?: NestVariant[];
 }
 
-/** Order in which parts are placed: largest volume, tallest, largest bounding box or largest footprint first. */
-export type NestOrder = 'volume' | 'height' | 'box' | 'footprint';
+/**
+ * Order in which parts are placed: largest volume, tallest, largest bounding
+ * box, largest footprint, or the most open space first (cups, trays, U
+ * shapes: placed early, other parts can go inside them).
+ */
+export type NestOrder = 'volume' | 'height' | 'box' | 'footprint' | 'open';
 export interface NestVariant {
   order: NestOrder;
   /** copies of a part in regular patterns where that costs no density */
@@ -453,6 +457,38 @@ interface Shape {
   cols: Int32Array;
   rows: Int32Array;
   deps: Int32Array;
+  /** per tilted direction and Z parity (made when first needed): sheared columns [ci, cj, lowest (up) / highest (down) k, …] */
+  tilt?: Map<number, Int32Array>;
+}
+
+/** The shape's sheared columns for a tilted direction, when placed at a Z of parity p. */
+function tiltProfile(s: Shape, d: number, p: number): Int32Array {
+  const key = d * 2 + p;
+  let prof = s.tilt?.get(key);
+  if (prof) return prof;
+  const { a, b, up } = TILTED_DIRS[d];
+  const { nx, ny, nz, runs } = s.v;
+  const ox = nz + 1,
+    oy = nz + 1;
+  const W = nx + 2 * ox,
+    Hh = ny + 2 * oy;
+  const ext = new Int32Array(W * Hh).fill(up ? 0x7fffffff : -1);
+  for (let q = 0; q < runs.length; q += 4) {
+    const j = runs[q],
+      k = runs[q + 1];
+    const sx = shearOf(a, p + k) - shearOf(a, p),
+      sy = shearOf(b, p + k) - shearOf(b, p);
+    const cj = j - sy + oy;
+    for (let x = runs[q + 2]; x < runs[q + 2] + runs[q + 3]; x++) {
+      const c = x - sx + ox + W * cj;
+      if (up ? k < ext[c] : k > ext[c]) ext[c] = k;
+    }
+  }
+  const out: number[] = [];
+  for (let c = 0; c < ext.length; c++) if (up ? ext[c] !== 0x7fffffff : ext[c] >= 0) out.push((c % W) - ox, ((c / W) | 0) - oy, ext[c]);
+  prof = Int32Array.from(out);
+  (s.tilt ??= new Map()).set(key, prof);
+  return prof;
 }
 
 type Keep = ReturnType<typeof dilate>;
@@ -518,6 +554,35 @@ function makeShape(v: PartVoxels, keep: Keep): Shape {
     return Int32Array.from(out);
   };
   return { v, keepRuns: kr, colLo, colHi, rowLo, rowHi, depLo, depHi, keyRows, order, cols: nonEmpty(colLo), rows: nonEmpty(rowLo), deps: nonEmpty(depLo) };
+}
+
+// ---------------------------------------------------------------- tilted ways out
+
+/**
+ * Tilted ways out, besides ±X, ±Y, ±Z: straight lines leaning 45° or about
+ * 27° from vertical towards ±X or ±Y (parts are tilted about one axis and
+ * turned in quarter turns, so their cups open that way), up and down; per
+ * step in Z the line moves (a, b) voxels in X, Y. A part in a tilted cup or
+ * tray comes out along the cup's axis.
+ */
+export const TILTED_DIRS: { a: number; b: number; up: boolean }[] = (() => {
+  const out: { a: number; b: number; up: boolean }[] = [];
+  for (const m of [1, 0.5])
+    for (const [a, b] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ])
+      for (const up of [true, false]) out.push({ a: a * m, b: b * m, up });
+  return out;
+})();
+/** hint slots for the way-out check: 6 axis directions + the tilted ones */
+const ESC_SLOTS = 6 + TILTED_DIRS.length;
+
+/** floor(a · z) for a ∈ {−1, −½, 0, ½, 1} (digital line offsets) */
+export function shearOf(a: number, z: number): number {
+  return a === 1 ? z : a === -1 ? -z : a === 0.5 ? z >> 1 : a === -0.5 ? -((z + 1) >> 1) : 0;
 }
 
 // ---------------------------------------------------------------- bit grid
@@ -620,6 +685,30 @@ class Build {
   readonly xLo: Int16Array;
   private readonly touched: Uint32Array;
   private stampNo = 0;
+  /**
+   * Per tilted direction (made when first needed): highest (up) / lowest
+   * (down) placed voxel z per sheared column (x − ⌊a·z⌋, y − ⌊b·z⌋), so a
+   * tilted way out is checked per column like the straight ones.
+   */
+  private readonly tiltMaps: ({ m: Int16Array; W: number; ox: number; oy: number } | null)[] = TILTED_DIRS.map(() => null);
+
+  private tiltMap(d: number) {
+    const have = this.tiltMaps[d];
+    if (have) return have;
+    const { gx, gy, gz, raw } = this;
+    const { a, b, up } = TILTED_DIRS[d];
+    const ox = Math.ceil(Math.abs(a) * gz) + 1,
+      oy = Math.ceil(Math.abs(b) * gz) + 1;
+    const W = gx + 2 * ox;
+    const m = new Int16Array(W * (gy + 2 * oy)).fill(up ? -1 : 32767);
+    // everything placed so far
+    for (let k = 0; k < gz; k++)
+      for (let j = 0; j < gy; j++) {
+        const base = ox - shearOf(a, k) + W * (j - shearOf(b, k) + oy);
+        for (let x = raw.nextSet(j, k, 0); x < gx; x = raw.nextSet(j, k, x + 1)) if (up ? k > m[x + base] : k < m[x + base]) m[x + base] = k;
+      }
+    return (this.tiltMaps[d] = { m, W, ox, oy });
+  }
   constructor(
     readonly gx: number,
     readonly gy: number,
@@ -710,7 +799,7 @@ class Build {
    * holds, per direction, the column / row that blocked last time; it is
    * tested first.
    */
-  escapes(s: Shape, X: number, Y: number, Z: number, hint: Int32Array = new Int32Array(6)): boolean {
+  escapes(s: Shape, X: number, Y: number, Z: number, hint: Int32Array = new Int32Array(ESC_SLOTS)): boolean {
     for (let d = 0; d < 6; d++) {
       const n = d === 0 || d === 5 ? s.cols.length : d < 3 ? s.rows.length : s.deps.length;
       const h0 = hint[d] < n ? hint[d] : 0;
@@ -719,6 +808,29 @@ class Build {
       for (let q = 0; q < n; q++)
         if (q !== h0 && this.blockedAt(s, d, q, X, Y, Z)) {
           hint[d] = q;
+          free = false;
+          break;
+        }
+      if (free) return true;
+    }
+    // tilted lines (cups and trays that lean open along their axis)
+    for (let d = 0; d < TILTED_DIRS.length; d++) {
+      const { a, b, up } = TILTED_DIRS[d];
+      const prof = tiltProfile(s, d, Z & 1);
+      const n = prof.length / 3;
+      const { m, W, ox, oy } = this.tiltMap(d);
+      const base = X - shearOf(a, Z) + ox + W * (Y - shearOf(b, Z) + oy);
+      const blocked = (q: number) => {
+        const v = m[base + prof[q * 3] + W * prof[q * 3 + 1]];
+        return up ? v > Z + prof[q * 3 + 2] : v < Z + prof[q * 3 + 2];
+      };
+      const slot = 6 + d;
+      const h0 = hint[slot] < n ? hint[slot] : 0;
+      if (n && blocked(h0)) continue;
+      let free = true;
+      for (let q = 0; q < n; q++)
+        if (q !== h0 && blocked(q)) {
+          hint[slot] = q;
           free = false;
           break;
         }
@@ -733,7 +845,7 @@ class Build {
     const { nx, ny, nz } = s.v;
     if (nx > gx || ny > gy || nz > gz) return null;
     const hint = new Int32Array(6).fill(-1);
-    const escHint = new Int32Array(6);
+    const escHint = new Int32Array(ESC_SLOTS);
     let Z = Math.floor(from / (gx * gy)),
       Y = Math.floor(from / gx) % gy,
       X = from % gx;
@@ -781,7 +893,7 @@ class Build {
       [z0, z1] = range(fixed[2], nz, gz);
     if (x0 < 0 || y0 < 0 || z0 < 0 || x1 + nx > gx || y1 + ny > gy || z1 + nz > gz) return null;
     const hint = new Int32Array(6).fill(-1);
-    const escHint = new Int32Array(6);
+    const escHint = new Int32Array(ESC_SLOTS);
     for (let Z = z0; Z <= z1; Z++)
       for (let Y = y0; Y <= y1; Y++)
         for (let X = x0; X <= x1; ) {
@@ -804,6 +916,14 @@ class Build {
       const row = j + gy * k;
       if (x1 > this.xHi[row]) this.xHi[row] = x1;
       if (x0 < this.xLo[row]) this.xLo[row] = x0;
+      for (let d = 0; d < TILTED_DIRS.length; d++) {
+        const t = this.tiltMaps[d];
+        if (!t) continue;
+        const { a, b, up } = TILTED_DIRS[d];
+        const m = t.m,
+          base = t.ox - shearOf(a, k) + t.W * (j - shearOf(b, k) + t.oy);
+        for (let x = x0; x <= x1; x++) if (up ? k > m[x + base] : k < m[x + base]) m[x + base] = k;
+      }
       for (let x = x0; x <= x1; x++) {
         const c = x + gx * j,
           d = x + gx * k;
@@ -907,19 +1027,20 @@ export function chooseNestVoxel(p: Pick<NestParams, 'volume' | 'margin' | 'zOffs
 export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): { budget: number; variants: NestVariant[] }[] {
   const v = (order: NestOrder, pattern = false): NestVariant => ({ order, pattern });
   const pat = (order: NestOrder) => (symmetric ? [v(order, true)] : []);
-  if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume')] }, ...(symmetric ? [{ budget: 40e6, variants: pat('volume') }] : [])];
+  // 'open' puts cups, trays and U shapes first so other parts can go inside them
+  if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume'), v('open')] }, ...(symmetric ? [{ budget: 40e6, variants: pat('volume') }] : [])];
   const B = 320e6;
   if (detail === 'normal')
     return [
-      { budget: B, variants: [v('volume'), v('height')] },
-      { budget: B, variants: [...pat('volume'), v('box')] },
+      { budget: B, variants: [v('volume'), v('open'), v('height')] },
+      { budget: B, variants: [...pat('volume'), ...pat('open'), v('box')] },
     ];
   return [
-    { budget: B, variants: [v('volume'), v('height')] },
+    { budget: B, variants: [v('volume'), v('open'), v('height')] },
     { budget: B, variants: [v('box'), v('footprint')] },
-    ...(symmetric ? [{ budget: B, variants: [...pat('volume'), ...pat('height')] }] : []),
+    ...(symmetric ? [{ budget: B, variants: [...pat('volume'), ...pat('open'), ...pat('height')] }] : []),
     // a finer grid where it fits in memory (it only gets finer when the clearance divides into smaller voxels)
-    { budget: 700e6, variants: [v('volume'), ...pat('volume')] },
+    { budget: 700e6, variants: [v('volume'), v('open'), ...pat('volume')] },
   ];
 }
 
@@ -993,6 +1114,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     height: (a, b) => b.height - a.height || b.volume - a.volume,
     box: (a, b) => b.box - a.box || b.volume - a.volume,
     footprint: (a, b) => b.footprint - a.footprint || b.height - a.height,
+    open: (a, b) => b.box - b.volume - (a.box - a.volume) || b.volume - a.volume,
   };
   const queueOf = (order: NestOrder) => {
     const q: { sh: (typeof shapes)[number]; copy: number }[] = [];
@@ -1274,6 +1396,27 @@ export function interlockTest(items: { key: string; mesh: MeshData }[], volume: 
               gi += dx;
               gj += dy;
               gk += dz;
+            }
+          }
+      if (free) return true;
+    }
+    // tilted lines, the same digital lines the nesting uses
+    for (const { a, b, up } of TILTED_DIRS) {
+      const dz = up ? 1 : -1;
+      let free = true;
+      for (let k = 0; k < nz && free; k++)
+        for (let j = 0; j < ny && free; j++)
+          for (let i = 0; i < nx && free; i++) {
+            if (!s(i, j, k)) continue;
+            const z0 = Z + k;
+            for (let gk = z0 + dz; gk >= 0 && gk < gz; gk += dz) {
+              const gi = X + i + shearOf(a, gk) - shearOf(a, z0),
+                gj = Y + j + shearOf(b, gk) - shearOf(b, z0);
+              if (gi < 0 || gj < 0 || gi >= gx || gj >= gy) break;
+              if (blocks(own, gi, gj, gk)) {
+                free = false;
+                break;
+              }
             }
           }
       if (free) return true;

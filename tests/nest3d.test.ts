@@ -253,3 +253,31 @@ describe('locked copies', () => {
     expect(r.unplaced[0].key).toBe('c#0');
   });
 });
+
+describe('tilted cups', () => {
+  it('parts go into tilted cups, and the result passes the interlocking test', () => {
+    const tilt = (m: MeshData, deg: number): MeshData => {
+      const c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
+      const p = m.positions.slice();
+      for (let i = 0; i < p.length; i += 3) {
+        const x = p[i], z = p[i + 2];
+        p[i] = c * x + s * z;
+        p[i + 2] = -s * x + c * z;
+      }
+      return { positions: p, indices: m.indices };
+    };
+    // 60 × 60 × 70 cup, 3 mm walls, open on top, leaning 30°
+    const cup = tilt(mergeMeshes([boxMesh([0, 0, 0], [60, 60, 3]), boxMesh([0, 0, 3], [3, 60, 70]), boxMesh([57, 0, 3], [60, 60, 70]), boxMesh([3, 0, 3], [57, 3, 70]), boxMesh([3, 57, 3], [57, 60, 70])]), 30);
+    const small = boxMesh([0, 0, 0], [14, 14, 12]);
+    const volume: [number, number, number] = [170, 170, 160];
+    const r = nest3d([{ id: 'cup', mesh: cup, count: 4 }, { id: 's', mesh: small, count: 140 }], { volume, margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: false, budget: 6e6, variants: [{ order: 'open', pattern: false }] });
+    const b = r.builds[0];
+    const mesh = (id: string) => (id === 'cup' ? cup : small);
+    const items = b.placements.map((p) => ({ key: p.key, mesh: move(mesh(p.partId), p.t) }));
+    // some small parts sit inside a cup: their box lies within the cup's box
+    const cb = bounds(cup);
+    const inside = b.placements.filter((p) => p.partId === 's' && b.placements.some((c) => c.partId === 'cup' && [0, 1].every((k) => p.t[k] > cb.lo[k] + c.t[k] + 3 && p.t[k] + 14 < cb.hi[k] + c.t[k] - 3) && p.t[2] > cb.lo[2] + c.t[2] && p.t[2] + 12 < cb.hi[2] + c.t[2])).length;
+    expect(inside).toBeGreaterThan(10);
+    expect(interlockTest(items, volume, r.voxel).stuck).toEqual([]);
+  });
+});
