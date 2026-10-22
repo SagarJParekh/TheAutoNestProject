@@ -279,12 +279,13 @@ export function setBuildRestoreHook(fn: () => void) {
 /** what is kept in a build undo step (no running state, no check results) */
 const buildSnapshot = (g: BuildGenState): BuildGenState => ({ ...g, busy: false, checks: null });
 
-/** Change the build state as one undoable step. */
-export function commitBuild(label: string, patch: Partial<BuildGenState>) {
+/** Change the build state as one undoable step (Undo goes back to `before` if given, else to the current state). */
+export function commitBuild(label: string, patch: Partial<BuildGenState>, before?: BuildGenState) {
   const s = getState();
   setState({
     buildGen: { ...s.buildGen, ...patch },
-    buildPast: [...s.buildPast, { label, gen: buildSnapshot(s.buildGen) }].slice(-BUILD_HISTORY_MAX),
+    // `before`: the state to go back to, when intermediate results were shown in between
+    buildPast: [...s.buildPast, { label, gen: buildSnapshot(before ?? s.buildGen) }].slice(-BUILD_HISTORY_MAX),
     buildFuture: [],
   });
 }

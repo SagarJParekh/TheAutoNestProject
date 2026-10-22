@@ -36,6 +36,11 @@ class WorkerPool {
 
   constructor(private size: number) {}
 
+  /** number of workers */
+  get capacity(): number {
+    return this.size;
+  }
+
   private create(): PooledWorker {
     const pw: PooledWorker = { worker: spawn(), busy: 0 };
     pw.worker.onmessage = (ev) => this.onMessage(ev.data);

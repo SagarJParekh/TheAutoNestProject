@@ -370,6 +370,8 @@ export interface BuildGenState {
   autoNest: boolean;
   /** voxel size used by the last 3D nesting, mm */
   nestVoxel?: number;
+  /** nesting is still trying more ways: the builds shown are the best found so far */
+  improving?: { done: number; total: number } | null;
   /** builds were edited by hand: automatic re-arranging is paused */
   manual?: boolean;
   /** settings changed while edits were kept: re-arranging would apply them */

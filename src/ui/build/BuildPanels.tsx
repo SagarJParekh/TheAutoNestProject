@@ -6,7 +6,7 @@ import { SnapControls } from '../SnapControls';
 import { getState, setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -592,6 +592,17 @@ export function BuildsPanel() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          {g.improving && (
+            <div className="manual-banner">
+              <b>Still nesting</b>
+              <span>
+                Showing the densest builds found so far ({g.improving.done} of {g.improving.total} ways tried). Better ones replace them as they come.
+              </span>
+              <button className="mini" onClick={stopNesting} title="Stop trying more ways and keep the builds shown">
+                Stop and keep
+              </button>
             </div>
           )}
           {g.manual ? (

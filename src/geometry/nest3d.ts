@@ -88,6 +88,8 @@ export interface NestParams {
   rotations: boolean;
   /** only accept spots from which the part can slide straight out (default true) */
   interlockFree?: boolean;
+  /** also accept tilted ways out (out of tilted cups and trays; default true) */
+  tilted?: boolean;
   /** also nest with the copies of each part in regular patterns, and keep that when it needs no more builds and is no taller (default true) */
   symmetric?: boolean;
   /**
@@ -459,36 +461,78 @@ interface Shape {
   deps: Int32Array;
   /** per tilted direction and Z parity (made when first needed): sheared columns [ci, cj, lowest (up) / highest (down) k, …] */
   tilt?: Map<number, Int32Array>;
+  /** surface voxels (made when first needed) */
+  surface?: Int32Array;
 }
 
 /** The shape's sheared columns for a tilted direction, when placed at a Z of parity p. */
 function tiltProfile(s: Shape, d: number, p: number): Int32Array {
+  const { a, b, up } = TILTED_DIRS[d];
+  // whole-voxel slopes do not depend on the parity of Z
+  if (Number.isInteger(a) && Number.isInteger(b)) p = 0;
   const key = d * 2 + p;
   let prof = s.tilt?.get(key);
   if (prof) return prof;
-  const { a, b, up } = TILTED_DIRS[d];
-  const { nx, ny, nz, runs } = s.v;
-  const ox = nz + 1,
-    oy = nz + 1;
-  const W = nx + 2 * ox,
-    Hh = ny + 2 * oy;
+  const { nx, ny, nz } = s.v;
+  // exact range of the sheared columns (the shift grows steadily with k)
+  const sx0 = 0,
+    sx1 = shearOf(a, p + nz - 1) - shearOf(a, p),
+    sy1 = shearOf(b, p + nz - 1) - shearOf(b, p);
+  const ox = Math.max(sx0, sx1),
+    oy = Math.max(0, sy1);
+  const W = nx + Math.abs(sx1) + 1,
+    Hh = ny + Math.abs(sy1) + 1;
   const ext = new Int32Array(W * Hh).fill(up ? 0x7fffffff : -1);
-  for (let q = 0; q < runs.length; q += 4) {
-    const j = runs[q],
-      k = runs[q + 1];
-    const sx = shearOf(a, p + k) - shearOf(a, p),
-      sy = shearOf(b, p + k) - shearOf(b, p);
-    const cj = j - sy + oy;
-    for (let x = runs[q + 2]; x < runs[q + 2] + runs[q + 3]; x++) {
-      const c = x - sx + ox + W * cj;
-      if (up ? k < ext[c] : k > ext[c]) ext[c] = k;
-    }
+  // the lowest / highest voxel of a sheared column always has an empty neighbour: surface voxels are enough
+  const sv = surfaceOf(s);
+  for (let q = 0; q < sv.length; q += 3) {
+    const k = sv[q + 2];
+    const c = sv[q] - (shearOf(a, p + k) - shearOf(a, p)) + ox + W * (sv[q + 1] - (shearOf(b, p + k) - shearOf(b, p)) + oy);
+    if (up ? k < ext[c] : k > ext[c]) ext[c] = k;
   }
-  const out: number[] = [];
-  for (let c = 0; c < ext.length; c++) if (up ? ext[c] !== 0x7fffffff : ext[c] >= 0) out.push((c % W) - ox, ((c / W) | 0) - oy, ext[c]);
-  prof = Int32Array.from(out);
+  const cols: number[] = [];
+  for (let c = 0; c < ext.length; c++) if (up ? ext[c] !== 0x7fffffff : ext[c] >= 0) cols.push(c);
+  // spread-out order (neighbouring columns are usually blocked or free together): a blocking one is found sooner
+  const n = cols.length;
+  let stride = Math.max(1, Math.round(n * 0.618));
+  const gcd = (x: number, y: number): number => (y ? gcd(y, x % y) : x);
+  while (n > 1 && gcd(stride, n) !== 1) stride++;
+  prof = new Int32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const c = cols[(i * stride) % n];
+    prof[i * 3] = (c % W) - ox;
+    prof[i * 3 + 1] = ((c / W) | 0) - oy;
+    prof[i * 3 + 2] = ext[c];
+  }
   (s.tilt ??= new Map()).set(key, prof);
   return prof;
+}
+
+/** Solid voxels with at least one empty (or outside) neighbour of the 26 around them: [i, j, k, …], made once per shape. */
+function surfaceOf(s: Shape): Int32Array {
+  if (s.surface) return s.surface;
+  const { nx, ny, nz, solid } = s.v;
+  // interior = the 3 × 3 × 3 block around the voxel is all solid (three separable passes)
+  const pass = (src: Uint8Array, stride: number, n: number, at: (o: number) => number) => {
+    const out = new Uint8Array(src.length);
+    for (let o = 0; o < src.length; o++) {
+      if (!src[o]) continue;
+      const i = at(o);
+      if (i > 0 && i < n - 1 && src[o - stride] && src[o + stride]) out[o] = 1;
+    }
+    return out;
+  };
+  let full = pass(solid, 1, nx, (o) => o % nx);
+  full = pass(full, nx, ny, (o) => ((o / nx) | 0) % ny);
+  full = pass(full, nx * ny, nz, (o) => (o / (nx * ny)) | 0);
+  const out: number[] = [];
+  for (let k = 0; k < nz; k++)
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const o = i + nx * (j + ny * k);
+        if (solid[o] && !full[o]) out.push(i, j, k);
+      }
+  return (s.surface = Int32Array.from(out));
 }
 
 type Keep = ReturnType<typeof dilate>;
@@ -685,6 +729,8 @@ class Build {
   readonly xLo: Int16Array;
   private readonly touched: Uint32Array;
   private stampNo = 0;
+  /** tilted ways out allowed */
+  tilted = true;
   /**
    * Per tilted direction (made when first needed): highest (up) / lowest
    * (down) placed voxel z per sheared column (x − ⌊a·z⌋, y − ⌊b·z⌋), so a
@@ -814,26 +860,28 @@ class Build {
       if (free) return true;
     }
     // tilted lines (cups and trays that lean open along their axis)
+    if (!this.tilted) return false;
     for (let d = 0; d < TILTED_DIRS.length; d++) {
       const { a, b, up } = TILTED_DIRS[d];
       const prof = tiltProfile(s, d, Z & 1);
       const n = prof.length / 3;
       const { m, W, ox, oy } = this.tiltMap(d);
       const base = X - shearOf(a, Z) + ox + W * (Y - shearOf(b, Z) + oy);
-      const blocked = (q: number) => {
-        const v = m[base + prof[q * 3] + W * prof[q * 3 + 1]];
-        return up ? v > Z + prof[q * 3 + 2] : v < Z + prof[q * 3 + 2];
-      };
+      // start at the column that blocked last time (move on from there, wrapping round)
       const slot = 6 + d;
       const h0 = hint[slot] < n ? hint[slot] : 0;
-      if (n && blocked(h0)) continue;
+      const sgn = up ? 1 : -1;
       let free = true;
-      for (let q = 0; q < n; q++)
-        if (q !== h0 && blocked(q)) {
+      for (let t = 0; t < n; t++) {
+        let q = h0 + t;
+        if (q >= n) q -= n;
+        const o = q * 3;
+        if (sgn * (m[base + prof[o] + W * prof[o + 1]] - Z - prof[o + 2]) > 0) {
           hint[slot] = q;
           free = false;
           break;
         }
+      }
       if (free) return true;
     }
     return false;
@@ -916,21 +964,23 @@ class Build {
       const row = j + gy * k;
       if (x1 > this.xHi[row]) this.xHi[row] = x1;
       if (x0 < this.xLo[row]) this.xLo[row] = x0;
-      for (let d = 0; d < TILTED_DIRS.length; d++) {
-        const t = this.tiltMaps[d];
-        if (!t) continue;
-        const { a, b, up } = TILTED_DIRS[d];
-        const m = t.m,
-          base = t.ox - shearOf(a, k) + t.W * (j - shearOf(b, k) + t.oy);
-        for (let x = x0; x <= x1; x++) if (up ? k > m[x + base] : k < m[x + base]) m[x + base] = k;
-      }
-      for (let x = x0; x <= x1; x++) {
-        const c = x + gx * j,
-          d = x + gx * k;
-        if (k > this.zHi[c]) this.zHi[c] = k;
-        if (k < this.zLo[c]) this.zLo[c] = k;
-        if (j > this.yHi[d]) this.yHi[d] = j;
-        if (j < this.yLo[d]) this.yLo[d] = j;
+    }
+    // the extremes along any line (columns, depth lines, tilted lines) are surface voxels: no need to visit the inside
+    const sv = surfaceOf(s);
+    const maps = TILTED_DIRS.map((t, d) => ({ ...t, map: this.tiltMaps[d] })).filter((t) => t.map);
+    for (let q = 0; q < sv.length; q += 3) {
+      const x = X + sv[q],
+        j = Y + sv[q + 1],
+        k = Z + sv[q + 2];
+      const c = x + gx * j,
+        e = x + gx * k;
+      if (k > this.zHi[c]) this.zHi[c] = k;
+      if (k < this.zLo[c]) this.zLo[c] = k;
+      if (j > this.yHi[e]) this.yHi[e] = j;
+      if (j < this.yLo[e]) this.yLo[e] = j;
+      for (const { a, b, up, map } of maps) {
+        const i = x - shearOf(a, k) + map!.ox + map!.W * (j - shearOf(b, k) + map!.oy);
+        if (up ? k > map!.m[i] : k < map!.m[i]) map!.m[i] = k;
       }
     }
     const kr = s.keepRuns;
@@ -1020,27 +1070,24 @@ export function chooseNestVoxel(p: Pick<NestParams, 'volume' | 'margin' | 'zOffs
 }
 
 /**
- * What to run for a nesting detail level: one entry per worker, each a voxel
- * budget and the variants that worker tries (sharing one voxelization). Fine
- * tries everything Normal does and more, so it is never less dense.
+ * What to run for a nesting detail level: voxel budgets with the variants
+ * tried at each (every variant is its own job; jobs whose grid comes out the
+ * same as an earlier one's are skipped). Fine tries everything Normal does
+ * and more, so it is never less dense.
  */
 export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): { budget: number; variants: NestVariant[] }[] {
   const v = (order: NestOrder, pattern = false): NestVariant => ({ order, pattern });
   const pat = (order: NestOrder) => (symmetric ? [v(order, true)] : []);
   // 'open' puts cups, trays and U shapes first so other parts can go inside them
-  if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume'), v('open')] }, ...(symmetric ? [{ budget: 40e6, variants: pat('volume') }] : [])];
-  const B = 320e6;
-  if (detail === 'normal')
-    return [
-      { budget: B, variants: [v('volume'), v('open'), v('height')] },
-      { budget: B, variants: [...pat('volume'), ...pat('open'), v('box')] },
-    ];
+  if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume'), v('open'), ...pat('volume')] }];
+  // Normal: a grid as fine as about 100 million voxels allows (lined up with the clearance), several orders
+  const normal = { budget: 100e6, variants: [v('volume'), v('open'), ...pat('volume'), ...pat('open'), v('height'), v('box')] };
+  if (detail === 'normal') return [normal];
+  // Fine: everything Normal tries, plus finer grids (where the clearance divides into smaller voxels)
   return [
-    { budget: B, variants: [v('volume'), v('open'), v('height')] },
-    { budget: B, variants: [v('box'), v('footprint')] },
-    ...(symmetric ? [{ budget: B, variants: [...pat('volume'), ...pat('open'), ...pat('height')] }] : []),
-    // a finer grid where it fits in memory (it only gets finer when the clearance divides into smaller voxels)
-    { budget: 700e6, variants: [v('volume'), v('open'), ...pat('volume')] },
+    normal,
+    { budget: 320e6, variants: [v('volume'), v('open'), ...pat('volume'), ...pat('open'), v('box'), v('height'), v('footprint')] },
+    { budget: 700e6, variants: [v('volume'), v('open')] },
   ];
 }
 
@@ -1075,6 +1122,11 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   // grow placed parts by the clearance, in voxels (true distance between voxel cubes >= clearance)
   const d = p.clearance / h;
   const interlockFree = p.interlockFree !== false;
+  const newBuild = () => {
+    const b = new Build(gx, gy, gz);
+    b.tilted = p.tilted !== false;
+    return b;
+  };
   const symmetric = p.symmetric !== false;
   const result: NestResult = { builds: [], unplaced: [], voxel: h };
   if (gx < 1 || gy < 1 || gz < 1) {
@@ -1181,7 +1233,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
       const key = `${sh.part.id}#${sh.part.copies?.[0] ?? 0}`;
       const s = sh.vox[0].s;
       const fixed = L.at.map((t, c) => (t === null ? null : Math.round((s.v.min[c] + t - origin[c]) / h))) as [number | null, number | null, number | null];
-      while (builds.length <= L.build) builds.push(new Build(gx, gy, gz));
+      while (builds.length <= L.build) builds.push(newBuild());
       const b = builds[L.build];
       let pos: [number, number, number] | null = null;
       if (fixed.every((x) => x !== null)) {
@@ -1301,7 +1353,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
       let placed = false;
       for (const b of builds) if ((placed = tryBuild(b))) break;
       if (!placed) {
-        const b = new Build(gx, gy, gz);
+        const b = newBuild();
         builds.push(b);
         placed = tryBuild(b);
         if (!placed) {
