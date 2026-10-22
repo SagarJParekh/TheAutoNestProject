@@ -312,6 +312,8 @@ export interface BuildPart {
   watertight?: boolean;
   /** the Mesh prep part it came from: sending that part again replaces this one's mesh (e.g. after a repair) */
   fromPrep?: string;
+  /** lighter copy for the view when a build would show very many triangles (never used for nesting or export) */
+  display?: { for: MeshData; tris: number; mesh: MeshData };
 }
 
 /** A copy fixed by the user: locked translation / rotation axes and where it was when locked (or last edited). */
@@ -341,6 +343,8 @@ export interface Build {
   height: number;
   /** platform area covered, 0..1 */
   utilization: number;
+  /** quick layout of parts that are not nested yet (just to see them; Start nesting arranges them properly) */
+  preview?: boolean;
 }
 
 export interface BuildGenState {

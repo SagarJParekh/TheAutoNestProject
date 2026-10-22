@@ -44,3 +44,4 @@ export * from './fillet';
 export * from './orient';
 export * from './pack';
 export * from './powderOrient';
+export * from './displayMesh';

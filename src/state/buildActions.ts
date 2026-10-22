@@ -9,9 +9,10 @@ import { zipSync } from 'fflate';
 import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, commitBuild, getState, notify, setBuildRestoreHook, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
-import { makePart, newId, runJob, setTool } from './actions';
+import { makePart, newId, prepareMesh, runJob, setTool } from './actions';
 import { meshEntry } from './meshCache';
 import { pool, CancelledError } from '../workers/client';
+import { viewerApi } from '../viewer/api';
 import { nextColor } from './palette';
 import { printerById, type Printer } from './printers';
 import type { Build, BuildGenState, BuildPart, BuildPlacement, CopyLock, Part, Tilt } from './types';
@@ -23,7 +24,16 @@ const bg = () => getState().buildGen;
 const setBg = (patch: Partial<BuildGenState>) => setState((s) => ({ buildGen: { ...s.buildGen, ...patch } }));
 
 export function setWorkspace(workspace: 'prep' | 'build') {
+  const was = getState().workspace;
   setState({ workspace, selection: [], pickMode: null, preview: null });
+  if (workspace === 'build' && was !== 'build') fitBuildView();
+}
+
+/** Frame the printer volume and the parts in it (after the view has updated). */
+export function fitBuildView() {
+  setTimeout(() => {
+    if (getState().workspace === 'build') viewerApi.current?.fitView();
+  }, 50);
 }
 
 /** The printer in use, with the custom size applied for Custom printers. */
@@ -176,6 +186,41 @@ export function setActiveBuild(i: number) {
 /** Part id of a placement key (or of a selected key). */
 export const partOfKey = (key: string) => key.split('#')[0];
 
+// ---------------------------------------------------------------- light display copies
+
+/** triangles the view should draw for a whole build at most (more makes graphics cards give up) */
+const VIEW_TRIANGLE_BUDGET = 6e6;
+
+/**
+ * When the parts × quantities come to more triangles than the view can draw
+ * smoothly, heavy parts get a lighter display copy (made in a worker).
+ */
+let displayRun = 0;
+export async function updateDisplayMeshes() {
+  const run = ++displayRun;
+  const parts = bg().parts;
+  const tris = (p: BuildPart) => p.mesh.indices.length / 3;
+  const total = parts.reduce((a, p) => a + tris(p) * p.quantity, 0);
+  const f = total > VIEW_TRIANGLE_BUDGET ? VIEW_TRIANGLE_BUDGET / total : 1;
+  await Promise.all(
+    parts.map(async (p) => {
+      const want = f < 1 && tris(p) > 40000 ? Math.max(20000, Math.round(tris(p) * f)) : 0;
+      if (!want) {
+        // full detail in the view: give it a picking tree like Prep parts have
+        prepareMesh(p.mesh);
+        if (p.display) setBg({ parts: bg().parts.map((q) => (q.id === p.id ? { ...q, display: undefined } : q)) });
+        return;
+      }
+      if (p.display?.for === p.mesh && Math.abs(p.display.tris - want) / want < 0.3) return;
+      const mesh = await runJob(`Preparing the view of ${p.name}`, 'displayMesh', { mesh: p.mesh, tris: want }, { silent: true, quietErrors: true });
+      if (!mesh || run !== displayRun) return;
+      prepareMesh(mesh);
+      // not an undo step: it only changes how the part is drawn
+      setBg({ parts: bg().parts.map((q) => (q.id === p.id && q.mesh === p.mesh ? { ...q, display: { for: p.mesh, tris: want, mesh } } : q)) });
+    }),
+  );
+}
+
 // ---------------------------------------------------------------- generation
 
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -188,6 +233,7 @@ setBuildRestoreHook(() => {
 });
 
 export function scheduleRegenerate(delay = 150) {
+  void updateDisplayMeshes();
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
@@ -261,12 +307,18 @@ export async function regenerateBuilds(force = false) {
     // builds edited by hand, or nesting only on request: keep the builds (minus removed parts and copies)
     // and let the panel offer Start nesting / Re-arrange
     const qty = new Map(s0.parts.map((p) => [p.id, p.quantity]));
-    const builds = s0.builds
+    const kept = s0.builds
+      .filter((b) => !b.preview)
       .map((b) => ({ ...b, placements: b.placements.filter((pl) => pl.copy < (qty.get(pl.partId) ?? 0)) }))
-      .filter((b) => b.placements.length)
-      .map((b, i) => ({ ...b, name: `Build ${i + 1}` }));
+      .filter((b) => b.placements.length);
     const unplaced = s0.unplaced.filter((u) => u.copy < (qty.get(u.partId) ?? 0));
+    // copies not in a nested build yet are shown in a quick layout (not nested)
+    const placed = new Set([...kept.flatMap((b) => b.placements.map((pl) => pl.key)), ...unplaced.map((u) => `${u.partId}#${u.copy}`)]);
+    const missing = s0.parts.flatMap((p) => Array.from({ length: p.quantity }, (_, c) => c).filter((c) => !placed.has(`${p.id}#${c}`)).map((c) => ({ part: p, copy: c })));
+    const builds = [...kept, ...previewBuilds(missing, s0)].map((b, i) => ({ ...b, name: b.preview ? `Build ${i + 1} (not nested)` : `Build ${i + 1}` }));
+    const wasEmpty = !s0.builds.length;
     setBg({ stale: true, builds, unplaced, active: Math.min(s0.active, Math.max(0, builds.length - 1)) });
+    if (wasEmpty && builds.length) fitBuildView();
     return;
   }
   const run = ++generation;
@@ -281,6 +333,57 @@ export async function regenerateBuilds(force = false) {
   } finally {
     job.end();
   }
+}
+
+/**
+ * A quick look at parts that are not nested yet: their boxes side by side on
+ * the platform (in their current orientation), filling as many platforms as
+ * needed. Nothing like a real nesting; Start nesting replaces it.
+ */
+function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenState): Build[] {
+  if (!copies.length) return [];
+  const printer = currentPrinter(s);
+  const rule = printer.tech === 'powder' ? 'powder' : 'flat';
+  const qOf = new Map<string, Quaternion>();
+  const boxOf = new Map<string, { min: Vector3; max: Vector3 }>();
+  for (const { part } of copies) {
+    if (qOf.has(part.id)) continue;
+    const q = s.autoOrient && !part.lockRotation && part.orient?.mesh === part.mesh && (part.orient.rule ?? 'flat') === rule ? new Quaternion(...part.orient.q) : new Quaternion();
+    qOf.set(part.id, q);
+    boxOf.set(part.id, rotatedBounds(part.mesh, q));
+  }
+  const items: PackItem[] = copies.map(({ part, copy }) => {
+    const b = boxOf.get(part.id)!;
+    return { key: `${part.id}#${copy}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z, fixed: true };
+  });
+  const r = packBuilds(items, { volume: printer.volume, margin: s.margin, gap: 2, zOffset: s.zOffset, allowRotate: false, stack: true });
+  const byKey = new Map(copies.map((c) => [`${c.part.id}#${c.copy}`, c]));
+  const builds: Build[] = r.builds.map((b) => ({
+    name: '',
+    height: b.height,
+    utilization: b.utilization,
+    preview: true,
+    placements: b.items.map((it): BuildPlacement => {
+      const { part, copy } = byKey.get(it.key)!;
+      const q = qOf.get(part.id)!;
+      const min = boxOf.get(part.id)!.min;
+      return { key: it.key, partId: part.id, copy, position: [it.x - min.x, it.y - min.y, it.z - min.z], quaternion: [q.x, q.y, q.z, q.w] };
+    }),
+  }));
+  // too big for the printer: one per platform, at the middle, so it can still be seen
+  for (const u of r.unplaced) {
+    const { part, copy } = byKey.get(u.key)!;
+    const q = qOf.get(part.id)!;
+    const b = boxOf.get(part.id)!;
+    builds.push({
+      name: '',
+      height: b.max.z - b.min.z,
+      utilization: 0,
+      preview: true,
+      placements: [{ key: u.key, partId: part.id, copy, position: [-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, s.zOffset - b.min.z], quaternion: [q.x, q.y, q.z, q.w] }],
+    });
+  }
+  return builds;
 }
 
 /** Stops the nesting that is running, keeping the best builds found so far (null when none runs). */
@@ -560,6 +663,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
     );
     if (!r || run !== generation) return setBg({ busy: false, improving: null });
     commitBuild('Nesting', { ...toState(r), busy: false, improving: null }, before);
+    fitBuildView();
     return;
   }
   job.progress(0.85, 'Packing builds');
@@ -596,7 +700,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
 // ---------------------------------------------------------------- display / export
 
 /** Parts placed in a build, as regular parts (shared meshes) for the viewer and exports. */
-export function buildDisplayParts(s: BuildGenState, buildIndex = s.active): Part[] {
+export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forView = false): Part[] {
   const b = s.builds[buildIndex];
   if (!b) return [];
   const byId = new Map(s.parts.map((p) => [p.id, p]));
@@ -610,7 +714,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active): Part
       color: p.color,
       visible: true,
       locked: false,
-      mesh: p.mesh,
+      mesh: forView && p.display?.for === p.mesh ? p.display.mesh : p.mesh,
       transform: { position: pl.position, rotation: eulerDegFromQuaternion(new Quaternion(...pl.quaternion)), scale: [1, 1, 1] },
       lockRotation: p.lockRotation,
     });

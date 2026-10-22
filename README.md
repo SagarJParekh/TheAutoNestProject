@@ -48,7 +48,7 @@ A separate unit (switch **Mesh prep / Build generation** at the top left). Pick 
 | DMLS | M2 245×245×300 · MLab 100R 90×90×80 · MLab 200R 100×100×100 · Custom |
 | HP MJF / SLS | HP MJF 5200 380×284×380 · Fuse 1+ 165×165×300 (rules to be confirmed) · Custom |
 
-Add files (or take parts from Mesh prep), set the quantities, then press **Start nesting** (nothing is arranged on import, so you can add more parts and change quantities first; after a change the builds are marked as out of date until you nest again). Tick **Nest automatically after every change** to re-arrange on every change instead. Nesting:
+Add files (or take parts from Mesh prep) — they show up straight away in a quick layout marked *not nested* —, set the quantities, then press **Start nesting** (nothing is arranged on import, so you can add more parts and change quantities first; after a change the builds are marked as out of date until you nest again). Tick **Nest automatically after every change** to re-arrange on every change instead. Nesting:
 
 - every part is put down on its largest flat face (SLA / DLP, DMLS) or, for **HP MJF / SLS, oriented by the usual powder-bed rules**: no large flat surface parallel to the platform (surfaces flatter than 30° to the layers are avoided), smooth change of the area per layer (no sudden jumps in cross-section), not needlessly tall, footprint lined up with X / Y — optionally tilted: **all parts** or only the **selected parts** (15°, 30°, 45° or a custom angle, in a chosen direction); select parts by clicking them in the view or the list (Ctrl / Shift-click for several, click empty space to clear);
 - parts are packed in X and Y only (never stacked for SLA / DLP and DMLS; powder-bed printers can optionally stack in Z), with clearance between parts, a margin at the platform edges and a distance from the platform;
@@ -65,7 +65,7 @@ Add files (or take parts from Mesh prep), set the quantities, then press **Start
 - **Z cut**: the slider on the right of the view cuts the build at a height to look inside (show the parts below, or above).
 - **Hide**: eye button per part, or **Hide selected** (whole parts or single copies) / **Show all**; hidden parts are only hidden in the view.
 - **Not watertight warning**: parts with open edges are marked and listed with **Select** and **Repair in Mesh prep** (opens them there with the Repair tool; **Send to Build** afterwards replaces the build parts, quantities and settings kept).
-- **Large parts**: every part is voxelized once (in parallel workers) and the voxels are shared by all nesting runs; a 4.4-million-triangle part voxelizes in under 2 s on the test machine.
+- **Large parts**: when a build would show more than about 6 million triangles, heavy parts are drawn with a light copy (export, checks and nesting always use the full mesh); the view frames the build after nesting. Every part is voxelized once (in parallel workers) and the voxels are shared by all nesting runs; a 4.4-million-triangle part voxelizes in under 2 s on the test machine.
 - **packing density** per build: total part volume ÷ the printer's full build volume (X × Y × Z), and ÷ the volume up to the tallest part plus an allowance (5 mm by default, editable; capped at the printer height). Shown on every build in the list and in detail for the active build.
 
 **Snap** (Mesh prep → Transform, and Build generation → Select & edit): move in steps of a set distance (positions land on multiples of it) and rotate in steps of a set angle, for the Move / Rotate handles and Pick & place.

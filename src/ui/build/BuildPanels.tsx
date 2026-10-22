@@ -25,7 +25,7 @@ function StartNesting() {
   return (
     <div className="start-nesting">
       <button className={`btn ${pending ? 'primary' : ''} big`} disabled={g.busy} onClick={rearrangeBuilds} title="Arrange all parts and quantities into builds now">
-        {g.busy ? 'Nesting…' : g.builds.length ? 'Start nesting again' : 'Start nesting'}
+        {g.busy ? 'Nesting…' : g.builds.some((b) => !b.preview) ? 'Start nesting again' : 'Start nesting'}
       </button>
       {pending && g.builds.length > 0 && <Hint>Parts or settings changed since the last nesting.</Hint>}
       <Check checked={!!g.autoNest} onChange={(autoNest) => updateBuildSettings({ autoNest })}>
@@ -611,6 +611,12 @@ export function BuildsPanel() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          {active?.preview && !g.busy && (
+            <div className="manual-banner">
+              <b>Not nested yet</b>
+              <span>The parts are shown in a quick layout so you can see them. Set the quantities, then press Start nesting to arrange them properly.</span>
             </div>
           )}
           {g.improving && (

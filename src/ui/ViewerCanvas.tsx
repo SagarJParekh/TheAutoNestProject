@@ -49,7 +49,7 @@ let lastView: { src: AppState; view: AppState } | null = null;
 function viewState(s: AppState): AppState {
   if (s.workspace !== 'build') return s;
   if (lastView && lastView.src === s) return lastView.view;
-  if (!lastBuild || lastBuild.gen !== s.buildGen) lastBuild = { gen: s.buildGen, parts: buildDisplayParts(s.buildGen) };
+  if (!lastBuild || lastBuild.gen !== s.buildGen) lastBuild = { gen: s.buildGen, parts: buildDisplayParts(s.buildGen, s.buildGen.active, true) };
   const printer = currentPrinter(s.buildGen);
   const checks = s.buildGen.checks && s.buildGen.checks.build === s.buildGen.active ? s.buildGen.checks : null;
   // after a collision / interlock check: show only the parts involved, with markers where they collide

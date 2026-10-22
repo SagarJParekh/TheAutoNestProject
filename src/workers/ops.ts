@@ -282,6 +282,11 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async displayMesh(args: { mesh: MeshData; tris: number }): Promise<Result<MeshData>> {
+    const m = G.clusterDecimate(args.mesh, args.tris);
+    return { result: m, transfer: m === args.mesh ? [] : meshBuffers(m) };
+  },
+
   async powderOrient(args: { mesh: MeshData }): Promise<Result<G.PowderOrientResult>> {
     return { result: G.powderOrient(args.mesh) };
   },
