@@ -35,9 +35,52 @@ function invalidate(partId: string) {
 }
 
 function afterLocalChange(label: string, part: Part, mesh: MeshData) {
+  // hidden shells stay hidden across edits (the shells are found again for the new mesh)
+  const hidden = hiddenShellKeys(part);
   replaceLocalMesh(label, part.id, mesh);
   invalidate(part.id);
   analyzePart(part.id);
+  if (hidden) void restoreHiddenShells(part.id, hidden);
+}
+
+const centroidKey = (p: Float32Array, idx: Uint32Array, t: number) => {
+  const a = idx[t * 3] * 3,
+    b = idx[t * 3 + 1] * 3,
+    c = idx[t * 3 + 2] * 3;
+  const r = (v: number) => Math.round(v * 1e4);
+  return `${r(p[a] + p[b] + p[c])},${r(p[a + 1] + p[b + 1] + p[c + 1])},${r(p[a + 2] + p[b + 2] + p[c + 2])}`;
+};
+
+/** Centres of the triangles of a part's hidden shells (to find them again after an edit), or null. */
+function hiddenShellKeys(part: Part): Set<string> | null {
+  const sv = getState().shellView;
+  if (!sv || sv.partId !== part.id || sv.mesh !== part.mesh || !sv.hidden?.length) return null;
+  const hide = new Set(sv.hidden);
+  const keys = new Set<string>();
+  for (let t = 0; t < sv.shellOfTri.length; t++) if (hide.has(sv.shellOfTri[t])) keys.add(centroidKey(part.mesh.positions, part.mesh.indices, t));
+  return keys;
+}
+
+async function restoreHiddenShells(partId: string, keys: Set<string>) {
+  await loadShells(partId);
+  const sv = liveShellView();
+  const part = partById(partId);
+  if (!sv || !part || sv.partId !== partId) return;
+  // a shell stays hidden when most of its triangles were in hidden shells before
+  const hit = new Map<number, number>();
+  for (let t = 0; t < sv.shellOfTri.length; t++) if (keys.has(centroidKey(part.mesh.positions, part.mesh.indices, t))) hit.set(sv.shellOfTri[t], (hit.get(sv.shellOfTri[t]) ?? 0) + 1);
+  const hidden = sv.shells.filter((sh) => (hit.get(sh.id) ?? 0) * 2 > sh.triangles).map((sh) => sh.id);
+  if (hidden.length) patchShells({ hidden });
+}
+
+/** Mask of the triangles in hidden shells of a part (null when nothing is hidden). */
+function hiddenTriMask(part: Part): Uint8Array | null {
+  const sv = getState().shellView;
+  if (!sv || sv.partId !== part.id || sv.mesh !== part.mesh || !sv.hidden?.length) return null;
+  const hide = new Set(sv.hidden);
+  const mask = new Uint8Array(sv.shellOfTri.length);
+  for (let t = 0; t < mask.length; t++) if (hide.has(sv.shellOfTri[t])) mask[t] = 1;
+  return mask;
 }
 
 // ---------------------------------------------------------------- shells
@@ -228,14 +271,41 @@ function applyMarks(part: Part, tris: ArrayLike<number>, remove: boolean) {
   const mask = new Uint8Array(nt);
   for (const t of te.tris) mask[t] = 1;
   for (let i = 0; i < tris.length; i++) mask[tris[i]] = remove ? 0 : 1;
+  // triangles of hidden shells are never marked
+  const hidden = hiddenTriMask(part);
   const out: number[] = [];
-  for (let t = 0; t < nt; t++) if (mask[t]) out.push(t);
+  for (let t = 0; t < nt; t++) if (mask[t] && !hidden?.[t]) out.push(t);
   setState({ triEdit: { ...te, tris: out, verts: [] }, selection: [part.id] });
 }
 
 function setMarks(part: Part, tris: ArrayLike<number>) {
   const te = liveTriEdit(part.id)!;
-  setState({ triEdit: { ...te, tris: Array.from(tris), verts: [] }, selection: [part.id] });
+  const hidden = hiddenTriMask(part);
+  const list = hidden ? Array.from(tris).filter((t) => !hidden[t]) : Array.from(tris);
+  setState({ triEdit: { ...te, tris: list, verts: [] }, selection: [part.id] });
+}
+
+/**
+ * Hide shells while editing triangles: the shells of the marked triangles
+ * (`marked`), or every shell except those (`others`). Hidden shells cannot be
+ * picked or marked, and stay hidden across edits until Show all.
+ */
+export async function hideShellsForEdit(which: 'marked' | 'others') {
+  const m = markedPart();
+  const part = m?.part ?? selectedParts()[0];
+  if (!part) return notify('warning', 'Select a part first');
+  if (!m || !m.te.tris.length) return notify('warning', 'Mark a triangle of each shell first (the Shell tool marks a whole shell)');
+  let sv = liveShellView();
+  if (!sv || sv.partId !== part.id) {
+    await loadShells(part.id);
+    sv = liveShellView();
+  }
+  if (!sv || sv.partId !== part.id) return;
+  const ofMarked = new Set(m.te.tris.map((t) => sv!.shellOfTri[t]));
+  const hide = which === 'marked' ? [...ofMarked] : sv.shells.map((x) => x.id).filter((id) => !ofMarked.has(id));
+  patchShells({ hidden: [...new Set([...(sv.hidden ?? []), ...hide])], selected: [], isolate: false });
+  // marks on hidden shells go away
+  setMarks(part, which === 'marked' ? [] : m.te.tris);
 }
 
 /** Click with the triangle / plane / surface / shell mark tools. Ctrl-click unmarks. */

@@ -6,7 +6,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, type NestPart, type NestParams, type NestResult, type NestVariant, type NestVoxels, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, commitBuild, getState, notify, setBuildRestoreHook, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, runJob, setTool } from './actions';
@@ -158,9 +158,9 @@ export function setPartTilt(id: string, tilt: Tilt | null) {
 
 export function updateBuildSettings(patch: Partial<BuildGenState>) {
   const before = bg();
-  if (patch.printerId && printerById(patch.printerId).tech === 'powder' && printerById(before.printerId).tech !== 'powder' && !before.tilt.angle && !patch.tilt) {
-    // powder bed: lay parts on their largest flat face, then tilt them 30°
-    patch = { ...patch, tilt: { angle: 30, azimuth: 0 } };
+  if (patch.printerId && printerById(patch.printerId).tech === 'powder' && printerById(before.printerId).tech !== 'powder' && before.tilt.angle === 30 && !patch.tilt) {
+    // powder bed: the SLS / MJF orientation rules replace the old "flat face down + 30°" default
+    patch = { ...patch, tilt: { angle: 0, azimuth: 0 } };
   }
   commitBuild('Build settings', patch);
   // switching automatic nesting off changes nothing to arrange
@@ -290,36 +290,25 @@ export function stopNesting() {
 }
 
 /**
- * Nest with a plan under one progress card: every part is voxelized once
- * per voxel size, in parallel workers, and the voxels are shared by all
- * nesting jobs; then every variant is a job, as many at a time as there are
- * workers, coarser grids first. `onBest` gets each result that is denser
- * than the ones before. Cancel / Stop keeps the best so far.
+ * Nest with a plan under one progress card, phase after phase: every part is
+ * voxelized once per voxel size (in parallel workers, when that grid is
+ * first needed) and the voxels are shared by all jobs on that grid; every
+ * variant is a job, as many at a time as there are workers. A refine phase
+ * retries the best variants so far on its grid. `onBest` gets each result
+ * that is denser than the ones before. Cancel / Stop, or the time limit,
+ * keeps the best so far.
  */
 async function runNesting(
   parts: NestPart[],
-  plan: { budget: number; variants: NestVariant[] }[],
+  plan: NestPhase[],
   params: Omit<NestParams, 'budget' | 'variants'>,
   onBest: (r: NestResult, done: number, total: number) => void,
+  timeLimitMin = 0,
 ): Promise<NestResult | null> {
   const hOf = (budget: number) => chooseNestVoxel({ ...params, budget });
-  // tasks: (grid, variant), duplicates dropped (a bigger budget can give the same grid)
-  const seen = new Set<string>();
-  const tasks: { h: number; budget: number; variant: NestVariant }[] = [];
-  for (const jb of [...plan].sort((a, b) => a.budget - b.budget)) {
-    const h = hOf(jb.budget);
-    for (const variant of jb.variants) {
-      const key = `${h.toFixed(9)}:${variant.order}:${variant.pattern}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      tasks.push({ h, budget: jb.budget, variant });
-    }
-  }
-  // coarser grids first: a first result comes soon
-  tasks.sort((a, b) => b.h - a.h);
-  const hs = [...new Set(tasks.map((t) => t.h))];
   let handles: { cancel: () => void }[] = [];
   let stopped = false;
+  let timedOut = false;
   let best: NestResult | null = null;
   const stop = () => {
     stopped = true;
@@ -327,86 +316,118 @@ async function runNesting(
   };
   stopNestingFn = stop;
   const job = startJob('Nesting in 3D', stop);
+  const timer = timeLimitMin > 0 ? setTimeout(() => ((timedOut = true), stop()), timeLimitMin * 60_000) : null;
+  const total = plan.reduce((a, ph) => a + (ph.refine ?? ph.variants.length), 0);
+  let done = 0;
+  const results: { variant: NestVariant; h: number; r: NestResult }[] = [];
+  const seen = new Set<string>();
+  const empty = { positions: new Float32Array(0), indices: new Uint32Array(0) };
   try {
-    // 1. voxels: one job per part and voxel size, coarse grids first
-    const vjobs = hs.flatMap((h) => parts.map((part, pi) => ({ part, pi, h })));
-    const voxels = new Map<string, NestVoxels>();
-    let vdone = 0;
-    job.progress(0.02, `Voxelizing ${parts.length} part${parts.length > 1 ? 's' : ''}`);
-    const vhandles = vjobs.map(({ part, h }) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
-    handles = [...vhandles];
-    const vh = vhandles.map((handle, i) =>
-      handle.promise.then((v) => {
-        voxels.set(`${vjobs[i].pi}@${vjobs[i].h}`, v);
-        vdone++;
-        job.progress((0.25 * vdone) / vjobs.length, `Voxelizing ${vdone} / ${vjobs.length}`);
-      }),
-    );
-    // (voxel jobs of a grid are awaited just before its first nesting job)
-    const ready = new Map(hs.map((h) => [h, Promise.all(vh.filter((_, i) => vjobs[i].h === h))]));
-    // 2. one nesting job per variant, as many at a time as there are workers
-    const empty = { positions: new Float32Array(0), indices: new Uint32Array(0) };
-    const progress = tasks.map(() => 0);
-    let done = 0;
-    const show = (m?: string) =>
-      job.progress(
-        0.25 + (0.75 * progress.reduce((a, b) => a + b, 0)) / tasks.length,
-        tasks.length > 1 ? `${m ?? 'Nesting'} · way ${Math.min(done + 1, tasks.length)} of ${tasks.length}${best ? ' (best so far shown)' : ''}` : m,
+    for (const ph of plan) {
+      if (stopped) break;
+      const h = hOf(ph.budget);
+      // refine: the best variants so far, again on this grid
+      const wanted = ph.refine
+        ? [...results].sort((a, b) => compareNestResults(a.r, b.r)).map((x) => x.variant)
+            .filter((v, i, all) => all.findIndex((w) => w.order === v.order && w.pattern === v.pattern) === i)
+            .slice(0, ph.refine)
+        : ph.variants;
+      const tasks = wanted.filter((v) => {
+        const key = `${h.toFixed(9)}:${v.order}:${v.pattern}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const skipped = (ph.refine ?? ph.variants.length) - tasks.length;
+      done += skipped;
+      if (!tasks.length) continue;
+      // voxels for this grid: one job per part
+      const fine = results.length > 0;
+      let vdone = 0;
+      job.progress(done / total, `Voxelizing ${parts.length} part${parts.length > 1 ? 's' : ''}${fine ? ` for the finer ${h.toFixed(2)} mm grid` : ''}`);
+      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
+      handles = [...vhandles];
+      const voxels = await Promise.all(
+        vhandles.map((x) =>
+          x.promise.then((v) => {
+            vdone++;
+            job.progress(done / total, `Voxelizing ${vdone} / ${parts.length}${fine ? ` (finer ${h.toFixed(2)} mm grid)` : ''}`);
+            return v;
+          }),
+        ),
       );
-    let next = 0;
-    const worker = async () => {
-      while (next < tasks.length && !stopped) {
-        const i = next++;
-        const t = tasks[i];
-        await ready.get(t.h);
-        if (stopped) return;
-        const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: voxels.get(`${pi}@${t.h}`) }));
-        const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: t.budget, voxel: t.h, variants: [t.variant] } }, (f, m) => {
-          progress[i] = f;
-          show(m);
-        });
-        handles = [...handles, handle];
-        const r = await handle.promise;
-        progress[i] = 1;
-        done++;
-        const better = pickNest(best, r);
-        if (better !== best) {
-          best = better;
-          onBest(best!, done, tasks.length);
+      if (stopped) break;
+      const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: voxels[pi] }));
+      // one job per variant, as many at a time as there are workers
+      const progress = tasks.map(() => 0);
+      const show = (m?: string) =>
+        job.progress(
+          (done + progress.reduce((a, b) => a + b, 0)) / total,
+          `${m ?? 'Nesting'} · way ${Math.min(done + 1, total)} of ${total} (${h.toFixed(2)} mm grid)${best ? ' · best so far shown' : ''}`,
+        );
+      let next = 0;
+      handles = [];
+      const worker = async () => {
+        while (next < tasks.length && !stopped) {
+          const i = next++;
+          const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: ph.budget, voxel: h, variants: [tasks[i]] } }, (f, m) => {
+            progress[i] = f;
+            show(m);
+          });
+          handles = [...handles, handle];
+          const r = await handle.promise;
+          progress[i] = 0;
+          done++;
+          results.push({ variant: tasks[i], h, r });
+          const better = pickNest(best, r);
+          if (better !== best) {
+            best = better;
+            onBest(best!, done, total);
+          }
+          show();
         }
-        show();
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(tasks.length, pool.capacity) }, () => worker().catch((e) => {
-      if (!(e instanceof CancelledError)) throw e;
-    })));
-    if (stopped && best) notify('info', `Nesting stopped: keeping the best builds found so far (${done} of ${tasks.length} ways tried)`);
-    else if (stopped) notify('info', 'Nesting cancelled');
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(tasks.length, pool.capacity) }, () =>
+          worker().catch((e) => {
+            if (!(e instanceof CancelledError)) throw e;
+          }),
+        ),
+      );
+    }
+    if (stopped && best)
+      notify('info', `${timedOut ? `Time limit of ${timeLimitMin} min reached` : 'Nesting stopped'}: keeping the best builds found (${done} of ${total} ways tried)`);
+    else if (stopped) notify('info', timedOut ? `Time limit of ${timeLimitMin} min reached before any build was finished` : 'Nesting cancelled');
     return best;
   } catch (e) {
     handles.forEach((h) => h.cancel());
-    if (e instanceof CancelledError) {
-      if (!best) notify('info', 'Nesting cancelled');
-    } else notify('error', `Nesting failed: ${(e as Error).message}`);
+    if (!(e instanceof CancelledError)) notify('error', `Nesting failed: ${(e as Error).message}`);
+    else if (!best) notify('info', 'Nesting cancelled');
     return best;
   } finally {
+    if (timer) clearTimeout(timer);
     if (stopNestingFn === stop) stopNestingFn = null;
     job.end();
   }
 }
 
 async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof startJob>) {
-  // 1. "largest flat face down" orientation, cached per mesh
-  const toOrient = s0.parts.filter((p) => s0.autoOrient && !p.lockRotation && !(p.orient && p.orient.mesh === p.mesh)).length;
+  // 1. orientation, cached per mesh: powder bed by the SLS / MJF rules, other printers largest flat face down
+  const rule: 'powder' | 'flat' = printerById(s0.printerId).tech === 'powder' ? 'powder' : 'flat';
+  const cached = (p: BuildPart) => !!p.orient && p.orient.mesh === p.mesh && (p.orient.rule ?? 'flat') === rule;
+  const toOrient = s0.parts.filter((p) => s0.autoOrient && !p.lockRotation && !cached(p)).length;
   let oriented = 0;
   job.progress(0.05, toOrient ? `Orienting 0 / ${toOrient} parts` : 'Packing');
   const parts = await Promise.all(
     s0.parts.map(async (p) => {
-      if (!s0.autoOrient || p.lockRotation || (p.orient && p.orient.mesh === p.mesh)) return p;
-      const r = await runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [0, 0, 0, 1], alignXY: true }, { silent: true });
+      if (!s0.autoOrient || p.lockRotation || cached(p)) return p;
+      const q =
+        rule === 'powder'
+          ? (await runJob(`Orienting ${p.name}`, 'powderOrient', { mesh: p.mesh }, { silent: true }))?.quaternion
+          : (await runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [0, 0, 0, 1], alignXY: true }, { silent: true }))?.quaternion;
       oriented++;
       job.progress(0.05 + 0.75 * (oriented / Math.max(1, toOrient)), `Orienting ${oriented} / ${toOrient} parts`);
-      return r ? { ...p, orient: { mesh: p.mesh, q: r.quaternion } } : p;
+      return q ? { ...p, orient: { mesh: p.mesh, q, rule } } : p;
     }),
   );
   if (run !== generation) return;
@@ -454,7 +475,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
         items.push({ key: `${p.id}#${c}`, w: b0.max.x - b0.min.x, d: b0.max.y - b0.min.y, h: b0.max.z - b0.min.z, fixed: true });
       continue;
     }
-    const base = s.autoOrient && p.orient ? new Quaternion(...p.orient.q) : new Quaternion();
+    const base = s.autoOrient && p.orient && (p.orient.rule ?? 'flat') === rule ? new Quaternion(...p.orient.q) : new Quaternion();
     let q = tiltQuaternion(p.tilt ?? s.tilt).multiply(base);
     let b = rotatedBounds(p.mesh, q);
     if (s.autoTilt && !fitsPlatform(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, fitParams)) {
@@ -528,9 +549,15 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
       return { locks: newLocks, builds, unplaced, autoTilts, active: Math.min(s.active, Math.max(0, builds.length - 1)), manual: false, stale: false, checks: null, nestVoxel: r.voxel };
     };
     // the best builds so far are shown while more ways are tried
-    const r = await runNesting(nestParts, plan, params, (best, done, total) => {
-      if (run === generation && done < total) setBg({ ...toState(best), improving: { done, total } });
-    });
+    const r = await runNesting(
+      nestParts,
+      plan,
+      params,
+      (best, done, total) => {
+        if (run === generation && done < total) setBg({ ...toState(best), improving: { done, total } });
+      },
+      s.nestTimeLimit ?? 10,
+    );
     if (!r || run !== generation) return setBg({ busy: false, improving: null });
     commitBuild('Nesting', { ...toState(r), busy: false, improving: null }, before);
     return;

@@ -1069,13 +1069,21 @@ export function chooseNestVoxel(p: Pick<NestParams, 'volume' | 'margin' | 'zOffs
   return hb;
 }
 
+/** One phase of a nesting plan: a voxel budget and the variants tried at it. */
+export interface NestPhase {
+  budget: number;
+  variants: NestVariant[];
+  /** instead of `variants`: retry the n best variants of the phases before, at this budget */
+  refine?: number;
+}
+
 /**
- * What to run for a nesting detail level: voxel budgets with the variants
- * tried at each (every variant is its own job; jobs whose grid comes out the
- * same as an earlier one's are skipped). Fine tries everything Normal does
- * and more, so it is never less dense.
+ * What to run for a nesting detail level, phase after phase (every variant
+ * is its own job). Fine first runs everything Normal does, then retries
+ * only the best of those orders on the finer grid, so it is never less
+ * dense than Normal and its time stays bounded.
  */
-export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): { budget: number; variants: NestVariant[] }[] {
+export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): NestPhase[] {
   const v = (order: NestOrder, pattern = false): NestVariant => ({ order, pattern });
   const pat = (order: NestOrder) => (symmetric ? [v(order, true)] : []);
   // 'open' puts cups, trays and U shapes first so other parts can go inside them
@@ -1083,12 +1091,8 @@ export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean)
   // Normal: a grid as fine as about 100 million voxels allows (lined up with the clearance), several orders
   const normal = { budget: 100e6, variants: [v('volume'), v('open'), ...pat('volume'), ...pat('open'), v('height'), v('box')] };
   if (detail === 'normal') return [normal];
-  // Fine: everything Normal tries, plus finer grids (where the clearance divides into smaller voxels)
-  return [
-    normal,
-    { budget: 320e6, variants: [v('volume'), v('open'), ...pat('volume'), ...pat('open'), v('box'), v('height'), v('footprint')] },
-    { budget: 700e6, variants: [v('volume'), v('open')] },
-  ];
+  // Fine: Normal, then the two best orders again on a finer grid (where the clearance divides into smaller voxels)
+  return [normal, { budget: 320e6, variants: [], refine: 2 }];
 }
 
 /** Compare two nests by density: < 0 when `a` is better (fewer parts left out, fewer builds, lower last build), 0 when equal. */
@@ -1097,6 +1101,12 @@ function compareNests(a: { unplaced: number; tops: number[] }, b: { unplaced: nu
   if (a.tops.length !== b.tops.length) return a.tops.length - b.tops.length;
   if (!a.tops.length) return 0;
   return a.tops[a.tops.length - 1] - b.tops[b.tops.length - 1];
+}
+
+/** Order nests by density: < 0 when `a` is denser (fewer parts left out, fewer builds, lower last build). */
+export function compareNestResults(a: NestResult, b: NestResult): number {
+  const key = (r: NestResult) => ({ unplaced: r.unplaced.length, tops: r.builds.map((x) => Math.round(x.height * 1000)) });
+  return compareNests(key(a), key(b));
 }
 
 /** The densest of several nests of the same parts (a pattern one wins a tie). */

@@ -305,7 +305,7 @@ export interface BuildPart {
   /** orientation locked: kept exactly as it came from Mesh prep (no flat-face turn, tilt or 90° turns) */
   lockRotation?: boolean;
   /** cached "largest flat face down" orientation for this mesh */
-  orient?: { mesh: MeshData; q: [number, number, number, number] };
+  orient?: { mesh: MeshData; q: [number, number, number, number]; rule?: 'flat' | 'powder' };
   /** assembly group: all parts of a group get the same orientation (taken from the largest one) */
   group?: string;
   /** closed, consistently oriented surface (undefined while being checked) */
@@ -360,6 +360,8 @@ export interface BuildGenState {
   maxHeight: number;
   /** 3D nesting resolution */
   nestDetail: 'fast' | 'normal' | 'fine';
+  /** stop nesting after this many minutes and keep the best builds found (0 = no limit) */
+  nestTimeLimit?: number;
   /** copies locked by the user, by placement key: nesting keeps them (on their locked axes) and arranges the rest around them */
   locks?: Record<string, CopyLock>;
   /** hidden in the view: part ids (every copy) or placement keys (one copy) */

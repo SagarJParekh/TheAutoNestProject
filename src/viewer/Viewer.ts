@@ -780,18 +780,23 @@ export class Viewer {
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
       const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
       const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}|${thk ? `${this.refId(thk.result)}:${thkSet.view}:${thkSet.limit}:${thkSet.scaleMin}:${thkSet.scaleMax}` : ''}`;
-      // hidden shells: draw only the other triangles (draw groups need a material array)
-      const hiddenKey = sv && sv.hidden?.length ? this.refId(sv.hidden) + ':' + this.refId(sv.shellOfTri) : '';
+      // hidden shells (Shells and Edit tabs): draw only the other triangles (draw groups need a material array;
+      // picking skips triangles outside the groups)
+      const svh =
+        inRepair && (s.repairTab === 'shells' || s.repairTab === 'edit') && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh && s.shellView.hidden?.length
+          ? s.shellView
+          : null;
+      const hiddenKey = svh ? this.refId(svh.hidden!) + ':' + this.refId(svh.shellOfTri) : '';
       if ((obj.hiddenKey ?? '') !== hiddenKey) {
         obj.hiddenKey = hiddenKey;
         const g = obj.mesh.geometry;
         g.clearGroups();
-        if (sv && sv.hidden?.length) {
-          const hide = new Set(sv.hidden);
-          const nt = sv.shellOfTri.length;
+        if (svh) {
+          const hide = new Set(svh.hidden);
+          const nt = svh.shellOfTri.length;
           let start = -1;
           for (let t = 0; t <= nt; t++) {
-            const shown = t < nt && !hide.has(sv.shellOfTri[t]);
+            const shown = t < nt && !hide.has(svh.shellOfTri[t]);
             if (shown && start < 0) start = t;
             else if (!shown && start >= 0) {
               g.addGroup(start * 3, (t - start) * 3, 0);
@@ -1180,9 +1185,17 @@ export class Viewer {
     this.raycaster.setFromCamera(ndc, this.camera);
     const ghosted = new Set(this.state?.preview?.replaces ?? []);
     const meshes = [...this.objects.values()].filter((o) => o.part.visible && !ghosted.has(o.part.id)).map((o) => o.mesh);
-    (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlane;
+    // parts drawn in groups (hidden shells): hits on hidden triangles do not count
+    const grouped = meshes.some((m) => m.geometry.groups.length > 0);
+    (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlane && !grouped;
     const hits = this.raycaster.intersectObjects(meshes, false);
-    const hit = hits.find((h) => !this.clipPlane || this.clipPlane.distanceToPoint(h.point) >= 0);
+    const drawn = (h: (typeof hits)[number]) => {
+      const groups = (h.object as Mesh).geometry.groups;
+      if (!groups.length || h.faceIndex == null) return true;
+      const i = h.faceIndex * 3;
+      return groups.some((g) => i >= g.start && i < g.start + g.count);
+    };
+    const hit = hits.find((h) => (!this.clipPlane || this.clipPlane.distanceToPoint(h.point) >= 0) && drawn(h));
     if (!hit || hit.faceIndex === undefined || hit.faceIndex === null || !hit.face) return null;
     const nm = new Matrix3().getNormalMatrix(hit.object.matrixWorld);
     const n = hit.face.normal.clone().applyMatrix3(nm).normalize();

@@ -414,8 +414,14 @@ export function BuildSetupPanel() {
             Tilt parts that are too tall or too big
           </Check>
           <Check checked={g.autoOrient} onChange={(autoOrient) => updateBuildSettings({ autoOrient })}>
-            Largest flat face down
+            {printer.tech === 'powder' ? 'Orient by SLS / MJF rules' : 'Largest flat face down'}
           </Check>
+          {printer.tech === 'powder' && g.autoOrient && (
+            <Hint>
+              Each part is turned so no large flat surface lies parallel to the platform (surfaces flatter than 30° to the layers are avoided), the area per
+              layer changes smoothly (no sudden jumps in cross-section), without making it needlessly tall; then its footprint is lined up with X / Y.
+            </Hint>
+          )}
           <Check checked={g.allowRotate} onChange={(allowRotate) => updateBuildSettings({ allowRotate })}>
             Allow turning parts 90° to fit
           </Check>
@@ -457,11 +463,24 @@ export function BuildSetupPanel() {
                   />
                 </Row>
               )}
+              {g.nest3d && (
+                <Row label="Time limit">
+                  <NumberField
+                    value={g.nestTimeLimit ?? 10}
+                    min={0}
+                    step={1}
+                    precision={0}
+                    suffix="min"
+                    title="Stop nesting after this long and keep the best builds found so far (0 = no limit)"
+                    onChange={(nestTimeLimit) => updateBuildSettings({ nestTimeLimit: Math.max(0, Math.round(nestTimeLimit)) })}
+                  />
+                </Row>
+              )}
             </>
           )}
           <Hint>
             {printer.tech === 'powder' && g.nest3d
-              ? `3D nesting: parts are packed by their real shape (not their bounding box), into each other's free space (inside cups, trays and U shapes too) and up in Z, with at least the clearance between surfaces${g.nestVoxel ? ` (resolution ${g.nestVoxel.toFixed(2)} mm)` : ''}. A part is only placed where it can slide straight out (along X, Y, Z or a tilted line, e.g. out of a tilted cup), so parts never interlock; cups, trays and U shapes are tried first so other parts go inside them. Packing density comes first; copies are put in a regular pattern only when that needs no more builds and no more height. Fast: one voxel per clearance. Normal: a grid twice as fine, several ways tried in parallel and the densest kept. Fine: more ways (never less dense than Normal) and an even finer grid where the clearance allows. Largest parts go first; parts lie on their largest flat face and are tilted by the Tilt below (30° by default for powder).`
+              ? `3D nesting: parts are packed by their real shape (not their bounding box), into each other's free space (inside cups, trays and U shapes too) and up in Z, with at least the clearance between surfaces${g.nestVoxel ? ` (resolution ${g.nestVoxel.toFixed(2)} mm)` : ''}. A part is only placed where it can slide straight out (along X, Y, Z or a tilted line, e.g. out of a tilted cup), so parts never interlock; cups, trays and U shapes are tried first so other parts go inside them. Packing density comes first; copies are put in a regular pattern only when that needs no more builds and no more height. Fast: one voxel per clearance. Normal: a grid twice as fine, several ways tried in parallel and the densest kept. Fine: everything Normal does, then the two best orders again on a finer grid (never less dense than Normal). Nesting stops at the time limit and keeps the best builds found. Parts are oriented by the SLS / MJF rules (or kept as they are when that is off), plus any Tilt below.`
               : 'Each build is filled completely before a new one is started. Parts are placed tallest first, so similar heights end up together; when everything fits on one platform it stays one build. Parts that do not fit are tilted (smallest angle first) until they do.'}
           </Hint>
         </Section>

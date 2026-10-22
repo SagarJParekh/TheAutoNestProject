@@ -282,6 +282,10 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async powderOrient(args: { mesh: MeshData }): Promise<Result<G.PowderOrientResult>> {
+    return { result: G.powderOrient(args.mesh) };
+  },
+
   async watertight(args: { mesh: MeshData }): Promise<Result<boolean>> {
     return { result: G.isWatertight(args.mesh) };
   },

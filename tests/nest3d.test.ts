@@ -186,12 +186,13 @@ describe('turned voxels', () => {
 
 describe('nesting variants', () => {
   const params = { margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: true, volume: [120, 100, 100] as [number, number, number] };
-  it('Fine tries everything Normal tries (never less dense)', () => {
+  it('Fine runs all of Normal first (never less dense), then refines the best', () => {
     for (const sym of [true, false]) {
-      const key = (v: { order: string; pattern: boolean }, b: number) => `${b}:${v.order}:${v.pattern}`;
-      const normal = nestPlan('normal', sym).flatMap((j) => j.variants.map((v) => key(v, j.budget)));
-      const fine = new Set(nestPlan('fine', sym).flatMap((j) => j.variants.map((v) => key(v, j.budget))));
-      for (const k of normal) expect(fine.has(k)).toBe(true);
+      const normal = nestPlan('normal', sym);
+      const fine = nestPlan('fine', sym);
+      expect(fine[0]).toEqual(normal[0]);
+      expect(fine[1].refine).toBeGreaterThan(0);
+      expect(fine[1].budget).toBeGreaterThan(normal[0].budget);
     }
   });
 

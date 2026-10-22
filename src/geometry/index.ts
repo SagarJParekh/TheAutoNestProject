@@ -43,3 +43,4 @@ export * from './offset';
 export * from './fillet';
 export * from './orient';
 export * from './pack';
+export * from './powderOrient';

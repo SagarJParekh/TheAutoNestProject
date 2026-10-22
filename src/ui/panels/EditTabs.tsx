@@ -3,7 +3,7 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import {
   clearBridge, clearTriSelection, createBridge, deleteSelectedTriangles, extractMarked, growMarked, hoverShell, invertMarked, liveShellView, loadShells, markAll, previewFixOpenEdges,
-  previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell, hideSelectedShells, showAllShells, zoomToShells,
+  previewRemesh, selectShells, shellAction, shrinkMarked, startTriPick, suggestedEdgeLength, toggleIsolate, toggleShell, hideSelectedShells, hideShellsForEdit, showAllShells, zoomToShells,
 } from '../../state/editActions';
 import type { MarkTool, Part } from '../../state/types';
 import { live as livePreview } from '../../state/livePreview';
@@ -159,6 +159,32 @@ const PICK_FOR: Record<MarkTool, 'triangle' | 'brush' | 'window'> = {
   window: 'window',
 };
 
+/** Hide shells while editing: work on one shell, fix the rest later. */
+function EditShellsBox({ part, marked }: { part: Part | null; marked: number }) {
+  const sv = useStore((s) => s.shellView);
+  const hidden = part && sv && sv.partId === part.id && sv.mesh === part.mesh ? (sv.hidden?.length ?? 0) : 0;
+  return (
+    <div className="density-box">
+      <h4>Shells</h4>
+      <div className="btn-grid three">
+        <button className="btn" disabled={!part || !marked} onClick={() => void hideShellsForEdit('marked')} title="Hide the shells that have marked triangles">
+          Hide marked
+        </button>
+        <button className="btn" disabled={!part || !marked} onClick={() => void hideShellsForEdit('others')} title="Hide every shell except the ones with marked triangles, to edit just those">
+          Show only marked
+        </button>
+        <button className="btn" disabled={!hidden} onClick={showAllShells}>
+          Show all{hidden ? ` (${hidden})` : ''}
+        </button>
+      </div>
+      <Hint>
+        Mark a shell (Shell tool, or any triangle of it), then hide it or show only it. Hidden shells can't be picked or marked and stay hidden while you
+        edit, until Show all (shells hidden in the Shells tab stay hidden here too).
+      </Hint>
+    </div>
+  );
+}
+
 export function TriEditTab({ parts }: { parts: Part[] }) {
   const part = parts.length === 1 ? parts[0] : null;
   const st = useStore((s) => s.settings.triEdit);
@@ -226,6 +252,7 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
               {marking ? 'Done marking' : `Start marking (${MARK_TOOLS.find((m) => m.value === st.markTool)!.label.toLowerCase()})…`}
             </button>
             <p className="muted small">{marked ? `${marked.toLocaleString()} triangles marked` : 'Nothing marked yet. Ctrl + click / drag unmarks.'}</p>
+            <EditShellsBox part={part} marked={marked} />
             <div className="btn-grid three">
               <button className="btn" disabled={!marked} onClick={() => growMarked(1)} title="Add the triangles next to the marked area">
                 Grow
