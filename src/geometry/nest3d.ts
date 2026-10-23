@@ -309,6 +309,9 @@ function turnCells(cells: Uint8Array, nx: number, ny: number, nz: number): Uint8
   return out;
 }
 
+/** stands in for a voxel grid that was let go once it was not needed any more */
+const EMPTY_CELLS = new Uint8Array(0);
+
 /** Fill empty voxels that cannot be reached from outside the part's box. */
 function fillEnclosed(solid: Uint8Array, nx: number, ny: number, nz: number) {
   const seen = new Uint8Array(solid.length);
@@ -402,7 +405,8 @@ export function dilate(v: PartVoxels, r: number): { nx: number; ny: number; nz: 
     ny = v.ny + 2 * pad,
     nz = v.nz + 2 * pad;
   const N = nx * ny * nz;
-  const g = new Float64Array(N).fill(Infinity);
+  // squared distances in voxels: small whole numbers, exact in 32 bits (half the memory of 64)
+  const g = new Float32Array(N).fill(Infinity);
   for (let k = 0; k < v.nz; k++)
     for (let j = 0; j < v.ny; j++)
       for (let i = 0; i < v.nx; i++)
@@ -1160,11 +1164,20 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     let keep = dilate(v, d);
     const vox: { k: number; s: Shape }[] = [];
     for (let k = 0; k < 4; k++) {
-      if (turns.includes(k)) vox.push({ k, s: makeShape(v, keep) });
+      const prev = v;
+      let shape: Shape | null = null;
+      if (turns.includes(k)) {
+        shape = makeShape(v, keep);
+        // the surface list is all later steps need of the voxels themselves
+        surfaceOf(shape);
+        vox.push({ k, s: shape });
+      }
       if (k < 3 && turns.length > 1) {
         v = turnVoxels(v, h);
         keep = turnKeep(keep);
       }
+      // memory: the full voxel grid of this turn is no longer needed (big parts × many kinds add up)
+      prev.solid = EMPTY_CELLS;
     }
     onProgress(0.2 * ((pi + 1) / parts.length), 'Voxelizing parts');
     const v0 = vox[0].s.v;

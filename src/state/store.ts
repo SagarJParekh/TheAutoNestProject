@@ -223,7 +223,9 @@ export const setState = useStore.setState;
 // ---------------------------------------------------------------- history
 
 /** Rough memory budget for undo history (unique mesh buffers). */
-const HISTORY_BYTES = 1.5e9;
+// up to 1.5 GB, less on computers with little memory (browsers report it roughly; 4 GB assumed when they don't)
+const DEVICE_GB = (typeof navigator !== 'undefined' && (navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 4;
+const HISTORY_BYTES = Math.min(1.5e9, DEVICE_GB * 1e9 * 0.12);
 const HISTORY_MAX = 100;
 
 function meshBytes(parts: Part[], seen: Set<MeshData>): number {

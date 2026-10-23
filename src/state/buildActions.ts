@@ -6,7 +6,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type NestVoxels, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, commitBuild, getState, notify, setBuildRestoreHook, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, prepareMesh, runJob, setTool } from './actions';
@@ -386,6 +386,26 @@ function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenS
   return builds;
 }
 
+/**
+ * How many nesting jobs fit in this computer's memory at once: every job
+ * holds the parts' voxels (four turns) and its build grids. Browsers report
+ * the memory roughly (Chrome up to 8 GB; others not at all: 4 GB assumed).
+ */
+function nestingJobsThatFit(voxels: NestVoxels[], params: Omit<NestParams, 'budget' | 'variants'>, h: number): number {
+  const gb = (typeof navigator !== 'undefined' && (navigator as Navigator & { deviceMemory?: number }).deviceMemory) || 4;
+  const budget = gb * 1e9 * 0.35;
+  const cells = voxels.reduce((a, v) => a + v.nx * v.ny * v.nz, 0);
+  const biggest = Math.max(1, ...voxels.map((v) => (v.nx + 8) * (v.ny + 8) * (v.nz + 8)));
+  const [VX, VY, VZ] = params.volume;
+  const gx = (VX - 2 * params.margin) / h,
+    gy = (VY - 2 * params.margin) / h,
+    gz = (VZ - params.zOffset) / h;
+  // voxels in + shapes (runs, surfaces, line maps) ≈ 3 bytes a cell; dilation of the biggest part; two builds of grids + line maps
+  const perBuild = (gx * gy * gz) / 4 + 2 * 16 * (gx + 2 * gz) * (gy + gz) * 0.5;
+  const perJob = cells * 3 + biggest * 6 + 2 * perBuild + 50e6;
+  return Math.max(1, Math.floor(budget / perJob));
+}
+
 /** Stops the nesting that is running, keeping the best builds found so far (null when none runs). */
 let stopNestingFn: (() => void) | null = null;
 export function stopNesting() {
@@ -468,17 +488,32 @@ async function runNesting(
           (done + progress.reduce((a, b) => a + b, 0)) / total,
           `${m ?? 'Nesting'} · way ${Math.min(done + 1, total)} of ${total} (${h.toFixed(2)} mm grid)${best ? ' · best so far shown' : ''}`,
         );
-      let next = 0;
+      // as many jobs at a time as the workers allow, and as this computer's memory allows
+      const queue = tasks.map((_, i) => i);
+      const retried = new Set<number>();
+      let limit = Math.min(tasks.length, pool.capacity, nestingJobsThatFit(voxels, params, h));
       handles = [];
-      const worker = async () => {
-        while (next < tasks.length && !stopped) {
-          const i = next++;
+      const worker = async (slot: number) => {
+        while (queue.length && !stopped && slot < limit) {
+          const i = queue.shift()!;
           const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: ph.budget, voxel: h, variants: [tasks[i]] } }, (f, m) => {
             progress[i] = f;
             show(m);
           });
           handles = [...handles, handle];
-          const r = await handle.promise;
+          let r: NestResult;
+          try {
+            r = await handle.promise;
+          } catch (e) {
+            if (e instanceof CancelledError || stopped || retried.has(i)) throw e;
+            // a worker ran out of memory (or crashed): go on one job at a time, this one again
+            retried.add(i);
+            limit = 1;
+            progress[i] = 0;
+            queue.unshift(i);
+            if (slot === 0) continue;
+            return;
+          }
           progress[i] = 0;
           done++;
           results.push({ variant: tasks[i], h, r });
@@ -491,12 +526,14 @@ async function runNesting(
         }
       };
       await Promise.all(
-        Array.from({ length: Math.min(tasks.length, pool.capacity) }, () =>
-          worker().catch((e) => {
+        Array.from({ length: limit }, (_, slot) =>
+          worker(slot).catch((e) => {
             if (!(e instanceof CancelledError)) throw e;
           }),
         ),
       );
+      // a crash in the last running job of a round leaves the queue for slot 0
+      while (queue.length && !stopped) await worker(0);
     }
     if (stopped && best)
       notify('info', `${timedOut ? `Time limit of ${timeLimitMin} min reached` : 'Nesting stopped'}: keeping the best builds found (${done} of ${total} ways tried)`);
