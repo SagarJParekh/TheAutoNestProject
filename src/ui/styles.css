@@ -372,6 +372,8 @@ table.report tr:last-child td { border-bottom: none; }
 .lock-grid { display: grid; grid-template-columns: auto repeat(3, 1fr); gap: 4px 6px; align-items: center; margin: 4px 0 8px; font-size: 12px; }
 .lock-axis.on { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
 .lock-axis.some { border-color: var(--accent); color: var(--accent); }
+.nest-log summary { cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nest-log pre { max-height: 220px; overflow: auto; font-size: 10.5px; line-height: 1.35; background: var(--panel-2); padding: 6px; border-radius: 4px; white-space: pre-wrap; }
 .snap-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
 .snap-row .field { width: 76px; }
 .start-nesting { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }

@@ -5,6 +5,7 @@ import { Icon } from '../icons';
 import { SnapControls } from '../SnapControls';
 import { getState, setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
+import { acceptSavedSession } from '../../state/buildSession';
 import {
   addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
@@ -16,6 +17,28 @@ import type { BuildPart, Tilt } from '../../state/types';
 const f1 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const pct = (v: number) => `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: v < 0.1 ? 2 : 1 })}%`;
 const cm3 = (mm3: number) => `${(mm3 / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} cm³`;
+
+/** A session saved in the browser (e.g. before a crash): restore it or start new. */
+function SavedSessionBanner() {
+  const saved = useStore((s) => s.savedBuildSession);
+  if (!saved) return null;
+  return (
+    <div className="manual-banner">
+      <b>Last session saved</b>
+      <span>
+        {saved.parts} part{saved.parts > 1 ? 's' : ''} ({saved.copies} copies), saved {new Date(saved.savedAt).toLocaleString()}.
+      </span>
+      <div className="btn-grid two">
+        <button className="btn primary" onClick={() => void acceptSavedSession(true)}>
+          Restore
+        </button>
+        <button className="btn" onClick={() => void acceptSavedSession(false)}>
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /** Start nesting button, with the choice to nest automatically after every change. */
 function StartNesting() {
@@ -129,6 +152,34 @@ function LockBox() {
         </button>
       )}
     </div>
+  );
+}
+
+/** What the last nesting did: to look at, or copy and send when something goes wrong. */
+function NestLogBox() {
+  const lines = useStore((s) => s.nestLog);
+  const [copied, setCopied] = useState(false);
+  if (!lines.length) return null;
+  const copy = async () => {
+    const text = [`AutoNest nesting log (${new Date().toLocaleString()}, ${navigator.userAgent})`, ...lines].join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Copy the nesting log:', text);
+    }
+  };
+  return (
+    <details className="density-box nest-log">
+      <summary>
+        Nesting log <span className="muted">({lines.at(-1)?.replace(/^\s*[\d.]+ s\s+/, '')})</span>
+      </summary>
+      <pre>{lines.join('\n')}</pre>
+      <button className="mini" onClick={() => void copy()}>
+        {copied ? 'Copied' : 'Copy log'}
+      </button>
+    </details>
   );
 }
 
@@ -314,6 +365,7 @@ export function BuildSetupPanel() {
       </header>
       <div className="panel-scroll">
         <Section title="Parts">
+          <SavedSessionBanner />
           <div className="btn-grid two">
             <button className="btn primary" onClick={() => fileRef.current?.click()}>
               Add files…
@@ -642,6 +694,7 @@ export function BuildsPanel() {
             g.parts.length > 0 && (g.stale || !g.builds.length) && <StartNesting />
           )}
           {active && <EditBox />}
+          <NestLogBox />
           {active && <LockBox />}
           {active && <ChecksBox />}
           {active && <DensityBox />}

@@ -70,6 +70,8 @@ Add files (or take parts from Mesh prep) — they show up straight away in a qui
 
 **Snap** (Mesh prep → Transform, and Build generation → Select & edit): move in steps of a set distance (positions land on multiples of it) and rotate in steps of a set angle, for the Move / Rotate handles and Pick & place.
 
+**Reliability (Build generation)**: every nesting starts with a quick coarse run, so a build is shown within about a minute; the time limit never ends a nesting before the first build is finished. A job that fails (e.g. a worker runs out of memory) is retried on a coarser grid, one job at a time, then skipped, while the others go on; only as many jobs run at once as the computer's memory allows. The **Nesting log** (Builds panel) lists what happened — grids, times, memory, failures — with **Copy log** to send it on. **Autosave**: parts, settings, builds and locks are kept in the browser; after a crash or closing the tab, Build generation offers **Restore** / **Discard**. Everything runs on each person's own computer (nothing is shared between users).
+
 **Saving files** (Export, build export, report CSV): **Save to** → *Ask where* (pick the folder and file name each time), *A folder* (choose once, every export goes straight into it; remembered between visits) or *Downloads*. Choosing a location needs Chrome or Edge; Firefox and Safari save to Downloads (turn on "Ask where to save each file" in their download settings to be asked).
 
 ## Architecture

@@ -330,8 +330,13 @@ export async function regenerateBuilds(force = false) {
   const job = startJob('Generating builds');
   try {
     await generate(run, s0, job);
+  } catch (e) {
+    // never leave the builds 'busy' with nothing running
+    notify('error', `Generating builds failed: ${(e as Error).message}`);
+    setState((st) => ({ nestLog: [...st.nestLog, `Generating builds failed: ${(e as Error).message}`] }));
   } finally {
     job.end();
+    if (run === generation && bg().busy) setBg({ busy: false, improving: null });
   }
 }
 
@@ -429,6 +434,21 @@ async function runNesting(
   timeLimitMin = 0,
 ): Promise<NestResult | null> {
   const hOf = (budget: number) => chooseNestVoxel({ ...params, budget });
+  // --- log (shown in the Builds panel, can be copied)
+  const t0 = performance.now();
+  const lines: string[] = [];
+  const log = (msg: string) => {
+    lines.push(`${((performance.now() - t0) / 1000).toFixed(1).padStart(7)} s  ${msg}`);
+    setState({ nestLog: [...lines] });
+  };
+  const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { deviceMemory?: number }) : null;
+  log(`Start: ${parts.length} part kinds, ${parts.reduce((a, p) => a + p.count, 0)} copies, ${parts.reduce((a, p) => a + p.mesh.indices.length / 3, 0).toLocaleString()} triangles`);
+  log(`Computer: ${nav?.hardwareConcurrency ?? '?'} cores, ${nav?.deviceMemory ? `about ${nav.deviceMemory} GB` : 'memory not reported'}; ${pool.capacity} workers`);
+  log(`Volume ${params.volume.join(' × ')} mm, clearance ${params.clearance} mm, time limit ${timeLimitMin || 'none'} min`);
+
+  // a quick coarse run first: there is a build to show within about a minute, whatever happens later
+  if (plan[0].budget > 20e6) plan = [{ budget: 12e6, variants: [{ order: 'volume', pattern: false }] }, ...plan];
+
   let handles: { cancel: () => void }[] = [];
   let stopped = false;
   let timedOut = false;
@@ -439,110 +459,165 @@ async function runNesting(
   };
   stopNestingFn = stop;
   const job = startJob('Nesting in 3D', stop);
-  const timer = timeLimitMin > 0 ? setTimeout(() => ((timedOut = true), stop()), timeLimitMin * 60_000) : null;
+  // the time limit never ends a nesting that has nothing to show yet: then it stops at the first build
+  const timer =
+    timeLimitMin > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          if (best) stop();
+          else log('Time limit reached; going on until the first build is finished');
+        }, timeLimitMin * 60_000)
+      : null;
   const total = plan.reduce((a, ph) => a + (ph.refine ?? ph.variants.length), 0);
   let done = 0;
+  let failed = 0;
   const results: { variant: NestVariant; h: number; r: NestResult }[] = [];
   const seen = new Set<string>();
   const empty = { positions: new Float32Array(0), indices: new Uint32Array(0) };
+  // voxels per grid, made when first needed (one job per part)
+  const voxelCache = new Map<number, Promise<NestVoxels[]>>();
+  const voxelsFor = (h: number) => {
+    let v = voxelCache.get(h);
+    if (!v) {
+      let vdone = 0;
+      log(`Voxelizing ${parts.length} parts at ${h.toFixed(3)} mm`);
+      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
+      handles = [...handles, ...vhandles];
+      v = Promise.all(
+        vhandles.map((x) =>
+          x.promise.then((r) => {
+            vdone++;
+            job.progress(done / total, `Voxelizing ${vdone} / ${parts.length} (${h.toFixed(2)} mm grid)`);
+            return r;
+          }),
+        ),
+      );
+      v.then((r) => log(`Voxels ready at ${h.toFixed(3)} mm (${(r.reduce((a, x) => a + x.nx * x.ny * x.nz, 0) / 1e6).toFixed(1)} M cells)`)).catch(() => {});
+      voxelCache.set(h, v);
+    }
+    return v;
+  };
+  const finish = (r: NestResult, variant: NestVariant, h: number) => {
+    done++;
+    results.push({ variant, h, r });
+    log(`Done: ${variant.order}${variant.pattern ? ' + pattern' : ''} at ${h.toFixed(3)} mm → ${r.builds.length} build${r.builds.length === 1 ? '' : 's'}, last ${r.builds.at(-1)?.height.toFixed(0) ?? '-'} mm, ${r.unplaced.length} left out`);
+    const better = pickNest(best, r);
+    if (better !== best) {
+      best = better;
+      try {
+        onBest(best!, done, total);
+      } catch (e) {
+        log(`Showing the builds failed: ${(e as Error).message}`);
+      }
+    }
+    if (timedOut && !stopped) {
+      log('Time limit: stopping now that there is a build');
+      stop();
+    }
+  };
   try {
     for (const ph of plan) {
       if (stopped) break;
-      const h = hOf(ph.budget);
+      const h0 = hOf(ph.budget);
       // refine: the best variants so far, again on this grid
       const wanted = ph.refine
-        ? [...results].sort((a, b) => compareNestResults(a.r, b.r)).map((x) => x.variant)
+        ? [...results]
+            .sort((a, b) => compareNestResults(a.r, b.r))
+            .map((x) => x.variant)
             .filter((v, i, all) => all.findIndex((w) => w.order === v.order && w.pattern === v.pattern) === i)
             .slice(0, ph.refine)
         : ph.variants;
-      const tasks = wanted.filter((v) => {
-        const key = `${h.toFixed(9)}:${v.order}:${v.pattern}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      const skipped = (ph.refine ?? ph.variants.length) - tasks.length;
-      done += skipped;
+      const tasks = wanted
+        .filter((v) => {
+          const key = `${h0.toFixed(9)}:${v.order}:${v.pattern}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((variant) => ({ variant, budget: ph.budget, attempt: 0 }));
+      done += (ph.refine ?? ph.variants.length) - tasks.length;
       if (!tasks.length) continue;
-      // voxels for this grid: one job per part
-      const fine = results.length > 0;
-      let vdone = 0;
-      job.progress(done / total, `Voxelizing ${parts.length} part${parts.length > 1 ? 's' : ''}${fine ? ` for the finer ${h.toFixed(2)} mm grid` : ''}`);
-      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
-      handles = [...vhandles];
-      const voxels = await Promise.all(
-        vhandles.map((x) =>
-          x.promise.then((v) => {
-            vdone++;
-            job.progress(done / total, `Voxelizing ${vdone} / ${parts.length}${fine ? ` (finer ${h.toFixed(2)} mm grid)` : ''}`);
-            return v;
-          }),
-        ),
-      );
-      if (stopped) break;
-      const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: voxels[pi] }));
-      // one job per variant, as many at a time as there are workers
-      const progress = tasks.map(() => 0);
+      let voxels0: NestVoxels[];
+      try {
+        voxels0 = await voxelsFor(h0);
+      } catch (e) {
+        if (e instanceof CancelledError || stopped) throw e;
+        log(`Voxelizing at ${h0.toFixed(3)} mm failed (${(e as Error).message}); trying a coarser grid`);
+        // the whole phase on a coarser grid
+        for (const t of tasks) t.budget = Math.max(4e6, ph.budget / 3);
+        voxels0 = await voxelsFor(hOf(tasks[0].budget));
+      }
+      const progress = new Map<number, number>();
       const show = (m?: string) =>
         job.progress(
-          (done + progress.reduce((a, b) => a + b, 0)) / total,
-          `${m ?? 'Nesting'} · way ${Math.min(done + 1, total)} of ${total} (${h.toFixed(2)} mm grid)${best ? ' · best so far shown' : ''}`,
+          (done + [...progress.values()].reduce((a, b) => a + b, 0)) / total,
+          `${m ?? 'Nesting'} · way ${Math.min(done + 1, total)} of ${total}${best ? ' · best so far shown' : ''}`,
         );
-      // as many jobs at a time as the workers allow, and as this computer's memory allows
-      const queue = tasks.map((_, i) => i);
-      const retried = new Set<number>();
-      let limit = Math.min(tasks.length, pool.capacity, nestingJobsThatFit(voxels, params, h));
-      handles = [];
+      // as many at a time as the workers and this computer's memory allow; a failed job goes again on a coarser grid, alone
+      const queue = [...tasks];
+      let limit = Math.min(tasks.length, pool.capacity, nestingJobsThatFit(voxels0, params, h0));
+      log(`Phase: ${tasks.length} way${tasks.length > 1 ? 's' : ''} at ${h0.toFixed(3)} mm, ${limit} at a time`);
+      let id = 0;
       const worker = async (slot: number) => {
         while (queue.length && !stopped && slot < limit) {
-          const i = queue.shift()!;
-          const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: ph.budget, voxel: h, variants: [tasks[i]] } }, (f, m) => {
-            progress[i] = f;
-            show(m);
-          });
-          handles = [...handles, handle];
-          let r: NestResult;
+          const t = queue.shift()!;
+          const me = id++;
+          const h = hOf(t.budget);
           try {
-            r = await handle.promise;
+            const voxels = await voxelsFor(h);
+            const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: voxels[pi] }));
+            const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: t.budget, voxel: h, variants: [t.variant] } }, (f, m) => {
+              progress.set(me, f);
+              show(m);
+            });
+            handles = [...handles, handle];
+            const r = await handle.promise;
+            progress.delete(me);
+            finish(r, t.variant, h);
+            show();
           } catch (e) {
-            if (e instanceof CancelledError || stopped || retried.has(i)) throw e;
-            // a worker ran out of memory (or crashed): go on one job at a time, this one again
-            retried.add(i);
-            limit = 1;
-            progress[i] = 0;
-            queue.unshift(i);
-            if (slot === 0) continue;
-            return;
+            progress.delete(me);
+            if (e instanceof CancelledError || stopped) return;
+            const why = (e as Error).message || String(e);
+            if (t.attempt === 0 && t.budget > 4e6) {
+              log(`Failed: ${t.variant.order} at ${h.toFixed(3)} mm (${why}); again on a coarser grid, one job at a time`);
+              limit = 1;
+              queue.unshift({ ...t, budget: Math.max(4e6, t.budget / 3), attempt: 1 });
+              if (slot !== 0) return;
+            } else {
+              failed++;
+              done++;
+              log(`Failed again: ${t.variant.order} at ${h.toFixed(3)} mm (${why}); skipped`);
+            }
           }
-          progress[i] = 0;
-          done++;
-          results.push({ variant: tasks[i], h, r });
-          const better = pickNest(best, r);
-          if (better !== best) {
-            best = better;
-            onBest(best!, done, total);
-          }
-          show();
         }
       };
-      await Promise.all(
-        Array.from({ length: limit }, (_, slot) =>
-          worker(slot).catch((e) => {
-            if (!(e instanceof CancelledError)) throw e;
-          }),
-        ),
-      );
-      // a crash in the last running job of a round leaves the queue for slot 0
+      await Promise.all(Array.from({ length: limit }, (_, slot) => worker(slot)));
+      // a job that failed while slot 0 had already finished waits in the queue
       while (queue.length && !stopped) await worker(0);
+      // voxels of this phase are not needed any more
+      voxelCache.clear();
     }
-    if (stopped && best)
+    if (stopped && best) {
+      log(timedOut ? 'Ended: time limit, best builds kept' : 'Ended: stopped, best builds kept');
       notify('info', `${timedOut ? `Time limit of ${timeLimitMin} min reached` : 'Nesting stopped'}: keeping the best builds found (${done} of ${total} ways tried)`);
-    else if (stopped) notify('info', timedOut ? `Time limit of ${timeLimitMin} min reached before any build was finished` : 'Nesting cancelled');
+    } else if (stopped) {
+      log('Ended: cancelled before any build was finished');
+      notify('info', 'Nesting cancelled');
+    } else if (!best) {
+      log('Ended: every way failed');
+      notify('error', 'Nesting could not finish on this computer (see the nesting log in the Builds panel: Copy it and send it on). Try Fast, fewer parts at a time, or close other tabs.');
+    } else {
+      log(`Ended: finished${failed ? `, ${failed} way${failed > 1 ? 's' : ''} failed and skipped` : ''}`);
+      if (failed) notify('warning', `Nesting finished; ${failed} of ${total} ways failed on this computer and were skipped (see the nesting log)`);
+    }
     return best;
   } catch (e) {
     handles.forEach((h) => h.cancel());
-    if (!(e instanceof CancelledError)) notify('error', `Nesting failed: ${(e as Error).message}`);
-    else if (!best) notify('info', 'Nesting cancelled');
+    if (!(e instanceof CancelledError)) {
+      log(`Ended with an error: ${(e as Error).message}`);
+      notify('error', `Nesting failed: ${(e as Error).message}${best ? ' (the best builds found are kept)' : ''}`);
+    } else if (!best) notify('info', 'Nesting cancelled');
     return best;
   } finally {
     if (timer) clearTimeout(timer);

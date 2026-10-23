@@ -57,6 +57,10 @@ export interface AppState {
   buildClip: { on: boolean; z: number; above: boolean };
   /** Build generation: clicks select single copies instead of every copy of a part */
   buildPickCopies: boolean;
+  /** a Build generation session saved in the browser, waiting to be restored or discarded */
+  savedBuildSession: { savedAt: number; parts: number; copies: number } | null;
+  /** what the last nesting did (times, grids, memory, errors), to look at or copy when something goes wrong */
+  nestLog: string[];
   /** snapping of the move / rotate gizmos and of pick & place (both workspaces) */
   snap: { on: boolean; move: number; rotate: number };
   /** view only (Build generation): locked axes of the copy under the gizmo, and per part id for pick & place */
@@ -165,6 +169,8 @@ export const useStore = create<AppState>(() => ({
   buildClip: { on: false, z: 50, above: false },
   buildPickCopies: false,
   snap: { on: false, move: 1, rotate: 15 },
+  nestLog: [],
+  savedBuildSession: null,
   showSearch: false,
   preview: null,
   analysis: {},

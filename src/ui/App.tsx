@@ -1,4 +1,4 @@
-import { useCallback, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useState, type DragEvent } from 'react';
 import { Toolbar } from './Toolbar';
 import { PartsPanel } from './PartsPanel';
 import { PropertiesPanel } from './PropertiesPanel';
@@ -7,6 +7,7 @@ import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
 import { ClipWidget } from './panels/ClipCutPanel';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
+import { initBuildSession } from '../state/buildSession';
 import { useShortcuts } from './shortcuts';
 import { importFiles } from '../state/actions';
 import { useStore } from '../state/store';
@@ -49,6 +50,9 @@ export function App() {
   const workspace = useStore((s) => s.workspace);
   const openFile = useCallback(() => (document.querySelector('.toolbar input[type=file]') as HTMLInputElement | null)?.click(), []);
   useShortcuts(openFile);
+  useEffect(() => {
+    void initBuildSession();
+  }, []);
 
   const onDrop = async (e: DragEvent) => {
     e.preventDefault();

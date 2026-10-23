@@ -116,3 +116,5 @@ class WorkerPool {
 
 const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
 export const pool = new WorkerPool(Math.max(2, Math.min(4, cores - 1)));
+// development builds: reachable from the browser console / tests
+if (import.meta.env?.DEV && typeof window !== 'undefined') (window as unknown as { __pool: WorkerPool }).__pool = pool;
