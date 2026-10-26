@@ -7,7 +7,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
 import { acceptSavedSession } from '../../state/buildSession';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
@@ -37,6 +37,60 @@ function SavedSessionBanner() {
         </button>
       </div>
     </div>
+  );
+}
+
+/** Put the selected parts in a cage (sinter box) so they are not lost in the powder; or take them out of one. */
+function CageBox({ ids }: { ids: string[] }) {
+  const parts = useStore((s) => s.buildGen.parts);
+  const settings = useStore((s) => s.buildGen.cageSettings) ?? DEFAULT_CAGE;
+  const busy = useStore((s) => s.jobs.some((j) => j.label === 'Making a cage'));
+  const sel = parts.filter((p) => ids.includes(p.id));
+  const cage = sel.length === 1 && sel[0].cage ? sel[0] : null;
+  if (cage)
+    return (
+      <div className="density-box">
+        <h4>Cage</h4>
+        <Hint>
+          Holds {cage.cage!.contents.map((p) => (p.quantity > 1 ? `${p.name} ×${p.quantity}` : p.name)).join(', ')} — bars {cage.cage!.options.thickness} mm thick,{' '}
+          {cage.cage!.options.barWidth} mm wide, {cage.cage!.options.gap} mm apart. Nested as one part.
+        </Hint>
+        <button className="btn" onClick={() => uncageBuildPart(cage.id)}>
+          Take the parts out of the cage
+        </button>
+      </div>
+    );
+  return (
+    <div className="density-box">
+      <h4>Cage</h4>
+      <Row label="Bar thickness">
+        <NumberField value={settings.thickness} min={0.3} step={0.1} suffix="mm" onChange={(thickness) => setCageSettings({ thickness: Math.max(0.3, thickness) })} />
+      </Row>
+      <Row label="Bar width">
+        <NumberField value={settings.barWidth} min={0.5} step={0.5} suffix="mm" onChange={(barWidth) => setCageSettings({ barWidth: Math.max(0.5, barWidth) })} />
+      </Row>
+      <Row label="Gap between bars">
+        <NumberField value={settings.gap} min={0.5} step={0.5} suffix="mm" onChange={(gap) => setCageSettings({ gap: Math.max(0.5, gap) })} />
+      </Row>
+      <button className="btn wide" disabled={!sel.length || busy} onClick={() => void cageBuildParts(ids)} title="All copies of the selected parts, packed tightly inside a lattice box, so they are not lost in the powder">
+        {busy ? 'Making the cage…' : `Put ${sel.length > 1 ? `these ${sel.length} parts` : 'it'} in a cage`}
+      </button>
+      <Hint>Keep the gap smaller than the smallest part, so nothing falls out. The cage keeps the clearance to the parts.</Hint>
+    </div>
+  );
+}
+
+/** Cups / bowls with props across the opening: let other parts be nested inside (the props are broken off later). */
+function BreakawayCheck({ ids }: { ids: string[] }) {
+  const parts = useStore((s) => s.buildGen.parts);
+  const on = ids.length > 0 && ids.every((id) => parts.find((p) => p.id === id)?.breakaway);
+  return (
+    <>
+      <Check checked={on} onChange={(v) => setBreakaway(ids, v)}>
+        Has props to break off: nest parts inside it
+      </Check>
+      {on && <Hint>For cups and bowls with props across the opening: other parts may be placed inside, even where the props would hold them in; break the props off to take them out.</Hint>}
+    </>
   );
 }
 
@@ -763,6 +817,11 @@ export function BuildsPanel() {
                       !
                     </span>
                   )}
+                  {p.breakaway && (
+                    <span className="badge" title="Has props to break off: other parts may be nested inside it">
+                      props
+                    </span>
+                  )}
                   {p.group && (
                     <span className="badge group" title="Assembly group: printed in the same orientation as the other parts of the group">
                       {groups.get(p.group)}
@@ -811,6 +870,8 @@ export function BuildsPanel() {
               </button>
             }
           >
+            <BreakawayCheck ids={selIds} />
+            <CageBox ids={selIds} />
             <div className="btn-grid two">
               <button className="btn" onClick={() => groupBuildParts(selIds)} title="Parts that are assembled together: print them all in the same orientation so the mating faces come out alike">
                 Group as assembly
@@ -833,6 +894,8 @@ export function BuildsPanel() {
               </button>
             }
           >
+            <BreakawayCheck ids={[sel.id]} />
+            <CageBox ids={[sel.id]} />
             {sel.group ? (
               <>
                 <Hint>

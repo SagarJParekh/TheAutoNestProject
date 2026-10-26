@@ -191,7 +191,7 @@ describe('nesting variants', () => {
       const normal = nestPlan('normal', sym);
       const fine = nestPlan('fine', sym);
       expect(fine[0]).toEqual(normal[0]);
-      expect(fine[1].refine).toBeGreaterThan(0);
+      expect(fine[1].refine).toBeGreaterThan(normal[1].refine ?? 0);
       expect(fine[1].budget).toBeGreaterThan(normal[0].budget);
     }
   });
@@ -280,5 +280,31 @@ describe('tilted cups', () => {
     const inside = b.placements.filter((p) => p.partId === 's' && b.placements.some((c) => c.partId === 'cup' && [0, 1].every((k) => p.t[k] > cb.lo[k] + c.t[k] + 3 && p.t[k] + 14 < cb.hi[k] + c.t[k] - 3) && p.t[2] > cb.lo[2] + c.t[2] && p.t[2] + 12 < cb.hi[2] + c.t[2])).length;
     expect(inside).toBeGreaterThan(10);
     expect(interlockTest(items, volume, r.voxel).stuck).toEqual([]);
+  });
+});
+
+describe('cups with breakaway props', () => {
+  it('parts are nested inside only when the props may be broken off', () => {
+    // 90 × 90 × 50 cup, open on top, with a cross of props over the opening (four openings about 40 mm wide)
+    const cup = mergeMeshes([
+      boxMesh([0, 0, 0], [90, 90, 3]), boxMesh([0, 0, 3], [3, 90, 50]), boxMesh([87, 0, 3], [90, 90, 50]), boxMesh([3, 0, 3], [87, 3, 50]), boxMesh([3, 87, 3], [87, 90, 50]),
+      boxMesh([3, 43.5, 47], [87, 46.5, 50]), boxMesh([43.5, 3, 47], [46.5, 87, 50]),
+    ]);
+    // 44 mm long: does not fit between the props
+    const small = boxMesh([0, 0, 0], [44, 12, 8]);
+    const volume: [number, number, number] = [160, 110, 120];
+    const run = (breakaway: boolean) =>
+      nest3d([{ id: 'cup', mesh: cup, count: 1, breakaway }, { id: 's', mesh: small, count: 30 }], { volume, margin: 5, clearance: 1, zOffset: 0, maxHeight: 0, rotations: false, budget: 4e6, variants: [{ order: 'volume', pattern: false }] });
+    const inside = (r: NestResult) => {
+      const c = r.builds[0].placements.find((p) => p.partId === 'cup')!;
+      return r.builds[0].placements.filter((p) => p.partId === 's' && p.t[0] > c.t[0] + 2 && p.t[0] + 44 < c.t[0] + 88 && p.t[1] > c.t[1] + 2 && p.t[1] + 12 < c.t[1] + 88 && p.t[2] < c.t[2] + 47).length;
+    };
+    const normal = run(false), props = run(true);
+    expect(inside(normal)).toBe(0);
+    expect(inside(props)).toBeGreaterThan(4);
+    const items = props.builds[0].placements.map((p) => ({ key: p.key, mesh: move(p.partId === 'cup' ? cup : small, p.t), breakaway: p.partId === 'cup' }));
+    // without the breakaway rule the same build would count as interlocked
+    expect(interlockTest(items.map((x) => ({ ...x, breakaway: false })), volume, props.voxel).stuck.length).toBeGreaterThan(0);
+    expect(interlockTest(items, volume, props.voxel).stuck).toEqual([]);
   });
 });

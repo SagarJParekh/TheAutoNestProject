@@ -49,14 +49,30 @@ export interface NestPart {
    * axes is placed along the others. Locked copies go in before all others.
    */
   lock?: { build: number; at: [number | null, number | null, number | null] };
+  /**
+   * Other parts may end up enclosed by this one (e.g. a cup with props across
+   * its opening: the props are broken off afterwards and the parts taken
+   * out): it takes up its space and keeps the clearance, but does not block
+   * the way out of other parts.
+   */
+  breakaway?: boolean;
+  /** nest as its whole bounding box (a cage with its contents: nothing else goes inside) */
+  solidBox?: boolean;
 }
 
 /** A part's voxels for nesting, made once and shared by several nesting runs. */
 export type NestVoxels = PartVoxels & { h: number; align?: (number | null)[] };
 
 /** Voxelize a part for nest3d ahead of time (e.g. once, in its own worker, for several parallel nests). */
-export function nestVoxels(mesh: MeshData, h: number, align?: (number | null)[]): NestVoxels {
-  return { ...voxelizePart(mesh, h, isWatertight(mesh), align), h, align };
+export function nestVoxels(mesh: MeshData, h: number, align?: (number | null)[], solidBox = false): NestVoxels {
+  const v = voxelizePart(mesh, h, isWatertight(mesh), align);
+  return { ...(solidBox ? fillBox(v) : v), h, align };
+}
+
+/** The voxels of a part's whole bounding box (a cage: nothing else goes inside it). */
+function fillBox(v: PartVoxels): PartVoxels {
+  const solid = new Uint8Array(v.nx * v.ny * v.nz).fill(1);
+  return { ...v, solid, runs: rowRuns(solid, v.nx, v.ny, v.nz), count: solid.length };
 }
 
 /**
@@ -735,6 +751,8 @@ class Build {
   private stampNo = 0;
   /** tilted ways out allowed */
   tilted = true;
+  /** platform columns under any placed part (for the platform share) */
+  readonly cover: Uint8Array;
   /**
    * Per tilted direction (made when first needed): highest (up) / lowest
    * (down) placed voxel z per sheared column (x − ⌊a·z⌋, y − ⌊b·z⌋), so a
@@ -766,6 +784,7 @@ class Build {
   ) {
     this.keep = new BitGrid(gx, gy, gz);
     this.raw = new BitGrid(gx, gy, gz);
+    this.cover = new Uint8Array(gx * gy);
     this.freeRun = new Uint16Array(gy * gz).fill(gx);
     this.zHi = new Int16Array(gx * gy).fill(-1);
     this.zLo = new Int16Array(gx * gy).fill(gz);
@@ -956,19 +975,21 @@ class Build {
     return null;
   }
 
-  stamp(s: Shape, X: number, Y: number, Z: number) {
+  /** `blocks` false: the part takes space but does not block other parts' way out (breakaway props) */
+  stamp(s: Shape, X: number, Y: number, Z: number, blocks = true) {
     const { gx, gy, gz } = this;
     const r = s.v.runs;
-    for (let q = 0; q < r.length; q += 4) {
-      const j = Y + r[q],
-        k = Z + r[q + 1],
-        x0 = X + r[q + 2],
-        x1 = x0 + r[q + 3] - 1;
-      this.raw.setRange(j, k, x0, r[q + 3]);
-      const row = j + gy * k;
-      if (x1 > this.xHi[row]) this.xHi[row] = x1;
-      if (x0 < this.xLo[row]) this.xLo[row] = x0;
-    }
+    if (blocks)
+      for (let q = 0; q < r.length; q += 4) {
+        const j = Y + r[q],
+          k = Z + r[q + 1],
+          x0 = X + r[q + 2],
+          x1 = x0 + r[q + 3] - 1;
+        this.raw.setRange(j, k, x0, r[q + 3]);
+        const row = j + gy * k;
+        if (x1 > this.xHi[row]) this.xHi[row] = x1;
+        if (x0 < this.xLo[row]) this.xLo[row] = x0;
+      }
     // the extremes along any line (columns, depth lines, tilted lines) are surface voxels: no need to visit the inside
     const sv = surfaceOf(s);
     const maps = TILTED_DIRS.map((t, d) => ({ ...t, map: this.tiltMaps[d] })).filter((t) => t.map);
@@ -978,6 +999,8 @@ class Build {
         k = Z + sv[q + 2];
       const c = x + gx * j,
         e = x + gx * k;
+      this.cover[c] = 1;
+      if (!blocks) continue;
       if (k > this.zHi[c]) this.zHi[c] = k;
       if (k < this.zLo[c]) this.zLo[c] = k;
       if (j > this.yHi[e]) this.yHi[e] = j;
@@ -1083,20 +1106,22 @@ export interface NestPhase {
 
 /**
  * What to run for a nesting detail level, phase after phase (every variant
- * is its own job). Fine first runs everything Normal does, then retries
- * only the best of those orders on the finer grid, so it is never less
- * dense than Normal and its time stays bounded.
+ * is its own job). Normal and Fine run the same orders, then retry the best
+ * one (Normal) or three (Fine) on a finer grid, where the gaps come out
+ * closer to the clearance; the time limit ends it with the best builds so
+ * far, so Fine is never less dense than Normal.
  */
 export function nestPlan(detail: 'fast' | 'normal' | 'fine', symmetric: boolean): NestPhase[] {
   const v = (order: NestOrder, pattern = false): NestVariant => ({ order, pattern });
   const pat = (order: NestOrder) => (symmetric ? [v(order, true)] : []);
   // 'open' puts cups, trays and U shapes first so other parts can go inside them
   if (detail === 'fast') return [{ budget: 40e6, variants: [v('volume'), v('open'), ...pat('volume')] }];
-  // Normal: a grid as fine as about 100 million voxels allows (lined up with the clearance), several orders
+  // Normal: a grid as fine as about 100 million voxels allows (lined up with the clearance), several orders,
+  // then the best of them once more on a finer grid (closer gaps) while the time limit allows
   const normal = { budget: 100e6, variants: [v('volume'), v('open'), ...pat('volume'), ...pat('open'), v('height'), v('box')] };
-  if (detail === 'normal') return [normal];
-  // Fine: Normal, then the two best orders again on a finer grid (where the clearance divides into smaller voxels)
-  return [normal, { budget: 320e6, variants: [], refine: 2 }];
+  if (detail === 'normal') return [normal, { budget: 320e6, variants: [], refine: 1 }];
+  // Fine: Normal, then the three best orders again on the finer grid
+  return [normal, { budget: 320e6, variants: [], refine: 3 }];
 }
 
 /** Compare two nests by density: < 0 when `a` is better (fewer parts left out, fewer builds, lower last build), 0 when equal. */
@@ -1161,6 +1186,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     const sameAlign = (a?: (number | null)[]) => (!a && !align) || (!!a && !!align && a.every((x, i) => (x === null ? align[i] === null : align[i] !== null && Math.abs(x - align[i]!) < 1e-9)));
     // voxelize once; the other turns are the same voxels turned
     let v: PartVoxels = part.voxels && Math.abs(part.voxels.h - h) < 1e-9 && sameAlign(part.voxels.align) ? part.voxels : voxelizePart(part.mesh, h, isWatertight(part.mesh), align);
+    if (part.solidBox && !part.voxels) v = fillBox(v);
     let keep = dilate(v, d);
     const vox: { k: number; s: Shape }[] = [];
     for (let k = 0; k < 4; k++) {
@@ -1222,14 +1248,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
   for (const b of best.builds) {
     // platform share under parts (projection onto XY)
     let covered = 0;
-    for (let j = 0; j < gy; j++)
-      for (let i = 0; i < gx; i++) {
-        for (let k = 0; k < b.top; k++)
-          if (b.raw.get(i, j, k)) {
-            covered++;
-            break;
-          }
-      }
+    for (let c = 0; c < b.cover.length; c++) covered += b.cover[c];
     result.builds.push({
       placements: b.placements,
       height: p.zOffset + b.top * h,
@@ -1268,7 +1287,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
         if (!pos) unplaced.push({ key, reason: 'No room for it along its free axes at its locked position' });
       }
       if (!pos) continue;
-      b.stamp(s, pos[0], pos[1], pos[2]);
+      b.stamp(s, pos[0], pos[1], pos[2], !sh.part.breakaway);
       b.placements.push({
         key,
         partId: sh.part.id,
@@ -1351,7 +1370,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
           return false;
         }
         const [X, Y, Z] = best.pos;
-        b.stamp(best.s, X, Y, Z);
+        b.stamp(best.s, X, Y, Z, !sh.part.breakaway);
         const v = best.s.v;
         b.placements.push({
           key,
@@ -1408,7 +1427,11 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
  * straight out (±X, ±Y or ±Z) without hitting the parts still in? Returns the
  * keys of parts that stay stuck (interlocked); empty = no interlocking.
  */
-export function interlockTest(items: { key: string; mesh: MeshData }[], volume: [number, number, number], voxel?: number): { stuck: string[]; voxel: number } {
+export function interlockTest(
+  items: { key: string; mesh: MeshData; breakaway?: boolean }[],
+  volume: [number, number, number],
+  voxel?: number,
+): { stuck: string[]; voxel: number } {
   const [VX, VY, VZ] = volume;
   const h = voxel ?? Math.max(0.25, Math.cbrt((VX * VY * VZ) / 8e6));
   const gx = Math.ceil(VX / h) + 2,
@@ -1425,7 +1448,8 @@ export function interlockTest(items: { key: string; mesh: MeshData }[], volume: 
     for (let k = 0; k < v.nz; k++)
       for (let j = 0; j < v.ny; j++)
         for (let i = 0; i < v.nx; i++) {
-          if (!v.solid[i + v.nx * (j + v.ny * k)]) continue;
+          // breakaway parts (props broken off later) do not hold other parts in
+          if (it.breakaway || !v.solid[i + v.nx * (j + v.ny * k)]) continue;
           const gi = X + i,
             gj = Y + j,
             gk = Z + k;

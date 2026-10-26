@@ -312,6 +312,10 @@ export interface BuildPart {
   watertight?: boolean;
   /** the Mesh prep part it came from: sending that part again replaces this one's mesh (e.g. after a repair) */
   fromPrep?: string;
+  /** has props to break off (cup, bowl): other parts may be nested inside it */
+  breakaway?: boolean;
+  /** a cage (sinter box) with parts inside: the settings it was made with and the parts it holds (to take them out again) */
+  cage?: { options: import('../geometry').CageOptions; contents: BuildPart[] };
   /** lighter copy for the view when a build would show very many triangles (never used for nesting or export) */
   display?: { for: MeshData; tris: number; mesh: MeshData };
 }
@@ -366,6 +370,8 @@ export interface BuildGenState {
   nestDetail: 'fast' | 'normal' | 'fine';
   /** stop nesting after this many minutes and keep the best builds found (0 = no limit) */
   nestTimeLimit?: number;
+  /** cage (sinter box) settings: bar thickness, bar width, gap between bars, mm */
+  cageSettings?: import('../geometry').CageOptions;
   /** copies locked by the user, by placement key: nesting keeps them (on their locked axes) and arranges the rest around them */
   locks?: Record<string, CopyLock>;
   /** hidden in the view: part ids (every copy) or placement keys (one copy) */

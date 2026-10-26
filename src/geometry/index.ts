@@ -45,3 +45,4 @@ export * from './orient';
 export * from './pack';
 export * from './powderOrient';
 export * from './displayMesh';
+export * from './cage';

@@ -282,6 +282,11 @@ export const ops = {
     return { result: { mesh, removed: r.removed, edges: r.edges, split: r.split, filled }, transfer: meshBuffers(mesh) };
   },
 
+  async buildCage(args: { min: Vec3; max: Vec3; options: G.CageOptions }): Promise<Result<MeshData>> {
+    const m = await G.buildCage(args.min, args.max, args.options);
+    return { result: m, transfer: meshBuffers(m) };
+  },
+
   async displayMesh(args: { mesh: MeshData; tris: number }): Promise<Result<MeshData>> {
     const m = G.clusterDecimate(args.mesh, args.tris);
     return { result: m, transfer: m === args.mesh ? [] : meshBuffers(m) };
@@ -295,9 +300,9 @@ export const ops = {
     return { result: G.isWatertight(args.mesh) };
   },
 
-  async nestVoxels(args: { mesh: MeshData; h: number; align?: (number | null)[] }, progress: Progress): Promise<Result<G.NestVoxels>> {
+  async nestVoxels(args: { mesh: MeshData; h: number; align?: (number | null)[]; solidBox?: boolean }, progress: Progress): Promise<Result<G.NestVoxels>> {
     progress(0.1, 'Voxelizing');
-    const v = G.nestVoxels(args.mesh, args.h, args.align);
+    const v = G.nestVoxels(args.mesh, args.h, args.align, args.solidBox);
     return { result: v, transfer: [v.solid.buffer as ArrayBuffer, v.runs.buffer as ArrayBuffer] };
   },
 
@@ -311,7 +316,7 @@ export const ops = {
     return { result: G.findCollisions(args.items, args.clearance, 12, (f) => progress(0.05 + 0.95 * f, 'Checking collisions')) };
   },
 
-  async interlockTest(args: { items: { key: string; mesh: MeshData }[]; volume: [number, number, number] }, progress: Progress): Promise<Result<{ stuck: string[]; voxel: number }>> {
+  async interlockTest(args: { items: { key: string; mesh: MeshData; breakaway?: boolean }[]; volume: [number, number, number] }, progress: Progress): Promise<Result<{ stuck: string[]; voxel: number }>> {
     progress(0.1, 'Testing for interlocking');
     return { result: G.interlockTest(args.items, args.volume) };
   },

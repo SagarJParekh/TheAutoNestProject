@@ -6,7 +6,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { pickSaveTarget, writeSaveTarget } from './save';
 import { zipSync } from 'fflate';
-import { applyMatrix, chooseNestVoxel, computeBounds, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type NestVoxels, type MeshData, type PackItem, type Vec3 } from '../geometry';
+import { applyMatrix, chooseNestVoxel, computeBounds, mergeMeshes, turnPositions, type CageOptions, lockAlign, fitsPlatform, meshVolume, nestPlan, packBuilds, pickNest, compareNestResults, type NestPart, type NestParams, type NestPhase, type NestResult, type NestVariant, type NestVoxels, type MeshData, type PackItem, type Vec3 } from '../geometry';
 import { commit, commitBuild, getState, notify, setBuildRestoreHook, setState, startJob } from './store';
 import { recenter, worldMesh } from './math';
 import { makePart, newId, prepareMesh, runJob, setTool } from './actions';
@@ -481,7 +481,7 @@ async function runNesting(
     if (!v) {
       let vdone = 0;
       log(`Voxelizing ${parts.length} parts at ${h.toFixed(3)} mm`);
-      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined }));
+      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined, solidBox: part.solidBox }));
       handles = [...handles, ...vhandles];
       v = Promise.all(
         vhandles.map((x) =>
@@ -717,14 +717,14 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
       const free = copies.filter((c) => !locks[`${p.id}#${c}`]);
       if (free.length) {
         const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
-        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: free.length, copies: free, fixed: !!lead(p).lockRotation || !s.allowRotate });
+        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: free.length, copies: free, fixed: !!lead(p).lockRotation || !s.allowRotate, breakaway: !!p.breakaway, solidBox: !!p.cage });
       }
       for (const c of copies) {
         const L = locks[`${p.id}#${c}`];
         if (!L) continue;
         const m = new Matrix4().makeRotationFromQuaternion(lockQ(L) ?? inf.q).elements;
         const at = L.t.map((on, i) => (on ? L.position[i] : null)) as [number | null, number | null, number | null];
-        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: 1, copies: [c], fixed: true, lock: { build: L.build, at } });
+        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: 1, copies: [c], fixed: true, lock: { build: L.build, at }, breakaway: !!p.breakaway, solidBox: !!p.cage });
       }
     }
     const params = {
@@ -967,6 +967,130 @@ export function setTiltFor(ids: string[], tilt: Tilt | null) {
 }
 
 /** Lock or unlock the orientation of build parts. */
+/** default cage: 1 mm thick bars, 3 mm wide, 5 mm apart */
+export const DEFAULT_CAGE: CageOptions = { thickness: 1, barWidth: 3, gap: 5 };
+
+/**
+ * Put parts (all their copies) in a cage so they are not lost in the powder:
+ * they are oriented like for nesting, packed tightly (with the clearance
+ * between them), and a lattice box is built around them at the clearance.
+ * The cage with its contents becomes one part (nested as its whole box).
+ */
+export async function cageBuildParts(ids: string[]) {
+  const s = bg();
+  const targets = s.parts.filter((p) => ids.includes(p.id) && !p.cage);
+  if (!targets.length) return notify('warning', 'Select the parts to put in a cage');
+  const o = s.cageSettings ?? DEFAULT_CAGE;
+  const clearance = Math.max(0.5, s.clearance3d);
+  const powder = currentPrinter(s).tech === 'powder';
+  const rule: 'powder' | 'flat' = powder ? 'powder' : 'flat';
+  const job = startJob('Making a cage');
+  try {
+    // 1. orientation (as the nesting would)
+    job.progress(0.05, 'Orienting the parts');
+    const oriented = await Promise.all(
+      targets.map(async (p) => {
+        let q: [number, number, number, number] | undefined;
+        if (p.lockRotation || !s.autoOrient) q = [0, 0, 0, 1];
+        else if (p.orient?.mesh === p.mesh && (p.orient.rule ?? 'flat') === rule) q = p.orient.q;
+        else
+          q =
+            rule === 'powder'
+              ? (await runJob(`Orienting ${p.name}`, 'powderOrient', { mesh: p.mesh }, { silent: true }))?.quaternion
+              : (await runJob(`Orienting ${p.name}`, 'autoOrient', { mesh: p.mesh, quaternion: [0, 0, 0, 1], alignXY: true }, { silent: true }))?.quaternion;
+        const m = new Matrix4().makeRotationFromQuaternion(new Quaternion(...(q ?? [0, 0, 0, 1])));
+        return { part: p, mesh: applyMatrix(p.mesh, m.elements) };
+      }),
+    );
+    // 2. pack the copies tightly into a roughly cubic block
+    job.progress(0.3, 'Packing the parts');
+    let boxVol = 0,
+      maxXY = 0,
+      maxZ = 0;
+    for (const { part, mesh } of oriented) {
+      const b = computeBounds(mesh.positions);
+      const d = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
+      boxVol += (d[0] + clearance) * (d[1] + clearance) * (d[2] + clearance) * part.quantity;
+      maxXY = Math.max(maxXY, Math.hypot(d[0], d[1]));
+      maxZ = Math.max(maxZ, d[2]);
+    }
+    let side = Math.max(maxXY + 2, Math.cbrt(boxVol * 1.6));
+    let r: NestResult | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      r = await runJob(
+        'Packing the parts for the cage',
+        'nest3d',
+        {
+          parts: oriented.map(({ part, mesh }) => ({ id: part.id, mesh, count: part.quantity })),
+          params: { volume: [side, side, Math.max(side * 3, maxZ + 2)], margin: 0, clearance, zOffset: 0, maxHeight: 0, rotations: true, interlockFree: false, budget: 6e6, variants: [{ order: 'volume', pattern: false }] },
+        },
+        { silent: true },
+      );
+      if (r && !r.unplaced.length && r.builds.length === 1) break;
+      side *= 1.4;
+    }
+    if (!r || r.unplaced.length || r.builds.length !== 1) return notify('error', 'The parts could not be packed for a cage');
+    // 3. the parts where they were packed, and the cage around them at the clearance
+    const meshOf = new Map(oriented.map((x) => [x.part.id, x.mesh]));
+    const contents = r.builds[0].placements.map((pl) => {
+      const m = meshOf.get(pl.partId)!;
+      const pos = turnPositions(m.positions, pl.turns);
+      for (let i = 0; i < pos.length; i += 3) {
+        pos[i] += pl.t[0];
+        pos[i + 1] += pl.t[1];
+        pos[i + 2] += pl.t[2];
+      }
+      return { positions: pos, indices: m.indices };
+    });
+    const inner = computeBounds(mergeMeshes(contents).positions);
+    job.progress(0.7, 'Building the cage');
+    const cage = await runJob(
+      'Building the cage',
+      'buildCage',
+      {
+        min: [inner.min[0] - clearance, inner.min[1] - clearance, inner.min[2] - clearance],
+        max: [inner.max[0] + clearance, inner.max[1] + clearance, inner.max[2] + clearance],
+        options: o,
+      },
+      { silent: true },
+    );
+    if (!cage) return;
+    const names = targets.map((p) => (p.quantity > 1 ? `${p.name} ×${p.quantity}` : p.name));
+    const copies = targets.reduce((a, p) => a + p.quantity, 0);
+    const cagePart: BuildPart = {
+      ...newBuildPart({ name: `Cage: ${names.join(', ')}`.slice(0, 80), mesh: mergeMeshes([cage, ...contents]), lockRotation: true, watertight: true }),
+      cage: { options: o, contents: targets },
+    };
+    const gone = new Set(targets.map((p) => p.id));
+    commitBuild(`Put ${copies} part${copies > 1 ? 's' : ''} in a cage`, { parts: [...bg().parts.filter((p) => !gone.has(p.id)), cagePart] });
+    setState({ selection: [`${cagePart.id}#0`] });
+    notify('success', `Cage made around ${copies} part${copies > 1 ? 's' : ''}: it is nested as one part`);
+    scheduleRegenerate();
+  } finally {
+    job.end();
+  }
+}
+
+/** Take the parts out of a cage again (the cage goes away). */
+export function uncageBuildPart(id: string) {
+  const cage = bg().parts.find((p) => p.id === id && p.cage);
+  if (!cage) return;
+  commitBuild('Remove cage', { parts: [...bg().parts.filter((p) => p.id !== id), ...cage.cage!.contents] });
+  setState({ selection: [] });
+  scheduleRegenerate();
+}
+
+export function setCageSettings(patch: Partial<CageOptions>) {
+  setBg({ cageSettings: { ...(bg().cageSettings ?? DEFAULT_CAGE), ...patch } });
+}
+
+/** Parts with breakaway props (cups, bowls): other parts may be nested inside them, the props are broken off later. */
+export function setBreakaway(ids: string[], on: boolean) {
+  const set = new Set(ids);
+  commitBuild(on ? 'Let parts nest inside' : 'Normal interlock rule', { parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, breakaway: on || undefined } : p)) });
+  scheduleRegenerate();
+}
+
 /** Join parts into an assembly group: they all get the same orientation, so mating faces print at the same angle. */
 export function groupBuildParts(ids: string[]) {
   if (ids.length < 2) return notify('warning', 'Select two or more parts that are assembled together');
@@ -1132,7 +1256,8 @@ export function rearrangeBuilds() {
 function activeItems(s: BuildGenState) {
   const b = s.builds[s.active];
   if (!b) return [];
-  return buildItems(s, s.active).map((it, i) => ({ key: b.placements[i].key, mesh: it.mesh }));
+  const breakaway = new Set(s.parts.filter((p) => p.breakaway).map((p) => p.id));
+  return buildItems(s, s.active).map((it, i) => ({ key: b.placements[i].key, mesh: it.mesh, breakaway: breakaway.has(b.placements[i].partId) }));
 }
 
 /** Check the active build for parts that cross, sit inside each other or are closer than the clearance. */
