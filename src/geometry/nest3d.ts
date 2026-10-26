@@ -58,6 +58,12 @@ export interface NestPart {
   breakaway?: boolean;
   /** nest as its whole bounding box (a cage with its contents: nothing else goes inside) */
   solidBox?: boolean;
+  /**
+   * Other orientations the part may be placed in (meshes already turned,
+   * same origin), with their voxels if made beforehand; every copy takes
+   * whichever orientation and quarter turn packs lowest.
+   */
+  alts?: { mesh: MeshData; voxels?: NestVoxels }[];
 }
 
 /** A part's voxels for nesting, made once and shared by several nesting runs. */
@@ -141,6 +147,8 @@ export interface NestPlacement {
   pattern?: boolean;
   /** a copy locked by the user */
   locked?: boolean;
+  /** which orientation: 0 = the part's mesh, n = alts[n − 1] */
+  orient?: number;
 }
 
 export interface NestBuild {
@@ -732,7 +740,8 @@ class Build {
   readonly patterns = new Map<
     string,
     {
-      turn: number;
+      /** index of the shape (orientation + turn) in the part's list */
+      vi: number;
       at: [number, number, number];
       step: [number, number, number];
       slot: [number, number, number];
@@ -1184,27 +1193,29 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
     // locked copies: voxels lined up with the build grid at the locked translation
     const align = part.lock ? lockAlign(p, part.lock.at) : undefined;
     const sameAlign = (a?: (number | null)[]) => (!a && !align) || (!!a && !!align && a.every((x, i) => (x === null ? align[i] === null : align[i] !== null && Math.abs(x - align[i]!) < 1e-9)));
-    // voxelize once; the other turns are the same voxels turned
-    let v: PartVoxels = part.voxels && Math.abs(part.voxels.h - h) < 1e-9 && sameAlign(part.voxels.align) ? part.voxels : voxelizePart(part.mesh, h, isWatertight(part.mesh), align);
-    if (part.solidBox && !part.voxels) v = fillBox(v);
-    let keep = dilate(v, d);
-    const vox: { k: number; s: Shape }[] = [];
-    for (let k = 0; k < 4; k++) {
-      const prev = v;
-      let shape: Shape | null = null;
-      if (turns.includes(k)) {
-        shape = makeShape(v, keep);
-        // the surface list is all later steps need of the voxels themselves
-        surfaceOf(shape);
-        vox.push({ k, s: shape });
+    // every orientation: voxelize once, the other turns are the same voxels turned
+    const sources = [{ mesh: part.mesh, voxels: part.voxels }, ...(part.lock ? [] : (part.alts ?? []))];
+    const vox: { k: number; o: number; s: Shape }[] = [];
+    sources.forEach((src, o) => {
+      let v: PartVoxels = src.voxels && Math.abs(src.voxels.h - h) < 1e-9 && sameAlign(src.voxels.align) ? src.voxels : voxelizePart(src.mesh, h, isWatertight(src.mesh), align);
+      if (part.solidBox && !src.voxels) v = fillBox(v);
+      let keep = dilate(v, d);
+      for (let k = 0; k < 4; k++) {
+        const prev = v;
+        if (turns.includes(k)) {
+          const shape = makeShape(v, keep);
+          // the surface list is all later steps need of the voxels themselves
+          surfaceOf(shape);
+          vox.push({ k, o, s: shape });
+        }
+        if (k < 3 && turns.length > 1) {
+          v = turnVoxels(v, h);
+          keep = turnKeep(keep);
+        }
+        // memory: the full voxel grid of this turn is no longer needed (big parts × many kinds add up)
+        prev.solid = EMPTY_CELLS;
       }
-      if (k < 3 && turns.length > 1) {
-        v = turnVoxels(v, h);
-        keep = turnKeep(keep);
-      }
-      // memory: the full voxel grid of this turn is no longer needed (big parts × many kinds add up)
-      prev.solid = EMPTY_CELLS;
-    }
+    });
     onProgress(0.2 * ((pi + 1) / parts.length), 'Voxelizing parts');
     const v0 = vox[0].s.v;
     return { part, vox, volume: v0.count, height: v0.nz, box: v0.nx * v0.ny * v0.nz, footprint: v0.nx * v0.ny };
@@ -1297,7 +1308,12 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
         locked: true,
       });
     }
+    // memory: a part's way-out profiles are only needed while its copies are placed (many kinds of parts add up)
+    let lastSh: (typeof shapes)[number] | null = null;
+    const release = (x: (typeof shapes)[number] | null) => x?.vox.forEach(({ s }) => (s.tilt = undefined));
     for (const { sh, copy } of queue) {
+      if (lastSh && lastSh !== sh) release(lastSh);
+      lastSh = sh;
       const key = `${sh.part.id}#${copy}`;
       if (!sh.vox.some(({ s }) => s.v.nx <= gx && s.v.ny <= gy && s.v.nz <= gz)) {
         const v = sh.vox[0].s.v;
@@ -1315,26 +1331,28 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
         // free search: lowest top over the turns (each continues where the last copy stopped)
         let best: {
           k: number;
+          o: number;
           pos: [number, number, number];
           s: Shape;
           top: number;
           score: number;
         } | null = null;
-        for (const { k, s } of sh.vox) {
-          const rk = `${sh.part.id}:${k}`;
+        for (const { k, o, s } of sh.vox) {
+          const rk = `${sh.part.id}:${o}:${k}`;
           const r = b.find(s, interlockFree, b.resume.get(rk) ?? 0);
           b.resume.set(rk, r ? r.lex : Number.MAX_SAFE_INTEGER);
           if (!r) continue;
           const [X, Y, Z] = r.pos;
           const top = Z + s.v.nz;
           const score = top * 1e12 + Z * 1e8 + Y * 1e4 + X;
-          if (!best || score < best.score) best = { k, pos: r.pos, s, top, score };
+          if (!best || score < best.score) best = { k, o, pos: r.pos, s, top, score };
         }
         // regular pattern of the copies, taken when it packs at least as well
         let pattern = false;
         const pat = symmetric ? b.patterns.get(sh.part.id) : undefined;
         if (pat && best) {
-          const s = sh.vox.find((x) => x.k === pat.turn)!.s;
+          const pv = sh.vox[pat.vi];
+          const s = pv.s;
           const slot = pat.slot;
           for (let guard = 0; guard < 100000; guard++) {
             const X = pat.at[0] + slot[0] * pat.step[0],
@@ -1355,7 +1373,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
             const top = Z + s.v.nz;
             if (top > Math.max(best.top, b.top)) break; // a pattern spot higher than the free one would lower the density
             if (b.fits(s, X, Y, Z, new Int32Array(6).fill(-1)) < 0 && (!interlockFree || b.escapes(s, X, Y, Z))) {
-              best = { k: pat.turn, pos: [X, Y, Z], s, top, score: 0 };
+              best = { k: pv.k, o: pv.o, pos: [X, Y, Z], s, top, score: 0 };
               pattern = true;
               slot[0]++;
               break;
@@ -1377,14 +1395,16 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
           partId: sh.part.id,
           copy,
           turns: best.k,
+          orient: best.o,
           t: [origin[0] + X * h - v.min[0], origin[1] + Y * h - v.min[1], origin[2] + Z * h - v.min[2]],
           pattern,
         });
         // the first copy in this build starts the pattern for the others
         if (symmetric && sh.part.count > 1 && !b.patterns.has(sh.part.id)) {
           const s = best.s;
+          const bestS = best.s;
           b.patterns.set(sh.part.id, {
-            turn: best.k,
+            vi: sh.vox.findIndex((x) => x.s === bestS),
             at: [X, Y, Z],
             step: [patternStep(s, 0), patternStep(s, 1), patternStep(s, 2)],
             slot: [1, 0, 0],
@@ -1415,6 +1435,7 @@ export function nest3d(parts: NestPart[], p: NestParams, onProgress: (f: number,
       if ((done & 3) === 0 || done === queue.length)
         onProgress(p0 + (p1 - p0) * (done / queue.length), `${symmetric ? 'Arranging in patterns' : 'Nesting'} ${done} / ${queue.length} parts`);
     }
+    release(lastSh);
     // a build that only existed for a locked copy that could not go in
     return { builds: builds.filter((b) => b.placements.length), unplaced };
   }

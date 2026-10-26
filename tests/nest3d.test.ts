@@ -308,3 +308,19 @@ describe('cups with breakaway props', () => {
     expect(interlockTest(items, volume, props.voxel).stuck).toEqual([]);
   });
 });
+
+describe('alternative orientations', () => {
+  it('lays a part on its side when standing up does not fit, and reports which orientation it used', () => {
+    const standing = boxMesh([0, 0, 0], [40, 4, 30]);
+    const lying = boxMesh([0, 0, 0], [40, 30, 4]);
+    const volume: [number, number, number] = [60, 60, 40];
+    const opts = { volume, margin: 2, clearance: 1, zOffset: 0, maxHeight: 0, rotations: false, budget: 4e6, variants: [{ order: 'volume' as const, pattern: false }] };
+    // a 30 mm tall plate cannot stand under a 20 mm build height, but fits lying down
+    const only = nest3d([{ id: 'p', mesh: standing, count: 12 }], { ...opts, maxHeight: 20 });
+    expect(only.unplaced.length).toBe(12);
+    const r = nest3d([{ id: 'p', mesh: standing, count: 12, alts: [{ mesh: lying }] }], { ...opts, maxHeight: 20 });
+    const placed = r.builds.flatMap((b) => b.placements);
+    expect(placed.length).toBe(12);
+    expect(placed.every((p) => p.orient === 1)).toBe(true);
+  });
+});

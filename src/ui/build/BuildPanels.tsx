@@ -520,13 +520,26 @@ export function BuildSetupPanel() {
             Tilt parts that are too tall or too big
           </Check>
           <Check checked={g.autoOrient} onChange={(autoOrient) => updateBuildSettings({ autoOrient })}>
-            {printer.tech === 'powder' ? 'Orient by SLS / MJF rules' : 'Largest flat face down'}
+            {printer.tech === 'powder' ? 'Orient parts automatically' : 'Largest flat face down'}
           </Check>
           {printer.tech === 'powder' && g.autoOrient && (
-            <Hint>
-              Each part is turned so no large flat surface lies parallel to the platform (surfaces flatter than 30° to the layers are avoided), the area per
-              layer changes smoothly (no sudden jumps in cross-section), without making it needlessly tall; then its footprint is lined up with X / Y.
-            </Hint>
+            <>
+              <Row label="Orientation">
+                <Segmented
+                  value={g.powderOrient ?? 'packing'}
+                  onChange={(powderOrient) => updateBuildSettings({ powderOrient })}
+                  options={[
+                    { value: 'packing', label: 'Best packing' },
+                    { value: 'rules', label: 'SLS / MJF rules' },
+                  ]}
+                />
+              </Row>
+              <Hint>
+                {(g.powderOrient ?? 'packing') === 'packing'
+                  ? 'Each part rests on its largest flat face, lined up with X / Y; with 3D nesting it may also be laid on its side when that packs denser. Fits the most parts per build.'
+                  : 'Each part is turned so no large flat surface lies parallel to the platform and the area per layer changes smoothly. Better surfaces, but fewer parts fit per build.'}
+              </Hint>
+            </>
           )}
           <Check checked={g.allowRotate} onChange={(allowRotate) => updateBuildSettings({ allowRotate })}>
             Allow turning parts 90° to fit

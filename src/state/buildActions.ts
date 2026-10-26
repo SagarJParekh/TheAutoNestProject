@@ -348,7 +348,7 @@ export async function regenerateBuilds(force = false) {
 function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenState): Build[] {
   if (!copies.length) return [];
   const printer = currentPrinter(s);
-  const rule = printer.tech === 'powder' ? 'powder' : 'flat';
+  const rule = orientRule(s);
   const qOf = new Map<string, Quaternion>();
   const boxOf = new Map<string, { min: Vector3; max: Vector3 }>();
   for (const { part } of copies) {
@@ -405,9 +405,10 @@ function nestingJobsThatFit(voxels: NestVoxels[], params: Omit<NestParams, 'budg
   const gx = (VX - 2 * params.margin) / h,
     gy = (VY - 2 * params.margin) / h,
     gz = (VZ - params.zOffset) / h;
-  // voxels in + shapes (runs, surfaces, line maps) ≈ 3 bytes a cell; dilation of the biggest part; two builds of grids + line maps
+  // voxels in + shapes of four turns (runs, surfaces, line maps): about 12 bytes a cell (measured); dilation of the
+  // biggest part; two builds of grids + line maps; the worker itself
   const perBuild = (gx * gy * gz) / 4 + 2 * 16 * (gx + 2 * gz) * (gy + gz) * 0.5;
-  const perJob = cells * 3 + biggest * 6 + 2 * perBuild + 50e6;
+  const perJob = cells * 12 + biggest * 6 + 2 * perBuild + 150e6;
   return Math.max(1, Math.floor(budget / perJob));
 }
 
@@ -475,24 +476,36 @@ async function runNesting(
   const seen = new Set<string>();
   const empty = { positions: new Float32Array(0), indices: new Uint32Array(0) };
   // voxels per grid, made when first needed (one job per part)
-  const voxelCache = new Map<number, Promise<NestVoxels[]>>();
+  // every orientation of every part: the part's own (0) and its alternatives
+  const sources = parts.flatMap((part, pi) => [
+    { pi, o: 0, mesh: part.mesh },
+    ...(part.lock ? [] : (part.alts ?? []).map((a, i) => ({ pi, o: i + 1, mesh: a.mesh }))),
+  ]);
+  const voxelCache = new Map<number, Promise<NestVoxels[][]>>();
   const voxelsFor = (h: number) => {
     let v = voxelCache.get(h);
     if (!v) {
       let vdone = 0;
-      log(`Voxelizing ${parts.length} parts at ${h.toFixed(3)} mm`);
-      const vhandles = parts.map((part) => pool.run('nestVoxels', { mesh: part.mesh, h, align: part.lock ? lockAlign(params, part.lock.at) : undefined, solidBox: part.solidBox }));
+      log(`Voxelizing ${parts.length} parts (${sources.length} orientations) at ${h.toFixed(3)} mm`);
+      const vhandles = sources.map((src) =>
+        pool.run('nestVoxels', { mesh: src.mesh, h, align: parts[src.pi].lock ? lockAlign(params, parts[src.pi].lock!.at) : undefined, solidBox: parts[src.pi].solidBox }),
+      );
       handles = [...handles, ...vhandles];
       v = Promise.all(
         vhandles.map((x) =>
           x.promise.then((r) => {
             vdone++;
-            job.progress(done / total, `Voxelizing ${vdone} / ${parts.length} (${h.toFixed(2)} mm grid)`);
+            job.progress(done / total, `Voxelizing ${vdone} / ${sources.length} (${h.toFixed(2)} mm grid)`);
             return r;
           }),
         ),
-      );
-      v.then((r) => log(`Voxels ready at ${h.toFixed(3)} mm (${(r.reduce((a, x) => a + x.nx * x.ny * x.nz, 0) / 1e6).toFixed(1)} M cells)`)).catch(() => {});
+      ).then((flat) => {
+        // per part: [own orientation, alternatives…]
+        const per: NestVoxels[][] = parts.map(() => []);
+        flat.forEach((r, i) => (per[sources[i].pi][sources[i].o] = r));
+        return per;
+      });
+      v.then((r) => log(`Voxels ready at ${h.toFixed(3)} mm (${(r.flat().reduce((a, x) => a + x.nx * x.ny * x.nz, 0) / 1e6).toFixed(1)} M cells)`)).catch(() => {});
       voxelCache.set(h, v);
     }
     return v;
@@ -537,7 +550,7 @@ async function runNesting(
         .map((variant) => ({ variant, budget: ph.budget, attempt: 0 }));
       done += (ph.refine ?? ph.variants.length) - tasks.length;
       if (!tasks.length) continue;
-      let voxels0: NestVoxels[];
+      let voxels0: NestVoxels[][];
       try {
         voxels0 = await voxelsFor(h0);
       } catch (e) {
@@ -555,7 +568,7 @@ async function runNesting(
         );
       // as many at a time as the workers and this computer's memory allow; a failed job goes again on a coarser grid, alone
       const queue = [...tasks];
-      let limit = Math.min(tasks.length, pool.capacity, nestingJobsThatFit(voxels0, params, h0));
+      let limit = Math.min(tasks.length, pool.capacity, nestingJobsThatFit(voxels0.flat(), params, h0));
       log(`Phase: ${tasks.length} way${tasks.length > 1 ? 's' : ''} at ${h0.toFixed(3)} mm, ${limit} at a time`);
       let id = 0;
       const worker = async (slot: number) => {
@@ -565,7 +578,12 @@ async function runNesting(
           const h = hOf(t.budget);
           try {
             const voxels = await voxelsFor(h);
-            const jobParts = parts.map((p, pi) => ({ ...p, mesh: empty, voxels: voxels[pi] }));
+            const jobParts = parts.map((p, pi) => ({
+              ...p,
+              mesh: empty,
+              voxels: voxels[pi][0],
+              alts: p.lock ? undefined : p.alts?.map((_, i) => ({ mesh: empty, voxels: voxels[pi][i + 1] })),
+            }));
             const handle = pool.run('nest3d', { parts: jobParts, params: { ...params, budget: t.budget, voxel: h, variants: [t.variant] } }, (f, m) => {
               progress.set(me, f);
               show(m);
@@ -628,7 +646,7 @@ async function runNesting(
 
 async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof startJob>) {
   // 1. orientation, cached per mesh: powder bed by the SLS / MJF rules, other printers largest flat face down
-  const rule: 'powder' | 'flat' = printerById(s0.printerId).tech === 'powder' ? 'powder' : 'flat';
+  const rule = orientRule(s0);
   const cached = (p: BuildPart) => !!p.orient && p.orient.mesh === p.mesh && (p.orient.rule ?? 'flat') === rule;
   const toOrient = s0.parts.filter((p) => s0.autoOrient && !p.lockRotation && !cached(p)).length;
   let oriented = 0;
@@ -658,7 +676,10 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
   const volume: [number, number, number] = powder && s.maxHeight > 0 ? [printer.volume[0], printer.volume[1], Math.min(printer.volume[2], s.maxHeight)] : printer.volume;
   const gap = powder && s.nest3d ? Math.max(0.5, s.clearance3d) : s.gap;
   const fitParams = { volume, margin: s.margin, gap, zOffset: s.zOffset, allowRotate: s.allowRotate };
-  const info = new Map<string, { q: Quaternion; min: Vector3; max: Vector3 }>();
+  const info = new Map<string, { q: Quaternion; min: Vector3; max: Vector3; alts?: Quaternion[] }>();
+  // best packing (powder): a part may also lie on either of its two sides, whichever packs best
+  const sides = powder && s.nest3d && s.autoOrient && s.allowRotate && s.powderOrient !== 'rules';
+  const sideTurns = [new Vector3(1, 0, 0), new Vector3(0, 1, 0)].map((ax) => new Quaternion().setFromAxisAngle(ax, Math.PI / 2));
   const items: PackItem[] = [];
   const autoTilts: Record<string, Tilt> = {};
   // assembly groups: every member takes the orientation of the group's largest part
@@ -701,7 +722,10 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
         autoTilts[p.id] = found.tilt;
       }
     }
-    info.set(p.id, { q, ...b });
+    // other orientations (not for assembly groups, which share one orientation, nor parts tilted to fit)
+    const tiltQ = tiltQuaternion(p.tilt ?? s.tilt);
+    const alts = sides && !p.group && !autoTilts[p.id] ? sideTurns.map((r) => tiltQ.clone().multiply(r.clone().multiply(base))) : undefined;
+    info.set(p.id, { q, ...b, alts });
     for (let c = 0; c < p.quantity; c++) items.push({ key: `${p.id}#${c}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z });
   }
   if (powder && s.nest3d) {
@@ -717,7 +741,8 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
       const free = copies.filter((c) => !locks[`${p.id}#${c}`]);
       if (free.length) {
         const m = new Matrix4().makeRotationFromQuaternion(inf.q).elements;
-        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), count: free.length, copies: free, fixed: !!lead(p).lockRotation || !s.allowRotate, breakaway: !!p.breakaway, solidBox: !!p.cage });
+        const alts = inf.alts?.map((qa) => ({ mesh: applyMatrix(p.mesh, new Matrix4().makeRotationFromQuaternion(qa).elements) }));
+        nestParts.push({ id: p.id, mesh: applyMatrix(p.mesh, m), alts, count: free.length, copies: free, fixed: !!lead(p).lockRotation || !s.allowRotate, breakaway: !!p.breakaway, solidBox: !!p.cage });
       }
       for (const c of copies) {
         const L = locks[`${p.id}#${c}`];
@@ -747,7 +772,8 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
         placements: b.placements.map((pl): BuildPlacement => {
           const inf = info.get(pl.partId)!;
           const L = pl.locked ? locks[pl.key] : undefined;
-          const q = (L && lockQ(L)) || new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (pl.turns * Math.PI) / 2).multiply(inf.q);
+          const qo = pl.orient && inf.alts?.[pl.orient - 1] ? inf.alts[pl.orient - 1] : inf.q;
+          const q = (L && lockQ(L)) || new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (pl.turns * Math.PI) / 2).multiply(qo);
           return { key: pl.key, partId: pl.partId, copy: pl.copy, position: pl.t, quaternion: [q.x, q.y, q.z, q.w] };
         }),
       }));
@@ -967,6 +993,15 @@ export function setTiltFor(ids: string[], tilt: Tilt | null) {
 }
 
 /** Lock or unlock the orientation of build parts. */
+/**
+ * Base orientation rule: largest flat face down (also the start of "best
+ * packing" on powder printers, which adds the two sides), or the SLS / MJF
+ * rules.
+ */
+export function orientRule(s: BuildGenState): 'powder' | 'flat' {
+  return printerById(s.printerId).tech === 'powder' && s.powderOrient === 'rules' ? 'powder' : 'flat';
+}
+
 /** default cage: 1 mm thick bars, 3 mm wide, 5 mm apart */
 export const DEFAULT_CAGE: CageOptions = { thickness: 1, barWidth: 3, gap: 5 };
 
@@ -983,7 +1018,8 @@ export async function cageBuildParts(ids: string[]) {
   const o = s.cageSettings ?? DEFAULT_CAGE;
   const clearance = Math.max(0.5, s.clearance3d);
   const powder = currentPrinter(s).tech === 'powder';
-  const rule: 'powder' | 'flat' = powder ? 'powder' : 'flat';
+  void powder;
+  const rule = orientRule(s);
   const job = startJob('Making a cage');
   try {
     // 1. orientation (as the nesting would)
