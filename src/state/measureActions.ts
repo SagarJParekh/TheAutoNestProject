@@ -28,6 +28,13 @@ export function deleteMeasurement(id: number) {
   setState((s) => ({ measurements: s.measurements.filter((m) => m.id !== id) }));
 }
 
+/** Move a measurement's label (screen offset from its point), or send it back to the side with null. */
+export function setMeasureLabel(id: number, offset: [number, number] | null) {
+  setState((s) => ({
+    measurements: s.measurements.map((m) => (m.id === id ? { ...m, draw: { ...m.draw, label: { ...m.draw.label, offset: offset ?? undefined } } } : m)),
+  }));
+}
+
 function add(m: Omit<Measurement, 'id'>) {
   setState((s) => ({ measurements: [...s.measurements, { ...m, id: mid++ }], measurePending: { entities: [], points: [] } }));
 }

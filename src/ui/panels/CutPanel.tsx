@@ -3,6 +3,7 @@ import { startLasso, startPolyline } from '../../state/editActions';
 import { getState, setState, useStore } from '../../state/store';
 import { previewCut } from '../../state/actions';
 import { PlaneControls } from './PlaneControls';
+import { JointCut } from './JointCut';
 import type { Part } from '../../state/types';
 import { live } from '../../state/livePreview';
 
@@ -15,7 +16,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
   const lassoing = useStore((s) => s.lassoMode);
   const drawing = useStore((s) => s.polyMode);
   const snap = useStore((s) => s.settings.cutSnap);
-  const setMode = (cutMode: 'plane' | 'lasso' | 'polyline') =>
+  const setMode = (cutMode: 'plane' | 'lasso' | 'polyline' | 'joint') =>
     setState({ settings: { ...getState().settings, cutMode }, preview: null, lassoMode: false, polyMode: false });
   const modes = (
     <Segmented
@@ -25,9 +26,18 @@ export function CutPanel({ parts }: { parts: Part[] }) {
         { value: 'plane', label: 'Plane' },
         { value: 'polyline', label: 'Draw line' },
         { value: 'lasso', label: 'Lasso' },
+        { value: 'joint', label: 'Joint', title: 'Advanced cuts: lap and tongue joints' },
       ]}
     />
   );
+  if (mode === 'joint')
+    return (
+      <Section title="Cut">
+        {modes}
+        {!target && <Hint>Select one unlocked part to cut.</Hint>}
+        <JointCut target={target} />
+      </Section>
+    );
   if (mode === 'polyline')
     return (
       <Section title="Cut">

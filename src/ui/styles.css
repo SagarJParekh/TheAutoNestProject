@@ -434,3 +434,20 @@ table.report tr:last-child td { border-bottom: none; }
 .thk-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 .manual-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; margin: 4px 0 8px; border: 1px solid #f59e0b; border-radius: 6px; background: rgba(245, 158, 11, 0.1); font-size: 12px; }
 .manual-banner span { flex: 1 1 100%; color: var(--muted); }
+/* joint cuts */
+.joint-family { margin-top: 8px; }
+.joint-family .segmented { grid-template-columns: 1fr 1fr; }
+.joint-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+.joint-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font-size: 11px; line-height: 1.2; text-align: center; color: inherit; cursor: pointer; }
+.joint-btn:hover { border-color: var(--muted); }
+.joint-btn.on { border-color: var(--accent); background: rgba(255, 210, 63, 0.12); }
+.joint-icon .upper { fill: var(--panel); stroke: var(--muted); stroke-width: 1; }
+.joint-icon .lower { fill: var(--accent-2); opacity: 0.45; }
+.joint-icon .edge { fill: none; stroke: var(--text, currentColor); stroke-width: 1.4; stroke-linejoin: round; }
+/* measurement labels beside the parts, with leader lines */
+.measure-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
+.measure-labels svg { position: absolute; inset: 0; overflow: visible; }
+.measure-labels line { stroke: #ffd23f; stroke-width: 1.2; stroke-dasharray: 4 3; }
+.measure-labels circle { fill: #ffd23f; }
+.measure-label { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: grab; user-select: none; white-space: nowrap; padding: 3px 9px; border-radius: 6px; border: 1.5px solid #ffd23f; background: rgba(20, 22, 27, 0.88); color: #ffd23f; font: 600 13px Inter, system-ui, sans-serif; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
+.measure-label:active { cursor: grabbing; }

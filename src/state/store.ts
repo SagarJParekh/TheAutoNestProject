@@ -5,6 +5,7 @@ import type {
   BlendEdgePick, BuildGenState,
 } from './types';
 import type { ErrorGroup, MeshData, ThicknessResult } from '../geometry';
+import { DEFAULT_JOINT } from '../geometry/joint';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
@@ -213,6 +214,7 @@ export const useStore = create<AppState>(() => ({
     offset: { mode: 'global', distance: 1, voxel: 0, asCopy: false, smooth: true, angle: 20 },
     blend: { kind: 'fillet', size: 2 },
     cutMode: 'plane',
+    joint: { ...DEFAULT_JOINT },
     cutSnap: true,
   },
   jobs: [],

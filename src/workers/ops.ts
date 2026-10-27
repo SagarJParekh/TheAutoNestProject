@@ -394,6 +394,12 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
   },
 
+  async jointCut(args: { mesh: MeshData; plane: Plane; params: G.JointParams }, progress: Progress): Promise<Result<G.JointResult>> {
+    progress(0.2, 'Building the joint');
+    const r = await G.jointSplit(args.mesh, args.plane, args.params);
+    return { result: r, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
+  },
+
   async remesh(
     args: { mesh: MeshData; edgeLength: number; region?: Uint32Array | null; iterations?: number; featureAngle?: number },
     progress: Progress,

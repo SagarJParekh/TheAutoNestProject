@@ -1,6 +1,6 @@
 import type {
   MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
-  LabelParams, TextureParams, Heightmap, MEntity,
+  LabelParams, TextureParams, Heightmap, MEntity, JointParams,
 } from '../geometry';
 
 export interface Transform {
@@ -168,7 +168,8 @@ export interface MeasureDraw {
   points: Vec3[];
   segments: [Vec3, Vec3][];
   circles: { c: Vec3; n: Vec3; r: number }[];
-  label: { pos: Vec3; text: string };
+  /** offset: where the user dragged the label, in screen pixels from the measured point (none = beside the parts) */
+  label: { pos: Vec3; text: string; offset?: [number, number] };
 }
 
 export interface Measurement {
@@ -276,7 +277,9 @@ export interface ToolSettings {
     angle: number;
   };
   blend: { kind: 'fillet' | 'chamfer'; size: number };
-  cutMode: 'plane' | 'lasso' | 'polyline';
+  cutMode: 'plane' | 'lasso' | 'polyline' | 'joint';
+  /** joint cut (lap / tongue joints) along the cut plane */
+  joint: JointParams;
   /** drawn cut lines snap their points to the part's corners and sharp edges */
   cutSnap: boolean;
 }

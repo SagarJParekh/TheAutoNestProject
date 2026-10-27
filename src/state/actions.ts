@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import type { MeshData, Vec3 } from '../geometry';
 import { mirrorMesh } from '../geometry/transform';
 import { regionNormal } from '../geometry/select';
+import { LAP_JOINTS, TONGUE_JOINTS, isTongueJoint } from '../geometry/joint';
 import { pool, CancelledError } from '../workers/client';
 import type { OpArgs, OpName, OpResult } from '../workers/ops';
 import { getLoader, extensionOf } from '../loaders/registry';
@@ -391,6 +392,53 @@ export async function previewCut() {
     meshes: pieces,
     summary: [`Method: ${r.method}`, ...pieces.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`)],
     apply: () => replaceWithWorldMeshes('Cut', part.id, pieces),
+  });
+}
+
+/** Split along a lap / tongue joint profile laid on the cut plane, so the pieces key together. */
+export async function previewJointCut() {
+  const s = getState();
+  const part = editable()[0];
+  if (!part) return notify('warning', 'Select an unlocked part to cut');
+  const plane = planeFromSettings(s.cutPlane);
+  const params = s.settings.joint;
+  const r = await runJob('Cutting joint', 'jointCut', { mesh: worldMesh(part), plane, params });
+  if (!r) return;
+  const gap = s.settings.cut.gap;
+  const shift = (m: MeshData, d: number): MeshData => {
+    if (!d) return m;
+    const p = m.positions.slice();
+    for (let i = 0; i < p.length; i += 3) {
+      p[i] += plane.normal[0] * d;
+      p[i + 1] += plane.normal[1] * d;
+      p[i + 2] += plane.normal[2] * d;
+    }
+    return { positions: p, indices: m.indices };
+  };
+  const pieces = [
+    { name: `${part.name} A`, mesh: shift(r.above, gap / 2), color: part.color },
+    { name: `${part.name} B`, mesh: shift(r.below, -gap / 2), color: nextColor() },
+  ];
+  const z = r.sizes, mm = (v: number) => `${+v.toFixed(2)} mm`;
+  const name = [...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind;
+  const title = /joint$/i.test(name) ? name : `${name} joint`;
+  const counted = params.kind === 'multiple' || params.kind === 'toothed' || params.kind === 'finger';
+  setPreview({
+    tool: 'cut',
+    label: title,
+    replaces: [part.id],
+    meshes: pieces,
+    summary: [
+      `${isTongueJoint(params.kind) ? 'Tongue' : 'Lap'} joint: ${name}`,
+      `Across the section: ${mm(z.span)}`,
+      `${isTongueJoint(params.kind) ? 'Overlap length' : 'Depth'}: ${mm(z.depth)}`,
+      ...(isTongueJoint(params.kind) || params.kind === 'step' || params.kind === 'toothed' ? [] : [`Width: ${mm(z.width)}`]),
+      ...(counted ? [`Count: ${z.count}`] : []),
+      `Fit clearance: ${mm(params.clearance)}`,
+      ...(z.tooDeep ? [`⚠ The joint reaches past the end of the part: a piece may fall apart. Use a smaller ${isTongueJoint(params.kind) ? 'overlap length' : 'depth'} or move the plane.`] : []),
+      ...pieces.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`),
+    ],
+    apply: () => replaceWithWorldMeshes(title, part.id, pieces),
   });
 }
 

@@ -41,6 +41,13 @@ export interface PickInfo {
   clientY: number;
 }
 
+interface MeasureLabel {
+  id: number;
+  text: string;
+  anchor: Vec3;
+  offset?: [number, number];
+}
+
 export interface ViewerCallbacks {
   onPick: (info: PickInfo | null, ev: { shift: boolean; ctrl: boolean; clientX: number; clientY: number }) => void;
   onTransformEnd: (partId: string, t: Transform) => void;
@@ -58,6 +65,8 @@ export interface ViewerCallbacks {
   onBoxSelect?: (ids: string[], add: boolean) => void;
   /** pick & place finished: new positions of the dragged parts */
   onPlaceEnd?: (moves: { id: string; position: [number, number, number] }[]) => void;
+  /** a measurement label was dragged: its offset from the measured point in screen pixels (null = back to the side) */
+  onLabelMove?: (id: number, offset: [number, number] | null) => void;
 }
 
 interface PartObject {
@@ -265,6 +274,7 @@ export class Viewer {
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.labelLayer?.remove();
   }
 
   // ------------------------------------------------------------------ rendering
@@ -285,6 +295,7 @@ export class Viewer {
     r.clear(true, true, true);
     r.render(this.scene, this.camera);
     this.axis.render(r, this.camera);
+    this.layoutLabels(w, h);
   }
 
   private fatMaterials = new Set<LineMaterial>();
@@ -997,7 +1008,7 @@ export class Viewer {
     }
     const g = new Group();
     g.userData.toolOverlay = true;
-    if (s.tool === 'cut' && !s.preview && s.settings.cutMode === 'plane') {
+    if (s.tool === 'cut' && !s.preview && (s.settings.cutMode === 'plane' || s.settings.cutMode === 'joint')) {
       const target = s.selection.map((id) => this.objects.get(id)).find(Boolean);
       const sphere = target
         ? target.mesh.geometry.boundingSphere!.clone().applyMatrix4(target.group.matrixWorld)
@@ -1942,6 +1953,143 @@ export class Viewer {
     this.requestRender();
   }
 
+  // ------------------------------------------------------------------ measurement labels (HTML, beside the parts)
+
+  private labelLayer: HTMLDivElement | null = null;
+  private labelSvg: SVGSVGElement | null = null;
+  private labels: (MeasureLabel & { el: HTMLDivElement; line: SVGLineElement; dot: SVGCircleElement })[] = [];
+  /** label being dragged: its live offset overrides the stored one */
+  private labelDrag: { id: number; offset: [number, number] } | null = null;
+
+  /**
+   * Measurement values are shown as labels at the side of the parts, joined to
+   * the measured spot by a leader line, so they never cover the part. Drag a
+   * label to put it anywhere (it then follows its point); double-click it to
+   * send it back to the side.
+   */
+  private buildLabels(list: MeasureLabel[]) {
+    if (!this.labelLayer) {
+      const layer = document.createElement('div');
+      layer.className = 'measure-labels';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      layer.appendChild(svg);
+      this.container.appendChild(layer);
+      this.labelLayer = layer;
+      this.labelSvg = svg;
+    }
+    for (const l of this.labels) l.el.remove(), l.line.remove(), l.dot.remove();
+    this.labels = list.map((m) => {
+      const el = document.createElement('div');
+      el.className = 'measure-label';
+      el.textContent = m.text;
+      el.title = 'Drag to move · double-click to put it back at the side';
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('r', '3');
+      this.labelSvg!.append(line, dot);
+      this.labelLayer!.appendChild(el);
+      el.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        el.setPointerCapture(e.pointerId);
+        const r = el.getBoundingClientRect();
+        const grab = [e.clientX - r.left, e.clientY - r.top];
+        const move = (ev: PointerEvent) => {
+          const a = this.labelAnchor(m.anchor);
+          if (!a) return;
+          const c = this.container.getBoundingClientRect();
+          this.labelDrag = { id: m.id, offset: [ev.clientX - c.left - grab[0] - a[0], ev.clientY - c.top - grab[1] - a[1]] };
+          this.requestRender();
+        };
+        const up = () => {
+          el.removeEventListener('pointermove', move);
+          el.removeEventListener('pointerup', up);
+          el.removeEventListener('pointercancel', up);
+          const d = this.labelDrag;
+          if (d && d.id === m.id) this.cb.onLabelMove?.(m.id, d.offset);
+          else this.labelDrag = null;
+        };
+        el.addEventListener('pointermove', move);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+      });
+      el.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.cb.onLabelMove?.(m.id, null);
+      });
+      return { ...m, el, line, dot };
+    });
+    // the stored offset now matches the drag
+    if (this.labelDrag && list.some((l) => l.id === this.labelDrag!.id && l.offset)) this.labelDrag = null;
+    this.requestRender();
+  }
+
+  /** Screen position (container pixels) of a world point, or null behind the camera. */
+  private labelAnchor(p: Vec3): [number, number] | null {
+    const v = new Vector3(...p).project(this.camera);
+    if (v.z > 1 || v.z < -1) return null;
+    const w = this.container.clientWidth, h = this.container.clientHeight;
+    return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h];
+  }
+
+  private layoutLabels(w: number, h: number) {
+    if (!this.labels.length) return;
+    this.labelSvg!.setAttribute('width', String(w));
+    this.labelSvg!.setAttribute('height', String(h));
+    // screen box of the visible parts: free labels line up in a column beside it
+    let x0 = Infinity, x1 = -Infinity;
+    const box = new Box3(), v = new Vector3();
+    for (const o of this.objects.values()) {
+      if (!o.group.visible) continue;
+      box.setFromObject(o.mesh);
+      for (let i = 0; i < 8; i++) {
+        v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(this.camera);
+        const x = ((v.x + 1) / 2) * w;
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+      }
+    }
+    const gapPx = 28, edge = 8;
+    const sizes = this.labels.map((l) => [l.el.offsetWidth, l.el.offsetHeight]);
+    const widest = Math.max(...sizes.map((s) => s[0]));
+    const right = Number.isFinite(x1) && x1 + gapPx + widest <= w - edge;
+    const left = !right && Number.isFinite(x0) && x0 - gapPx - widest >= edge;
+    const colX = right ? x1 + gapPx : left ? x0 - gapPx - widest : w - edge - widest;
+    const anchors = this.labels.map((l) => this.labelAnchor(l.anchor));
+    // labels in the column keep the order of their points from top to bottom, without overlapping
+    const free = this.labels.map((_, i) => i).filter((i) => anchors[i] && !(this.labelDrag?.id === this.labels[i].id) && !this.labels[i].offset);
+    free.sort((a, b) => anchors[a]![1] - anchors[b]![1]);
+    const pos = new Map<number, [number, number]>();
+    let yNext = edge;
+    for (const i of free) {
+      const hgt = sizes[i][1];
+      const y = Math.min(Math.max(anchors[i]![1] - hgt / 2, yNext), h - edge - hgt);
+      pos.set(i, [colX + (left ? widest - sizes[i][0] : 0), y]);
+      yNext = y + hgt + 6;
+    }
+    this.labels.forEach((l, i) => {
+      const a = anchors[i];
+      const show = !!a;
+      l.el.style.display = l.line.style.display = l.dot.style.display = show ? '' : 'none';
+      if (!a) return;
+      const off = this.labelDrag?.id === l.id ? this.labelDrag.offset : l.offset;
+      const [lw, lh] = sizes[i];
+      const q = off ? [a[0] + off[0], a[1] + off[1]] : pos.get(i)!;
+      // never lose a label off the edge of the view
+      const p = [Math.min(Math.max(q[0], edge), w - edge - lw), Math.min(Math.max(q[1], edge), h - edge - lh)];
+      l.el.style.transform = `translate(${p[0].toFixed(1)}px, ${p[1].toFixed(1)}px)`;
+      // leader from the measured point to the nearest point of the label
+      const tx = Math.min(Math.max(a[0], p[0]), p[0] + lw), ty = Math.min(Math.max(a[1], p[1]), p[1] + lh);
+      l.line.setAttribute('x1', a[0].toFixed(1));
+      l.line.setAttribute('y1', a[1].toFixed(1));
+      l.line.setAttribute('x2', tx.toFixed(1));
+      l.line.setAttribute('y2', ty.toFixed(1));
+      l.dot.setAttribute('cx', a[0].toFixed(1));
+      l.dot.setAttribute('cy', a[1].toFixed(1));
+    });
+  }
+
   // ------------------------------------------------------------------ annotations (measurements, picked points)
 
   private syncAnnotations(s: AppState) {
@@ -1966,12 +2114,13 @@ export class Viewer {
       line.renderOrder = 1001;
       this.annotGroup.add(line);
     };
+    const labels: MeasureLabel[] = [];
     if (s.tool === 'measure') {
       for (const m of s.measurements) {
         pts.push(...m.draw.points);
         for (const [a, b] of m.draw.segments) segs.push(...a, ...b);
         for (const c of m.draw.circles) ring(c.c, c.n, c.r);
-        this.annotGroup.add(textSprite(m.draw.label.text, m.draw.label.pos));
+        labels.push({ id: m.id, text: m.draw.label.text, anchor: m.draw.label.pos, offset: m.draw.label.offset });
       }
       for (const e of s.measurePending.entities) {
         const en = e.entity;
@@ -1986,6 +2135,7 @@ export class Viewer {
       }
       pts.push(...s.measurePending.points);
     }
+    this.buildLabels(labels);
     const markers: { pick: { partId: string; point: Vec3; normal: Vec3 }; color: number }[] = [];
     if (s.tool === 'label' && s.pointPicks.label) markers.push({ pick: s.pointPicks.label, color: accent });
     if (s.tool === 'props' && s.settings.props.mode === 'single') {

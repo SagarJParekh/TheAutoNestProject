@@ -158,6 +158,7 @@ export function buildCommands(): Command[] {
     { id: 'mark-invert', label: 'Invert marked selection', group: 'Repair', keywords: 'invert selection', run: invertMarked },
     { id: 'remesh-part', label: 'Remesh whole part', group: 'Repair', keywords: 'isotropic triangles uniform quality', run: repair('edit', () => previewRemesh('part')) },
     { id: 'remesh-marked', label: 'Remesh marked triangles', group: 'Repair', keywords: 'isotropic local', run: repair('edit', () => previewRemesh('marked')) },
+    { id: 'cut-joint', label: 'Joint cut (lap / tongue joint)', group: 'Cut', keywords: 'advanced dovetail finger scarf half lap tongue groove rabbet toothed', run: () => { setTool('cut'); setState((s) => ({ settings: { ...s.settings, cutMode: 'joint' } })); } },
     { id: 'cut-line', label: 'Cut along a drawn line', group: 'Cut', keywords: 'polyline draw step zigzag', run: () => { setTool('cut'); setState((s) => ({ settings: { ...s.settings, cutMode: 'polyline' } })); startPolyline(); } },
     { id: 'tri-create', label: 'Create triangles (manual)', group: 'Repair', keywords: 'edit add face bridge', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'create' } }, pickMode: 'vertex' }))) },
     // help

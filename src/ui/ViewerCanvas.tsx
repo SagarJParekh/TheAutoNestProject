@@ -8,7 +8,7 @@ import type { Part } from '../state/types';
 import { layFlat, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
-import { onMeasurePick } from '../state/measureActions';
+import { onMeasurePick, setMeasureLabel } from '../state/measureActions';
 import { onSharpEdgePick } from '../state/modifyActions';
 import { onBridgeEdgePick, onBrush, onLassoDone, onPolylineDone, onTrianglePick, onVertexPick, onWindowMark } from '../state/editActions';
 
@@ -226,6 +226,9 @@ export function ViewerCanvas() {
           return;
         }
         setState({ selection: add ? [...new Set([...s.selection, ...ids])] : ids });
+      },
+      onLabelMove(id, offset) {
+        setMeasureLabel(id, offset);
       },
       onPlaceEnd(moves) {
         if (getState().workspace === 'build') {
