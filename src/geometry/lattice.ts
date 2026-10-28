@@ -12,13 +12,14 @@ import { marchingTetrahedra } from './marching';
 import { meshVolume } from './measure';
 import { subtractMeshes } from './manifold';
 
-export type LatticeType = 'gyroid' | 'diamond' | 'schwarzP' | 'cubic';
+export type LatticeType = 'gyroid' | 'diamond' | 'schwarzP' | 'cubic' | 'honeycomb';
 
 export const LATTICES: { value: LatticeType; label: string }[] = [
   { value: 'gyroid', label: 'Gyroid' },
   { value: 'diamond', label: 'Diamond' },
   { value: 'schwarzP', label: 'Schwarz P' },
   { value: 'cubic', label: 'Cubic struts' },
+  { value: 'honeycomb', label: 'Honeycomb' },
 ];
 
 export interface LatticeParams {
@@ -30,9 +31,11 @@ export interface LatticeParams {
   /** solid skin kept under the outer surface, mm (0 = lattice right out to the surface) */
   skin: number;
   quality: 'draft' | 'normal' | 'fine';
+  /** honeycomb: direction the hexagonal cells run along */
+  axis: 'x' | 'y' | 'z';
 }
 
-export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickness: 1.2, skin: 1.5, quality: 'normal' };
+export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickness: 1.2, skin: 1.5, quality: 'normal', axis: 'z' };
 
 const BUDGET = { draft: 2e6, normal: 6e6, fine: 16e6 };
 
@@ -50,7 +53,7 @@ export function latticeVoxel(mesh: MeshData, p: LatticeParams): number {
  * distance to its surface in mm. TPMS walls use the level |f| < c, scaled by the
  * typical gradient so the wall comes out about `thickness` thick.
  */
-export function latticeField(type: LatticeType, cell: number, thickness: number): (x: number, y: number, z: number) => number {
+export function latticeField(type: LatticeType, cell: number, thickness: number, axis: 'x' | 'y' | 'z' = 'z'): (x: number, y: number, z: number) => number {
   const k = (2 * Math.PI) / cell, half = thickness / 2;
   const { sin, cos, abs, hypot, round } = Math;
   switch (type) {
@@ -74,6 +77,26 @@ export function latticeField(type: LatticeType, cell: number, thickness: number)
         return half - Math.min(hypot(dx, dy), hypot(dy, dz), hypot(dz, dx));
       };
     }
+    case 'honeycomb': {
+      // hexagonal cells `cell` across the flats, walls on the cell borders, running along `axis`;
+      // centres on the lattice a1 = (cell, 0), a2 = (cell/2, cell·√3/2): a point lies in the cell
+      // of the nearest centre in the hexagon norm, and its distance to the wall is cell/2 minus that norm
+      const r3 = Math.sqrt(3), apo = cell / 2;
+      const norm = (u: number, v: number) => Math.max(abs(u), abs(0.5 * u + (r3 / 2) * v), abs(0.5 * u - (r3 / 2) * v));
+      const wall = (u: number, v: number) => {
+        const j0 = Math.floor((2 * v) / (r3 * cell));
+        const i0 = Math.floor(u / cell - j0 / 2);
+        let best = Infinity;
+        for (let dj = -1; dj <= 2; dj++)
+          for (let di = -1; di <= 2; di++) {
+            const j = j0 + dj, i = i0 + di;
+            const n = norm(u - cell * (i + j / 2), v - (cell * r3 * j) / 2);
+            if (n < best) best = n;
+          }
+        return half - (apo - best);
+      };
+      return axis === 'x' ? (_x, y, z) => wall(y, z) : axis === 'y' ? (x, _y, z) => wall(z, x) : (x, y) => wall(x, y);
+    }
   }
 }
 
@@ -93,7 +116,7 @@ export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: Progr
   const skin = Math.max(0, p.skin);
   const grid = signedDistanceGrid(mesh, h, { pad: 2, bandCenter: skin, bandWidth: 2.5 * h, onProgress: (f, m) => onProgress(f * 0.6, m) });
   const { nx, ny, nz, origin, data } = grid;
-  const L = latticeField(p.type, p.cell, p.thickness);
+  const L = latticeField(p.type, p.cell, p.thickness, p.axis ?? 'z');
   onProgress(0.62, 'Building the lattice');
   // void = inside the skin and outside the lattice walls; with no skin the voids run out past the surface
   // (the boolean trims them) and are closed at the edge of the grid

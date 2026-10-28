@@ -120,11 +120,24 @@ export function LatticePanel({ parts }: { parts: Part[] }) {
         </select>
       </Row>
       <Row label="Cell size">
-        <NumberField value={lat.cell} min={1} step={1} suffix="mm" title="Size of one repeating lattice cell" onChange={(cell) => setLat({ cell: Math.max(1, cell) })} />
+        <NumberField value={lat.cell} min={1} step={1} suffix="mm" title={lat.type === 'honeycomb' ? 'Width of one hexagon, across its flats' : 'Size of one repeating lattice cell'} onChange={(cell) => setLat({ cell: Math.max(1, cell) })} />
       </Row>
       <Row label={lat.type === 'cubic' ? 'Strut thickness' : 'Wall thickness'}>
         <NumberField value={lat.thickness} min={0.2} step={0.1} suffix="mm" onChange={(thickness) => setLat({ thickness: Math.max(0.2, thickness) })} />
       </Row>
+      {lat.type === 'honeycomb' && (
+        <Row label="Cells along">
+          <Segmented
+            value={lat.axis ?? 'z'}
+            onChange={(axis) => setLat({ axis })}
+            options={[
+              { value: 'x', label: 'X' },
+              { value: 'y', label: 'Y' },
+              { value: 'z', label: 'Z' },
+            ]}
+          />
+        </Row>
+      )}
       <Row label="Skin thickness">
         <NumberField value={lat.skin} min={0} step={0.5} suffix="mm" title="Solid wall kept under the outer surface (0 = the lattice reaches the surface)" onChange={(skin) => setLat({ skin: Math.max(0, skin) })} />
       </Row>
@@ -149,7 +162,7 @@ export function LatticePanel({ parts }: { parts: Part[] }) {
       </div>
       <Hint>
         Keeps the outer surface and a solid skin, and fills the inside with the lattice. Gyroid, diamond and Schwarz P are smooth self-supporting walls, good for
-        powder and resin printing; cubic is a grid of struts. The preview shows how much lighter the part gets; use Clip to look inside.
+        powder and resin printing; cubic is a grid of struts; honeycomb is hexagonal cells running straight through the part along X, Y or Z (Z = the build direction, self-supporting walls). The preview shows how much lighter the part gets; use Clip to look inside.
       </Hint>
     </Section>
   );

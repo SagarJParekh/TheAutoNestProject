@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  boxMesh, computeBounds, isWatertight, makeShape, meshVolume, mergeMeshes, latticeMesh, shrinkwrapMesh, SHAPES, DEFAULT_SHAPE, DEFAULT_LATTICE, DEFAULT_WRAP,
+  boxMesh, computeBounds, latticeField, isWatertight, makeShape, meshVolume, mergeMeshes, latticeMesh, shrinkwrapMesh, SHAPES, DEFAULT_SHAPE, DEFAULT_LATTICE, DEFAULT_WRAP,
   type ShapeKind,
 } from '../src/geometry';
 
@@ -38,7 +38,24 @@ describe('basic shapes', () => {
 });
 
 describe('lattice lightweighting', () => {
-  for (const type of ['gyroid', 'cubic'] as const) {
+  it('honeycomb: walls on the hexagon borders, about 2·t/s of the volume, running along the chosen axis', () => {
+    const f = latticeField('honeycomb', 10, 1, 'z');
+    // centre of a cell: 5 mm from every wall; midway to the next centre: on the wall
+    expect(f(0, 0, 0)).toBeCloseTo(0.5 - 5, 6);
+    expect(f(5, 0, 3)).toBeCloseTo(0.5, 6);
+    expect(f(2.5, (10 * Math.sqrt(3)) / 4, 7)).toBeCloseTo(0.5, 6);
+    // the pattern repeats from cell to cell and does not change along Z
+    expect(f(1.3 + 10, 2.1, 0)).toBeCloseTo(f(1.3, 2.1, 50), 6);
+    expect(f(1.3 + 5, 2.1 + 5 * Math.sqrt(3), 0)).toBeCloseTo(f(1.3, 2.1, 0), 6);
+    let solid = 0, n = 0;
+    for (let x = 0; x < 100; x += 0.37) for (let y = 0; y < 100; y += 0.41) (n++, f(x, y, 0) > 0 && solid++);
+    expect(solid / n).toBeGreaterThan(0.17);
+    expect(solid / n).toBeLessThan(0.23);
+    // along X the hexagons lie in the YZ plane
+    expect(latticeField('honeycomb', 10, 1, 'x')(42, 5, 0)).toBeCloseTo(0.5, 6);
+  });
+
+  for (const type of ['gyroid', 'cubic', 'honeycomb'] as const) {
     it(`${type}: keeps the outer surface and a solid skin, removes material inside`, async () => {
       const cube = boxMesh([0, 0, 0], [30, 30, 30]);
       const r = await latticeMesh(cube, { ...DEFAULT_LATTICE, type, cell: 10, thickness: 1.5, skin: 2, quality: 'draft' });
