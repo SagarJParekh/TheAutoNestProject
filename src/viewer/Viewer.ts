@@ -23,7 +23,7 @@ import { meshEntry, onMeshEntryChange } from '../state/meshCache';
 import { createPartMaterial, orientationUniforms } from './materials';
 import { sectionSegments } from './section';
 import { AxisGizmo } from './axisGizmo';
-import { planeFromSettings, quaternionOf, eulerDegFromQuaternion, worldBounds } from '../state/math';
+import { planeFromSettings, planesFromSettings, quaternionOf, eulerDegFromQuaternion, worldBounds } from '../state/math';
 
 Mesh.prototype.raycast = acceleratedRaycast;
 
@@ -69,6 +69,14 @@ export interface ViewerCallbacks {
   onLabelMove?: (id: number, offset: [number, number] | null) => void;
 }
 
+/** Stencil-based cap (and section outline) of one part on one clip plane. */
+interface CapSet {
+  stencil: Group;
+  cap: Mesh;
+  section?: LineSegments;
+  sectionKey?: string;
+}
+
 interface PartObject {
   part: Part;
   group: Group;
@@ -76,10 +84,8 @@ interface PartObject {
   material: MeshStandardMaterial;
   edges?: LineSegments;
   edgesFor?: Float32Array;
-  stencil?: Group;
-  cap?: Mesh;
-  section?: LineSegments;
-  sectionKey?: string;
+  /** section caps, one per clip plane */
+  caps?: CapSet[];
   overlay: Group;
   overlayKey?: string;
   selBox?: Box3Helper;
@@ -145,7 +151,22 @@ export class Viewer {
   private raycaster = new Raycaster();
   private state: AppState | null = null;
   private renderPending = false;
-  private clipPlane: Plane | null = null;
+  private clipKey = '';
+  /** clip planes (world); three.js discards where a plane's distance is negative */
+  private clipPlanes: Plane[] = [];
+  /** several planes: cut away only the corner where all of them clip (else keep only what all of them keep) */
+  private clipCorner = true;
+  /** is a point left visible by the clip planes? */
+  private unclipped(p: Vector3): boolean {
+    const ps = this.clipPlanes;
+    if (!ps.length) return true;
+    return this.clipCorner && ps.length > 1 ? ps.some((q) => q.distanceToPoint(p) >= 0) : ps.every((q) => q.distanceToPoint(p) >= 0);
+  }
+  /** apply the clip planes to a material */
+  private clipMaterial(m: Material) {
+    m.clippingPlanes = this.clipPlanes.length ? this.clipPlanes : null;
+    m.clipIntersection = this.clipCorner && this.clipPlanes.length > 1;
+  }
   private previewKey: unknown = null;
   private overlayKey = '';
   private gridSize = 0;
@@ -443,11 +464,12 @@ export class Viewer {
     this.syncBuildVolume(s);
 
     // clip plane (world)
-    this.clipPlane = null;
-    if (s.clipEnabled) {
-      const p = planeFromSettings(s.clip);
-      // keep the side below the plane: three clips where n·x + c < 0
-      this.clipPlane = new Plane(new Vector3(-p.normal[0], -p.normal[1], -p.normal[2]), p.constant);
+    // keep the side below each plane: three clips where n·x + c < 0
+    const clipKey = s.clipEnabled ? JSON.stringify(s.clip) : '';
+    if (clipKey !== this.clipKey) {
+      this.clipKey = clipKey;
+      this.clipPlanes = s.clipEnabled ? planesFromSettings(s.clip).map((p) => new Plane(new Vector3(-p.normal[0], -p.normal[1], -p.normal[2]), p.constant)) : [];
+      this.clipCorner = s.clip.combine !== 'common';
     }
 
     const seen = new Set<string>();
@@ -497,10 +519,10 @@ export class Viewer {
       obj.edges = undefined;
       obj.edgesFor = undefined;
     }
-    if (obj.stencil) {
-      for (const c of obj.stencil.children) (c as Mesh).geometry = obj.mesh.geometry;
+    for (const c of obj.caps ?? []) {
+      for (const m of c.stencil.children) (m as Mesh).geometry = obj.mesh.geometry;
+      c.sectionKey = undefined;
     }
-    obj.sectionKey = undefined;
     obj.overlayKey = undefined;
   }
 
@@ -509,8 +531,10 @@ export class Viewer {
     this.releaseGeometry(obj.part.mesh);
     obj.material.dispose();
     obj.edges?.geometry.dispose();
-    obj.section?.geometry.dispose();
-    if (obj.cap) this.capsGroup.remove(obj.cap);
+    for (const c of obj.caps ?? []) {
+      c.section?.geometry.dispose();
+      this.capsGroup.remove(c.cap);
+    }
     if (obj.selBox) this.overlayGroup.remove(obj.selBox);
     this.partsGroup.remove(obj.group);
     this.objects.delete(id);
@@ -540,8 +564,7 @@ export class Viewer {
     material.opacity = ghost ? 0.12 : mode === 'xray' ? 0.28 : 1;
     material.depthWrite = !xray;
     // clipping plane count / transparency are picked up by the renderer without a program rebuild
-    const planes = this.clipPlane ? [this.clipPlane] : null;
-    if ((material.clippingPlanes?.[0] ?? null) !== (planes?.[0] ?? null)) material.clippingPlanes = planes;
+    this.clipMaterial(material);
 
     // feature edges
     const wantEdges = (mode === 'edges' || mode === 'xray') && !ghost && part.visible;
@@ -564,7 +587,7 @@ export class Viewer {
       obj.edges.visible = wantEdges;
       const lm = obj.edges.material as LineBasicMaterial;
       lm.color.set(mode === 'xray' ? color : new Color(0x0b0d10));
-      lm.clippingPlanes = this.clipPlane ? [this.clipPlane] : null;
+      this.clipMaterial(lm);
     }
 
     // selection bounding box (the Dimensions tab draws its own exact box)
@@ -589,98 +612,115 @@ export class Viewer {
   // ------------------------------------------------------------------ clipping caps
 
   private updateClipCaps(obj: PartObject, index: number, visible: boolean) {
-    const plane = this.clipPlane;
-    if (!plane || !visible) {
-      if (obj.stencil) obj.stencil.visible = false;
-      if (obj.cap) obj.cap.visible = false;
-      if (obj.section) obj.section.visible = false;
-      return;
-    }
-    if (!obj.stencil) {
-      const base = {
-        depthWrite: false,
-        depthTest: false,
-        colorWrite: false,
-        stencilWrite: true,
-        stencilFunc: AlwaysStencilFunc,
-      };
-      const back = new MeshBasicMaterial({
-        ...base,
-        side: BackSide,
-        stencilFail: IncrementWrapStencilOp,
-        stencilZFail: IncrementWrapStencilOp,
-        stencilZPass: IncrementWrapStencilOp,
-      });
-      const front = new MeshBasicMaterial({
-        ...base,
-        side: FrontSide,
-        stencilFail: DecrementWrapStencilOp,
-        stencilZFail: DecrementWrapStencilOp,
-        stencilZPass: DecrementWrapStencilOp,
-      });
-      obj.stencil = new Group();
-      obj.stencil.add(new Mesh(obj.mesh.geometry, back), new Mesh(obj.mesh.geometry, front));
-      obj.group.add(obj.stencil);
-      const capMat = new MeshStandardMaterial({
-        color: 0xffffff,
-        metalness: 0,
-        roughness: 0.9,
-        side: DoubleSide,
-        stencilWrite: true,
-        stencilRef: 0,
-        stencilFunc: NotEqualStencilFunc,
-        stencilFail: ReplaceStencilOp,
-        stencilZFail: ReplaceStencilOp,
-        stencilZPass: ReplaceStencilOp,
-      });
-      obj.cap = new Mesh(new PlaneGeometry(1, 1), capMat);
-      obj.cap.onAfterRender = (r) => r.clearStencil();
-      obj.cap.raycast = () => {};
-      this.capsGroup.add(obj.cap);
-    }
-    obj.stencil.visible = true;
-    for (const m of obj.stencil.children) {
-      ((m as Mesh).material as Material).clippingPlanes = [plane];
-      m.renderOrder = index * 3 + 1;
-    }
-    const cap = obj.cap!;
-    cap.visible = true;
-    cap.renderOrder = index * 3 + 2;
-    (cap.material as MeshStandardMaterial).color.set(obj.part.color).multiplyScalar(0.62);
-    // size and place the cap plane to cover the part
-    const sphere = obj.mesh.geometry.boundingSphere!.clone().applyMatrix4(obj.group.matrixWorld);
-    const center = plane.projectPoint(sphere.center, new Vector3());
-    cap.position.copy(center);
-    cap.lookAt(center.clone().sub(plane.normal));
-    cap.scale.setScalar(sphere.radius * 2.2 + 1);
-    cap.updateMatrixWorld();
-
-    // BVH-accelerated section outline (local space)
-    const g = obj.mesh.geometry;
-    const key = `${plane.normal.toArray().join()},${plane.constant},${obj.group.matrixWorld.elements.join()},${!!g.boundsTree}`;
-    if (obj.sectionKey !== key) {
-      obj.sectionKey = key;
-      if (obj.section) {
-        obj.section.geometry.dispose();
-        obj.group.remove(obj.section);
-        obj.section = undefined;
+    const planes = this.clipPlanes;
+    const caps = (obj.caps ??= []);
+    caps.forEach((c, i) => {
+      const on = visible && i < planes.length;
+      c.stencil.visible = c.cap.visible = on;
+      if (c.section) c.section.visible = on;
+    });
+    if (!visible) return;
+    planes.forEach((plane, i) => {
+      const c = caps[i] ?? (caps[i] = this.makeCapSet(obj));
+      // the stencil counts the part cut by this plane alone; the cap and outline are then cut by the
+      // other planes: kept where they keep the part, or (corner cut-away) where they all cut it away
+      const others = planes.filter((_, j) => j !== i);
+      const capClip = this.clipCorner && planes.length > 1 ? others.map((q) => q.clone().negate()) : others;
+      c.stencil.visible = true;
+      const base = index * 12 + i * 3;
+      for (const m of c.stencil.children) {
+        ((m as Mesh).material as Material).clippingPlanes = [plane];
+        m.renderOrder = base + 1;
       }
-      const bvh = g.boundsTree as MeshBVH | undefined;
-      if (bvh) {
-        const inv = new Matrix4().copy(obj.group.matrixWorld).invert();
-        const local = plane.clone().applyMatrix4(inv);
-        const seg = sectionSegments(bvh, local);
-        if (seg.length) {
-          obj.section = new LineSegments(
-            new BufferGeometry().setAttribute('position', new BufferAttribute(seg, 3)),
-            new LineBasicMaterial({ color: 0x0b0d10, depthTest: true }),
-          );
-          obj.section.renderOrder = index * 3 + 2.5;
-          obj.group.add(obj.section);
+      const cap = c.cap;
+      cap.visible = true;
+      cap.renderOrder = base + 2;
+      const capMat = cap.material as MeshStandardMaterial;
+      capMat.clippingPlanes = capClip.length ? capClip : null;
+      capMat.clipIntersection = false;
+      capMat.color.set(obj.part.color).multiplyScalar(0.62);
+      // size and place the cap plane to cover the part
+      const sphere = obj.mesh.geometry.boundingSphere!.clone().applyMatrix4(obj.group.matrixWorld);
+      const center = plane.projectPoint(sphere.center, new Vector3());
+      cap.position.copy(center);
+      cap.lookAt(center.clone().sub(plane.normal));
+      cap.scale.setScalar(sphere.radius * 2.2 + 1);
+      cap.updateMatrixWorld();
+
+      // BVH-accelerated section outline (local space)
+      const g = obj.mesh.geometry;
+      const key = `${plane.normal.toArray().join()},${plane.constant},${obj.group.matrixWorld.elements.join()},${!!g.boundsTree}`;
+      if (c.sectionKey !== key) {
+        c.sectionKey = key;
+        if (c.section) {
+          c.section.geometry.dispose();
+          obj.group.remove(c.section);
+          c.section = undefined;
+        }
+        const bvh = g.boundsTree as MeshBVH | undefined;
+        if (bvh) {
+          const inv = new Matrix4().copy(obj.group.matrixWorld).invert();
+          const local = plane.clone().applyMatrix4(inv);
+          const seg = sectionSegments(bvh, local);
+          if (seg.length) {
+            c.section = new LineSegments(
+              new BufferGeometry().setAttribute('position', new BufferAttribute(seg, 3)),
+              new LineBasicMaterial({ color: 0x0b0d10, depthTest: true }),
+            );
+            obj.group.add(c.section);
+          }
         }
       }
-    }
-    if (obj.section) obj.section.visible = true;
+      if (c.section) {
+        c.section.visible = true;
+        c.section.renderOrder = base + 2.5;
+        (c.section.material as LineBasicMaterial).clippingPlanes = capClip.length ? capClip : null;
+      }
+    });
+  }
+
+  private makeCapSet(obj: PartObject): CapSet {
+    const base = {
+      depthWrite: false,
+      depthTest: false,
+      colorWrite: false,
+      stencilWrite: true,
+      stencilFunc: AlwaysStencilFunc,
+    };
+    const back = new MeshBasicMaterial({
+      ...base,
+      side: BackSide,
+      stencilFail: IncrementWrapStencilOp,
+      stencilZFail: IncrementWrapStencilOp,
+      stencilZPass: IncrementWrapStencilOp,
+    });
+    const front = new MeshBasicMaterial({
+      ...base,
+      side: FrontSide,
+      stencilFail: DecrementWrapStencilOp,
+      stencilZFail: DecrementWrapStencilOp,
+      stencilZPass: DecrementWrapStencilOp,
+    });
+    const stencil = new Group();
+    stencil.add(new Mesh(obj.mesh.geometry, back), new Mesh(obj.mesh.geometry, front));
+    obj.group.add(stencil);
+    const capMat = new MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: 0.9,
+      side: DoubleSide,
+      stencilWrite: true,
+      stencilRef: 0,
+      stencilFunc: NotEqualStencilFunc,
+      stencilFail: ReplaceStencilOp,
+      stencilZFail: ReplaceStencilOp,
+      stencilZPass: ReplaceStencilOp,
+    });
+    const cap = new Mesh(new PlaneGeometry(1, 1), capMat);
+    cap.onAfterRender = (r) => r.clearStencil();
+    cap.raycast = () => {};
+    this.capsGroup.add(cap);
+    return { stencil, cap };
   }
 
   // ------------------------------------------------------------------ gizmo
@@ -732,7 +772,10 @@ export class Viewer {
 
   private syncPreview(s: AppState) {
     const p = s.preview;
-    if (this.previewKey === p) return;
+    if (this.previewKey === p) {
+      for (const c of this.previewGroup.children) if (c instanceof Mesh) this.clipMaterial(c.material as Material);
+      return;
+    }
     this.previewKey = p;
     for (const c of this.previewGroup.children) {
       if (c instanceof Mesh || c instanceof LineSegments) {
@@ -749,7 +792,13 @@ export class Viewer {
       g.computeBoundingSphere();
       const m = createPartMaterial(pm.color);
       m.emissive.set(pm.color).multiplyScalar(0.12);
-      if (this.clipPlane) m.clippingPlanes = [this.clipPlane];
+      this.clipMaterial(m);
+      if (p.xray) {
+        // see-through, so the inside (lattice, inner wall) shows
+        m.transparent = true;
+        m.opacity = 0.3;
+        m.depthWrite = false;
+      }
       const mesh = new Mesh(g, m);
       mesh.raycast = () => {};
       this.previewGroup.add(mesh);
@@ -1013,7 +1062,8 @@ export class Viewer {
       const sphere = target
         ? target.mesh.geometry.boundingSphere!.clone().applyMatrix4(target.group.matrixWorld)
         : new Sphere(new Vector3(), 50);
-      const p = planeFromSettings(s.cutPlane);
+      const shown = s.settings.cutMode === 'joint' ? [planeFromSettings(s.cutPlane)] : planesFromSettings(s.cutPlane);
+      for (const p of shown) {
       const plane = new Plane(new Vector3(...p.normal), -p.constant);
       const center = plane.projectPoint(sphere.center, new Vector3());
       const quad = new Mesh(
@@ -1033,6 +1083,7 @@ export class Viewer {
       );
       quad.add(frame);
       g.add(quad);
+      }
     }
     if (s.tool === 'hollow') {
       const h = s.settings.hollow;
@@ -1198,7 +1249,7 @@ export class Viewer {
     const meshes = [...this.objects.values()].filter((o) => o.part.visible && !ghosted.has(o.part.id)).map((o) => o.mesh);
     // parts drawn in groups (hidden shells): hits on hidden triangles do not count
     const grouped = meshes.some((m) => m.geometry.groups.length > 0);
-    (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlane && !grouped;
+    (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlanes.length && !grouped;
     const hits = this.raycaster.intersectObjects(meshes, false);
     const drawn = (h: (typeof hits)[number]) => {
       const groups = (h.object as Mesh).geometry.groups;
@@ -1206,7 +1257,7 @@ export class Viewer {
       const i = h.faceIndex * 3;
       return groups.some((g) => i >= g.start && i < g.start + g.count);
     };
-    const hit = hits.find((h) => (!this.clipPlane || this.clipPlane.distanceToPoint(h.point) >= 0) && drawn(h));
+    const hit = hits.find((h) => this.unclipped(h.point) && drawn(h));
     if (!hit || hit.faceIndex === undefined || hit.faceIndex === null || !hit.face) return null;
     const nm = new Matrix3().getNormalMatrix(hit.object.matrixWorld);
     const n = hit.face.normal.clone().applyMatrix3(nm).normalize();

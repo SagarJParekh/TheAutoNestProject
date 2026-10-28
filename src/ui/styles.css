@@ -465,3 +465,4 @@ table.report tr:last-child td { border-bottom: none; }
 /* keep all tools on one row: tighter buttons, then icons only */
 @media (max-width: 1800px) { .tb.tool { padding: 4px 6px; gap: 4px; font-size: 12px; } }
 @media (max-width: 1540px) and (min-width: 1181px) { .tb.tool svg { display: none; } }
+.preview-actions .xray-toggle { margin-right: auto; font-size: 12px; }

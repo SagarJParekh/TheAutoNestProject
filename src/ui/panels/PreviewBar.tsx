@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '../../state/store';
-import { applyPreview, cancelPreview } from '../../state/actions';
+import { applyPreview, cancelPreview, togglePreviewXray } from '../../state/actions';
 import { liveActive, previewAnchor } from '../../state/livePreview';
 
 /**
@@ -54,6 +54,11 @@ function PreviewCard() {
         </ul>
       )}
       <div className="preview-actions">
+        {preview.xray !== undefined && (
+          <label className="check xray-toggle" title="See-through preview, to look at the inside">
+            <input type="checkbox" checked={preview.xray} onChange={togglePreviewXray} /> X-ray
+          </label>
+        )}
         <button className="btn" onClick={cancelPreview} title="Esc">
           Cancel
         </button>

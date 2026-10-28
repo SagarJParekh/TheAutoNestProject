@@ -111,6 +111,11 @@ export function planeFromSettings(s: { axis: string; azimuth: number; elevation:
     : { normal: n, constant: s.offset };
 }
 
+/** All planes of the settings: the main one, then the extra axis planes (several axes at once). */
+export function planesFromSettings(s: { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number; tiltA?: number; tiltB?: number; extra?: { axis: string; offset: number; flip: boolean }[] }) {
+  return [planeFromSettings(s), ...(s.extra ?? []).map((e) => planeFromSettings({ axis: e.axis, azimuth: 0, elevation: 0, flip: e.flip, offset: e.offset }))];
+}
+
 const localBoundsCache = new WeakMap<MeshData, Box3>();
 
 export function localBounds(mesh: MeshData): Box3 {

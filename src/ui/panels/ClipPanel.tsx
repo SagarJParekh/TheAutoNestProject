@@ -14,7 +14,7 @@ export function ClipPanel() {
       <Check checked={enabled} onChange={(clipEnabled) => setState({ clipEnabled })}>
         Enable section plane
       </Check>
-      <PlaneControls value={clip} parts={parts} onChange={(c) => setState({ clip: c, clipEnabled: true })} />
+      <PlaneControls value={clip} parts={parts} multi combine onChange={(c) => setState({ clip: c, clipEnabled: true })} />
       <Hint>Non-destructive: hides everything on one side of the plane and caps the cross-section. Geometry is unchanged.</Hint>
     </Section>
   );

@@ -76,7 +76,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
     <Section title="Cut">
       {modes}
       {!target && <Hint>Select one unlocked part to cut.</Hint>}
-      <PlaneControls value={plane} parts={target ? [target] : []} onChange={(p) => setState({ cutPlane: p, preview: null })} />
+      <PlaneControls value={plane} parts={target ? [target] : []} multi onChange={(p) => setState({ cutPlane: p, preview: null })} />
       <Row label="Gap">
         <NumberField
           value={gap}
@@ -89,7 +89,7 @@ export function CutPanel({ parts }: { parts: Part[] }) {
       <button className="btn primary wide" disabled={!target || !!preview} onClick={() => live(previewCut)}>
         Preview cut
       </button>
-      <Hint>Splits the part into two closed parts; the cut faces are capped. Use the tilt sliders (or Free) to angle the plane.</Hint>
+      <Hint>Splits the part into two closed parts; the cut faces are capped. Use the tilt sliders (or Free) to angle the plane. With several axes at once the part is cut by every plane: X and Y give four pieces, X, Y and Z eight.</Hint>
     </Section>
   );
 }

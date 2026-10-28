@@ -87,7 +87,7 @@ export function ClipWidget() {
       </header>
       {open && (
         <div className="clip-widget-body">
-          <PlaneControls value={clip} parts={parts} onChange={(c) => setState({ clip: c })} />
+          <PlaneControls value={clip} parts={parts} multi combine onChange={(c) => setState({ clip: c })} />
         </div>
       )}
     </div>

@@ -15,7 +15,7 @@ import { nextColor } from './palette';
 import type { FaceSelection, Part, Preview, ToolId } from './types';
 import { meshEntry, updateMeshEntry } from './meshCache';
 import {
-  centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
+  centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, planesFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
 } from './math';
 import { viewerApi } from '../viewer/api';
 import { endLive } from './livePreview';
@@ -290,8 +290,20 @@ export function layFlat(id: string, worldNormal: Vec3) {
 
 // ---------------------------------------------------------------- previews
 
+/** x-ray on / off as last chosen on the preview card, per tool (previews that offer it start in x-ray) */
+const xrayChoice = new Map<string, boolean>();
+
 export function setPreview(preview: Preview | null) {
+  if (preview && preview.xray !== undefined && xrayChoice.has(preview.tool)) preview = { ...preview, xray: xrayChoice.get(preview.tool) };
   setState({ preview });
+}
+
+/** Switch the current preview between x-ray and solid (remembered for that tool). */
+export function togglePreviewXray() {
+  const p = getState().preview;
+  if (!p || p.xray === undefined) return;
+  xrayChoice.set(p.tool, !p.xray);
+  setState({ preview: { ...p, xray: !p.xray } });
 }
 
 export function applyPreview() {
@@ -362,36 +374,50 @@ export async function previewCut() {
   const s = getState();
   const part = editable()[0];
   if (!part) return notify('warning', 'Select an unlocked part to cut');
-  const plane = planeFromSettings(s.cutPlane);
-  const world = worldMesh(part);
-  const r = await runJob('Cutting', 'cut', { mesh: world, plane });
-  if (!r) return;
+  const planes = planesFromSettings(s.cutPlane);
+  const names = [s.cutPlane.axis === 'free' ? 'P' : s.cutPlane.axis.toUpperCase(), ...(s.cutPlane.extra ?? []).map((e) => e.axis.toUpperCase())];
+  // cut by each plane in turn: every piece so far is split again
+  let pieces: { mesh: MeshData; sides: number[] }[] = [{ mesh: worldMesh(part), sides: [] }];
+  const methods = new Set<string>();
+  for (let k = 0; k < planes.length; k++) {
+    const next: typeof pieces = [];
+    for (const pc of pieces) {
+      const r = await runJob(planes.length > 1 ? `Cutting (${names[k]})` : 'Cutting', 'cut', { mesh: pc.mesh, plane: planes[k] });
+      if (!r) return;
+      methods.add(r.method);
+      if (r.above.indices.length) next.push({ mesh: r.above, sides: [...pc.sides, 1] });
+      if (r.below.indices.length) next.push({ mesh: r.below, sides: [...pc.sides, -1] });
+    }
+    pieces = next;
+  }
+  if (pieces.length < 2) {
+    notify('warning', planes.length > 1 ? 'The planes do not intersect the part' : 'The plane does not intersect the part');
+    return;
+  }
+  // the gap moves every piece away from each plane it was cut by
   const gap = s.settings.cut.gap;
-  const shift = (m: MeshData, d: number): MeshData => {
-    if (!d) return m;
+  const shift = (m: MeshData, sides: number[]): MeshData => {
+    if (!gap) return m;
+    const d = [0, 0, 0];
+    sides.forEach((side, k) => planes[k].normal.forEach((v, a) => (d[a] += (v * side * gap) / 2)));
     const p = m.positions.slice();
     for (let i = 0; i < p.length; i += 3) {
-      p[i] += plane.normal[0] * d;
-      p[i + 1] += plane.normal[1] * d;
-      p[i + 2] += plane.normal[2] * d;
+      p[i] += d[0];
+      p[i + 1] += d[1];
+      p[i + 2] += d[2];
     }
     return { positions: p, indices: m.indices };
   };
-  const pieces = [
-    { name: `${part.name} A`, mesh: shift(r.above, gap / 2), color: part.color },
-    { name: `${part.name} B`, mesh: shift(r.below, -gap / 2), color: nextColor() },
-  ].filter((x) => x.mesh.indices.length > 0);
-  if (pieces.length < 2) {
-    notify('warning', 'The plane does not intersect the part');
-    return;
-  }
+  const label = (sides: number[]) =>
+    planes.length === 1 ? (sides[0] > 0 ? 'A' : 'B') : sides.map((side, k) => `${names[k]}${side > 0 ? '+' : '−'}`).join(' ');
+  const out = pieces.map((pc, i) => ({ name: `${part.name} ${label(pc.sides)}`, mesh: shift(pc.mesh, pc.sides), color: i === 0 ? part.color : nextColor() }));
   setPreview({
     tool: 'cut',
-    label: 'Cut',
+    label: planes.length > 1 ? `Cut (${names.join(' + ')})` : 'Cut',
     replaces: [part.id],
-    meshes: pieces,
-    summary: [`Method: ${r.method}`, ...pieces.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`)],
-    apply: () => replaceWithWorldMeshes('Cut', part.id, pieces),
+    meshes: out,
+    summary: [`Method: ${[...methods].join(', ')}`, ...(planes.length > 1 ? [`${out.length} pieces`] : []), ...out.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`)],
+    apply: () => replaceWithWorldMeshes('Cut', part.id, out),
   });
 }
 
@@ -764,6 +790,7 @@ export async function previewHollow() {
   setPreview({
     tool: 'hollow',
     label: `Hollow ${h.thickness} mm`,
+    xray: true,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r.mesh, color: part.color }, ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs, color: '#ffd23f' }] : [])],
     summary: [

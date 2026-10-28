@@ -64,6 +64,7 @@ export async function previewLattice() {
   setPreview({
     tool: 'lattice',
     label: `${type} lattice`,
+    xray: true,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],
     summary: [

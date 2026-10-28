@@ -82,6 +82,17 @@ export interface PlaneSettings {
   /** tilt of an axis plane about its two perpendicular world axes, degrees */
   tiltA?: number;
   tiltB?: number;
+  /** further axis planes used together with this one (several axes at once) */
+  extra?: AxisPlane[];
+  /** section clip with several planes: cut away only the corner where they all meet (default), or keep only what lies inside all of them */
+  combine?: 'corner' | 'common';
+}
+
+/** An extra axis-aligned plane: position along its axis (mm) and which side is kept / which side is "above". */
+export interface AxisPlane {
+  axis: 'x' | 'y' | 'z';
+  offset: number;
+  flip: boolean;
 }
 
 export interface Job {
@@ -113,6 +124,8 @@ export interface Preview {
   /** extra overlay segments (world space) */
   lines?: Float32Array;
   summary?: string[];
+  /** show the preview see-through (x-ray), for edits that change the inside of a part */
+  xray?: boolean;
   /** called when the user presses Apply */
   apply: () => void;
 }
