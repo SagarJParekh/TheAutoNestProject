@@ -397,6 +397,8 @@ export interface BuildGenState {
   nestTimeLimit?: number;
   /** SLA / DLP: layer thickness of SLC exports, mm */
   slcLayer?: number;
+  /** set once the per-technology spacing defaults (1 mm on powder beds) apply; older saved sessions lack it */
+  spacingDefaults?: number;
   /** powder printers: orientation by best packing (flat face down or on a side, whichever packs best; default) or by the SLS / MJF rules */
   powderOrient?: 'packing' | 'rules';
   /** cage (sinter box) settings: bar thickness, bar width, gap between bars, mm */

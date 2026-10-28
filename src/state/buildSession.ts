@@ -8,6 +8,7 @@ import type { MeshData } from '../geometry';
 import type { BuildGenState, BuildPart } from './types';
 import { getState, notify, setState, useStore } from './store';
 import { fitBuildView, updateDisplayMeshes } from './buildActions';
+import { printerById } from './printers';
 
 const DB = 'autonest-session',
   META = 'meta',
@@ -109,6 +110,16 @@ export async function savedBuildSession(): Promise<{ savedAt: number; parts: num
   return { savedAt: rec.savedAt, parts: rec.gen.parts.length, copies: rec.gen.parts.reduce((a, p) => a + p.quantity, 0) };
 }
 
+/**
+ * Sessions saved before powder beds defaulted to 1 mm margins and 1 mm off the
+ * platform still hold the old 5 mm defaults: bring those to 1 mm (once).
+ */
+function upgradeSpacing(g: BuildGenState, saved: { spacingDefaults?: number }): BuildGenState {
+  if (saved.spacingDefaults) return g;
+  const powder = printerById(g.printerId).tech === 'powder';
+  return { ...g, spacingDefaults: 1, ...(powder && g.margin === 5 ? { margin: 1 } : {}), ...(powder && g.zOffset === 5 ? { zOffset: 1 } : {}) };
+}
+
 /** Bring back the saved session (parts, settings, builds, locks). */
 export async function restoreBuildSession(): Promise<boolean> {
   const db = await open();
@@ -135,7 +146,7 @@ export async function restoreBuildSession(): Promise<boolean> {
     parts.push({ ...p, mesh, orient: p.orient ? { mesh, q: p.orient.q, rule: p.orient.rule } : undefined });
   }
   if (!parts.length) return false;
-  const gen: BuildGenState = { ...getState().buildGen, ...rec.gen, parts, busy: false, improving: null, checks: null };
+  const gen: BuildGenState = upgradeSpacing({ ...getState().buildGen, ...rec.gen, parts, busy: false, improving: null, checks: null }, rec.gen);
   lastSaved = gen;
   setState({ buildGen: gen, buildPast: [], buildFuture: [], selection: [] });
   void updateDisplayMeshes();

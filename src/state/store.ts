@@ -135,6 +135,7 @@ export const useStore = create<AppState>(() => ({
     printerId: 'form3l',
     customVolumes: {},
     margin: 5,
+    spacingDefaults: 1,
     gap: 3,
     zOffset: 5,
     densityAllowance: 5,
