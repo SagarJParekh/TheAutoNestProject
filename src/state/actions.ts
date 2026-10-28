@@ -417,25 +417,38 @@ export async function previewJointCut() {
   };
   const pieces = [
     { name: `${part.name} A`, mesh: shift(r.above, gap / 2), color: part.color },
-    { name: `${part.name} B`, mesh: shift(r.below, -gap / 2), color: nextColor() },
+    { name: `${part.name} B`, mesh: shift(r.below, -gap / 2), color: params.recolor ? nextColor() : part.color },
   ];
-  const z = r.sizes, mm = (v: number) => `${+v.toFixed(2)} mm`;
+  const mm = (v: number) => `${+v.toFixed(3)} mm`;
   const name = [...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind;
   const title = /joint$/i.test(name) ? name : `${name} joint`;
+  const tongue = isTongueJoint(params.kind);
   const counted = params.kind === 'multiple' || params.kind === 'toothed' || params.kind === 'finger';
+  const lines = tongue
+    ? [
+        `Tongue joint: ${name}`,
+        `Across the section: ${mm(r.sizes!.span)}`,
+        `Overlap length: ${mm(r.sizes!.depth)}`,
+        ...(counted ? [`Fingers: ${r.sizes!.count}`] : []),
+        `Fit clearance: ${mm(params.clearance)}`,
+      ]
+    : [
+        `Lap joint: ${name}`,
+        `Notch height (a): ${mm(params.depth)} · offset (b): ${mm(params.offset)}`,
+        ...(params.kind === 'step' ? [] : [`Tongue width: ${mm(params.width)}`]),
+        ...(params.kind === 'multiple' ? [`Spacing: ${mm(params.spacing)}`] : []),
+        ...(counted ? [`Count: ${Math.max(1, Math.round(params.count))}`] : []),
+        `Clearance: notch (d) ${mm(params.notchClearance)} · front (c) ${mm(params.frontClearance)} · back (e) ${mm(params.backClearance)}`,
+        `Notch on: ${part.name} ${params.negative ? 'A' : 'B'}`,
+      ];
   setPreview({
     tool: 'cut',
     label: title,
     replaces: [part.id],
     meshes: pieces,
     summary: [
-      `${isTongueJoint(params.kind) ? 'Tongue' : 'Lap'} joint: ${name}`,
-      `Across the section: ${mm(z.span)}`,
-      `${isTongueJoint(params.kind) ? 'Overlap length' : 'Depth'}: ${mm(z.depth)}`,
-      ...(isTongueJoint(params.kind) || params.kind === 'step' || params.kind === 'toothed' ? [] : [`Width: ${mm(z.width)}`]),
-      ...(counted ? [`Count: ${z.count}`] : []),
-      `Fit clearance: ${mm(params.clearance)}`,
-      ...(z.tooDeep ? [`⚠ The joint reaches past the end of the part: a piece may fall apart. Use a smaller ${isTongueJoint(params.kind) ? 'overlap length' : 'depth'} or move the plane.`] : []),
+      ...lines,
+      ...(r.tooDeep ? [`⚠ The ${tongue ? 'overlap' : 'notch'} reaches past the end of the part: a piece may fall apart. Use a smaller ${tongue ? 'overlap length' : 'notch height'} or move the plane.`] : []),
       ...pieces.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`),
     ],
     apply: () => replaceWithWorldMeshes(title, part.id, pieces),
