@@ -186,7 +186,7 @@ export function flipPickedFaces() {
   clearPick('flip');
 }
 
-// ---------------------------------------------------------------- combine tab
+// ---------------------------------------------------------------- boolean operations
 
 export async function splitShellsToParts() {
   const part = firstEditable();
@@ -208,7 +208,7 @@ export async function previewUnifyShells() {
   const r = await runJob('Unifying shells', 'unifyShells', { mesh: worldMesh(part) });
   if (!r) return;
   setPreview({
-    tool: 'repair',
+    tool: 'boolean',
     label: 'Unify shells (boolean union)',
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],
@@ -224,7 +224,7 @@ export async function previewMakeSolid() {
   const r = await runJob('Rebuilding solid', 'makeSolid', { mesh: worldMesh(part), voxelSize: v > 0 ? v : undefined });
   if (!r) return;
   setPreview({
-    tool: 'repair',
+    tool: 'boolean',
     label: 'Make solid (voxel remesh)',
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],
@@ -254,7 +254,7 @@ export async function previewBoolean() {
   if (r.indices.length === 0) return notify('warning', `The ${op} result is empty`);
   const name = `${base.name} (${op})`;
   setPreview({
-    tool: 'repair',
+    tool: 'boolean',
     label: `Boolean ${op}`,
     replaces: ops.map((p) => p.id),
     meshes: [{ name, mesh: r, color: base.color }],

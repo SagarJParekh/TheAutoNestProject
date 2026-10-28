@@ -11,9 +11,12 @@ import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'transform', label: 'Transform', icon: Icon.transform, key: 'T' },
+  { id: 'shapes', label: 'Shapes', icon: Icon.shapes, key: 'palette: shape' },
   { id: 'clip', label: 'Clip & Cut', icon: Icon.cut, key: 'C / X' },
   { id: 'repair', label: 'Repair', icon: Icon.repair, key: 'R' },
+  { id: 'boolean', label: 'Boolean', icon: Icon.boolean, key: 'palette: boolean' },
   { id: 'hollow', label: 'Hollow', icon: Icon.hollow, key: 'H' },
+  { id: 'lattice', label: 'Lattice', icon: Icon.lattice, key: 'palette: lattice' },
   { id: 'perforate', label: 'Perforate', icon: Icon.perforate, key: 'P' },
   { id: 'extrude', label: 'Extrude', icon: Icon.extrude, key: 'E' },
   { id: 'label', label: 'Label', icon: Icon.label, key: 'L' },
@@ -21,6 +24,7 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'align', label: 'Align', icon: Icon.align, key: 'A' },
   { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
   { id: 'offset', label: 'Offset', icon: Icon.offset, key: 'U' },
+  { id: 'wrap', label: 'Shrinkwrap', icon: Icon.wrap, key: 'palette: wrap' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
   { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
   { id: 'report', label: 'Report', icon: Icon.report, key: 'N' },
@@ -40,7 +44,7 @@ export function Toolbar() {
   const redoText = useStore((s) => undoLabel(s, true));
   const canUndo = undoText !== null;
   const canRedo = redoText !== null;
-  const accept = [...importableExtensions(), 'f3d', 'bin'].map((e) => '.' + e).join(',');
+  const accept = [...importableExtensions(), 'f3d', 'bin', 'x_t', 'x_b', 'prt'].map((e) => '.' + e).join(',');
 
   return (
     <header className="toolbar">
@@ -192,7 +196,7 @@ export function Toolbar() {
           <button
             key={t.id}
             className={`tb tool ${tool === t.id || (t.id === 'clip' && tool === 'cut') ? 'active' : ''}`}
-            title={`${t.label} (${t.key})`}
+            title={t.key.startsWith('palette') ? t.label : `${t.label} (${t.key})`}
             onClick={() => setTool((tool === t.id || (t.id === 'clip' && tool === 'cut')) && t.id !== 'transform' ? 'transform' : t.id)}
           >
             {t.icon}

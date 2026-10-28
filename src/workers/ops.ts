@@ -400,6 +400,21 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
   },
 
+  async makeShape(args: { params: G.ShapeParams }): Promise<Result<MeshData>> {
+    const m = await G.makeShape(args.params);
+    return { result: m, transfer: meshBuffers(m) };
+  },
+
+  async lattice(args: { mesh: MeshData; params: G.LatticeParams }, progress: Progress): Promise<Result<G.LatticeResult>> {
+    const r = await G.latticeMesh(args.mesh, args.params, progress);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
+  async shrinkwrap(args: { mesh: MeshData; params: G.WrapParams }, progress: Progress): Promise<Result<{ mesh: MeshData; voxelSize: number }>> {
+    const r = G.shrinkwrapMesh(args.mesh, args.params, progress);
+    return { result: r, transfer: meshBuffers(r.mesh) };
+  },
+
   async remesh(
     args: { mesh: MeshData; edgeLength: number; region?: Uint32Array | null; iterations?: number; featureAngle?: number },
     progress: Progress,

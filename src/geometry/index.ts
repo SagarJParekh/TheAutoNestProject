@@ -47,3 +47,6 @@ export * from './powderOrient';
 export * from './displayMesh';
 export * from './cage';
 export * from './joint';
+export * from './shapes';
+export * from './lattice';
+export * from './wrap';

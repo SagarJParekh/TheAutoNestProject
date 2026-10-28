@@ -133,7 +133,7 @@ export function ShellsTab({ parts }: { parts: Part[] }) {
             Extract to new part
           </button>
         </div>
-        <Hint>Hover a row to highlight the shell; click to select (Ctrl/Shift-click for several). For splitting every shell into its own part use Combine → Split shells.</Hint>
+        <Hint>Hover a row to highlight the shell; click to select (Ctrl/Shift-click for several). For splitting every shell into its own part use Boolean → Split shells.</Hint>
       </Section>
     </>
   );

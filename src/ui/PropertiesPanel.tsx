@@ -11,7 +11,8 @@ import { PreviewBar } from './panels/PreviewBar';
 import { MeasurePanel } from './panels/MeasurePanel';
 import { LabelPanel } from './panels/LabelPanel';
 import { TexturePanel } from './panels/TexturePanel';
-import { AlignTab, PropsTab } from './panels/RepairTabs';
+import { AlignTab, BooleanPanel, PropsTab } from './panels/RepairTabs';
+import { LatticePanel, ShapesPanel, WrapPanel } from './panels/MakePanels';
 import { DimensionsPanel } from './panels/DimensionsPanel';
 import { ReportPanel } from './panels/ReportPanel';
 import { OffsetPanel } from './panels/OffsetPanel';
@@ -33,6 +34,10 @@ const TITLES = {
   report: 'Report',
   offset: 'Offset & fillet',
   build: 'Build',
+  boolean: 'Boolean operations',
+  lattice: 'Lattice',
+  shapes: 'Shapes',
+  wrap: 'Shrinkwrap',
 };
 
 export function PropertiesPanel() {
@@ -68,7 +73,11 @@ export function PropertiesPanel() {
         {tool === 'dimensions' && <DimensionsPanel parts={parts} />}
         {tool === 'report' && <ReportPanel />}
         {tool === 'offset' && <OffsetPanel parts={parts} />}
-        {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && <InfoPanel parts={parts} />}
+        {tool === 'boolean' && <BooleanPanel parts={parts} />}
+        {tool === 'lattice' && <LatticePanel parts={parts} />}
+        {tool === 'shapes' && <ShapesPanel />}
+        {tool === 'wrap' && <WrapPanel parts={parts} />}
+        {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && tool !== 'shapes' && <InfoPanel parts={parts} />}
       </div>
     </aside>
   );

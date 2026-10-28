@@ -88,7 +88,7 @@ export function FixExtras({ part }: { part: Part }) {
         <button className="btn wide" disabled={busy} onClick={previewRemoveOverlaps}>
           Remove overlapping triangles…
         </button>
-        <Hint>For crossing shells use Combine → Unify shells or Make solid.</Hint>
+        <Hint>For crossing shells use Boolean → Unify shells or Make solid.</Hint>
       </Section>
 
       <Section title="Surface normals">
@@ -139,9 +139,10 @@ export function FixExtras({ part }: { part: Part }) {
   );
 }
 
-// ------------------------------------------------------------------ Combine tab
+// ------------------------------------------------------------------ Boolean operations
 
-export function CombineTab({ parts }: { parts: Part[] }) {
+/** Boolean operations between parts, and splitting / unifying the shells of one part. */
+export function BooleanPanel({ parts }: { parts: Part[] }) {
   const preview = useStore((s) => s.preview);
   useStore((s) => s.selection);
   const [solid, setSolid] = useSetting('solid');
@@ -150,23 +151,6 @@ export function CombineTab({ parts }: { parts: Part[] }) {
   const ops = booleanOperands();
   return (
     <>
-      <Section title="Shells">
-        {!single && <Hint>Select one part.</Hint>}
-        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={splitShellsToParts}>
-          Split shells into parts
-        </button>
-        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={previewUnifyShells}>
-          Unify shells (exact boolean)…
-        </button>
-        <Hint>Merges overlapping shells into one solid. Needs every shell to be closed.</Hint>
-        <Row label="Voxel size">
-          <NumberField value={solid.voxelSize} min={0} step={0.05} precision={3} suffix="mm" title="0 = automatic" onChange={(voxelSize) => setSolid({ voxelSize })} />
-        </Row>
-        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={previewMakeSolid}>
-          Make solid (voxel remesh)…
-        </button>
-        <Hint>Rebuilds a clean watertight solid from overlapping, self-intersecting or leaky shells. Detail below the voxel size is smoothed.</Hint>
-      </Section>
       <Section title="Boolean">
         <Row label="Operation">
           <Segmented
@@ -196,6 +180,23 @@ export function CombineTab({ parts }: { parts: Part[] }) {
         <button className="btn wide" disabled={ops.length < 2} onClick={mergeSelectedParts} title="Combine into one part without a boolean; shells stay separate">
           Merge into one part (no boolean)
         </button>
+      </Section>
+      <Section title="Shells of one part">
+        {!single && <Hint>Select one part.</Hint>}
+        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={splitShellsToParts}>
+          Split shells into parts
+        </button>
+        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={previewUnifyShells}>
+          Unify shells (exact boolean)…
+        </button>
+        <Hint>Merges overlapping shells into one solid. Needs every shell to be closed.</Hint>
+        <Row label="Voxel size">
+          <NumberField value={solid.voxelSize} min={0} step={0.05} precision={3} suffix="mm" title="0 = automatic" onChange={(voxelSize) => setSolid({ voxelSize })} />
+        </Row>
+        <button className="btn wide" disabled={!single || single.locked || !!preview} onClick={previewMakeSolid}>
+          Make solid (voxel remesh)…
+        </button>
+        <Hint>Rebuilds a clean watertight solid from overlapping, self-intersecting or leaky shells. Detail below the voxel size is smoothed.</Hint>
       </Section>
     </>
   );

@@ -460,3 +460,8 @@ table.report tr:last-child td { border-bottom: none; }
 .link-btn { background: none; border: none; padding: 6px 0; color: var(--text); font-size: 12px; cursor: pointer; }
 .link-btn:hover { color: var(--accent); }
 .joint-advanced { padding: 0 0 6px 4px; }
+.shape-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 10px; }
+.tb-select.wide { width: 100%; max-width: none; margin: 0; }
+/* keep all tools on one row: tighter buttons, then icons only */
+@media (max-width: 1800px) { .tb.tool { padding: 4px 6px; gap: 4px; font-size: 12px; } }
+@media (max-width: 1540px) and (min-width: 1181px) { .tb.tool svg { display: none; } }

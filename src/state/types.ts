@@ -1,6 +1,6 @@
 import type {
   MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
-  LabelParams, TextureParams, Heightmap, MEntity, JointParams,
+  LabelParams, TextureParams, Heightmap, MEntity, JointParams, ShapeParams, LatticeParams, WrapParams,
 } from '../geometry';
 
 export interface Transform {
@@ -33,7 +33,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'build';
+  | 'dimensions' | 'report' | 'offset' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -189,7 +189,7 @@ export interface MeasurePending {
   points: Vec3[];
 }
 
-export type RepairTab = 'fix' | 'shells' | 'combine' | 'edit';
+export type RepairTab = 'fix' | 'shells' | 'edit';
 
 export interface IntersectionEntry {
   mesh: MeshData;
@@ -226,6 +226,9 @@ export interface ToolSettings {
   };
   solid: { voxelSize: number };
   boolean: { op: BooleanOp };
+  shape: ShapeParams;
+  lattice: LatticeParams;
+  wrap: WrapParams & { keep: boolean };
   align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
   props: PropParams & { merge: boolean; mode: 'single' | 'array' };
   label: Omit<LabelParams, 'curveSegments'> & { font: string };

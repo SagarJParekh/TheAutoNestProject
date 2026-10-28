@@ -44,8 +44,11 @@ const measure = (mode: MeasureMode) => () => {
   setState({ settings: { ...s.settings, measure: { ...s.settings.measure, mode } } });
 };
 const display = (d: DisplayMode) => () => setState({ display: d });
-const boolOp = (op: 'union' | 'subtract' | 'intersect') =>
-  repair('combine', () => setState((s) => ({ settings: { ...s.settings, boolean: { op } } })));
+const boolTool = (then?: () => void) => () => {
+  setTool('boolean');
+  then?.();
+};
+const boolOp = (op: 'union' | 'subtract' | 'intersect') => boolTool(() => setState((s) => ({ settings: { ...s.settings, boolean: { op } } })));
 
 export function buildCommands(): Command[] {
   return [
@@ -100,6 +103,10 @@ export function buildCommands(): Command[] {
     { id: 'disp-xray', label: 'Display: x-ray', group: 'View', keywords: 'transparent see through', run: display('xray') },
     // tools
     { id: 'dimensions', label: 'Dimensions (bounding box on the part + all info)', group: 'Tools', keywords: 'size bounding box info measure', shortcut: 'I', run: tool('dimensions') },
+    { id: 'boolean', label: 'Boolean operations (union / subtract / intersect)', group: 'Tools', keywords: 'combine merge join difference', run: () => setTool('boolean') },
+    { id: 'lattice', label: 'Lattice infill (lightweight)', group: 'Tools', keywords: 'gyroid diamond infill lighten weight reduce mass', run: () => setTool('lattice') },
+    { id: 'shapes', label: 'Create a basic shape', group: 'Tools', keywords: 'primitive cube box cylinder cone sphere donut torus tube pyramid prism wedge capsule', run: () => setTool('shapes') },
+    { id: 'wrap', label: 'Shrinkwrap (wrap a solid around the part)', group: 'Tools', keywords: 'wrap envelope close holes solidify scan', run: () => setTool('wrap') },
     { id: 'offset', label: 'Offset part (grow / shrink)', group: 'Tools', keywords: 'shell thicken thin grow shrink global', shortcut: 'U', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'global' } } })); } },
     { id: 'offset-local', label: 'Offset a face (local)', group: 'Tools', keywords: 'push pull face move surface', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'local' } } })); } },
     { id: 'fillet', label: 'Fillet edges (round)', group: 'Tools', keywords: 'round radius blend edge', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, blend: { ...s.settings.blend, kind: 'fillet' } } })); } },
@@ -141,13 +148,13 @@ export function buildCommands(): Command[] {
     { id: 'normals', label: 'Unify normals (outward)', group: 'Repair', keywords: 'winding orientation flipped', run: repair('fix', unifyNormals) },
     { id: 'flip', label: 'Flip all normals', group: 'Repair', keywords: 'inside out', run: repair('fix', flipAllNormals) },
     { id: 'shells', label: 'View shells (delete / merge / extract)', group: 'Repair', keywords: 'bodies islands components', run: repair('shells', () => { const id = selectedId(); if (id) loadShells(id); }) },
-    { id: 'split', label: 'Split shells into parts', group: 'Repair', keywords: 'separate bodies', run: repair('combine', splitShellsToParts) },
-    { id: 'unify', label: 'Unify shells (boolean union)', group: 'Repair', keywords: 'merge overlapping', run: repair('combine', previewUnifyShells) },
-    { id: 'solid', label: 'Make solid (voxel remesh)', group: 'Repair', keywords: 'rebuild watertight', run: repair('combine', previewMakeSolid) },
-    { id: 'union', label: 'Boolean union', group: 'Repair', keywords: 'combine add join', run: boolOp('union') },
-    { id: 'subtract', label: 'Boolean subtract', group: 'Repair', keywords: 'difference minus remove', run: boolOp('subtract') },
-    { id: 'intersect', label: 'Boolean intersect', group: 'Repair', keywords: 'common overlap', run: boolOp('intersect') },
-    { id: 'merge', label: 'Merge parts (no boolean)', group: 'Repair', keywords: 'combine group', run: repair('combine', mergeSelectedParts) },
+    { id: 'split', label: 'Split shells into parts', group: 'Boolean', keywords: 'separate bodies', run: boolTool(splitShellsToParts) },
+    { id: 'unify', label: 'Unify shells (boolean union)', group: 'Boolean', keywords: 'merge overlapping', run: boolTool(previewUnifyShells) },
+    { id: 'solid', label: 'Make solid (voxel remesh)', group: 'Boolean', keywords: 'rebuild watertight', run: boolTool(previewMakeSolid) },
+    { id: 'union', label: 'Boolean union', group: 'Boolean', keywords: 'combine add join', run: boolOp('union') },
+    { id: 'subtract', label: 'Boolean subtract', group: 'Boolean', keywords: 'difference minus remove', run: boolOp('subtract') },
+    { id: 'intersect', label: 'Boolean intersect', group: 'Boolean', keywords: 'common overlap', run: boolOp('intersect') },
+    { id: 'merge', label: 'Merge parts (no boolean)', group: 'Boolean', keywords: 'combine group', run: boolTool(mergeSelectedParts) },
     { id: 'mark-triangle', label: 'Mark triangles (click)', group: 'Repair', keywords: 'select delete edit faces', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'triangle' } }, pickMode: 'triangle' }))) },
     { id: 'mark-plane', label: 'Mark plane', group: 'Repair', keywords: 'select flat coplanar', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'plane' } }, pickMode: 'triangle' }))) },
     { id: 'mark-surface', label: 'Mark surface', group: 'Repair', keywords: 'select smooth region', run: repair('edit', () => setState((s) => ({ settings: { ...s.settings, triEdit: { ...s.settings.triEdit, mode: 'mark', markTool: 'surface' } }, pickMode: 'triangle' }))) },

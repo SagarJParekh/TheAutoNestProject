@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
-import { CombineTab, FixExtras } from './RepairTabs';
+import { FixExtras } from './RepairTabs';
 import { ShellsTab, TriEditTab, OpenEdgesSection } from './EditTabs';
 import { getState, setState, useStore } from '../../state/store';
 import { analyzePart, previewFillHoles, previewRepair, repairParts } from '../../state/actions';
@@ -27,7 +27,6 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
           options={[
             { value: 'fix', label: 'Fix' },
             { value: 'shells', label: 'Shells' },
-            { value: 'combine', label: 'Combine' },
             { value: 'edit', label: 'Edit' },
           ]}
         />
@@ -35,7 +34,6 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
       {tab !== 'fix' && part && <ErrorNavigator part={part} compact />}
       {tab === 'fix' && <FixTab parts={parts} />}
       {tab === 'shells' && <ShellsTab parts={parts} />}
-      {tab === 'combine' && <CombineTab parts={parts} />}
       {tab === 'edit' && <TriEditTab parts={parts} />}
     </>
   );

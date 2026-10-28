@@ -6,6 +6,9 @@ import type {
 } from './types';
 import type { ErrorGroup, MeshData, ThicknessResult } from '../geometry';
 import { DEFAULT_JOINT } from '../geometry/joint';
+import { DEFAULT_SHAPE } from '../geometry/shapes';
+import { DEFAULT_LATTICE } from '../geometry/lattice';
+import { DEFAULT_WRAP } from '../geometry/wrap';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
@@ -186,6 +189,9 @@ export const useStore = create<AppState>(() => ({
     normals: { show: false, outColor: '#22c55e', inColor: '#ff3b4e', orientation: false, frontColor: '#3fa7ff', backColor: '#ff3b4e' },
     solid: { voxelSize: 0 },
     boolean: { op: 'union' },
+    shape: { ...DEFAULT_SHAPE },
+    lattice: { ...DEFAULT_LATTICE },
+    wrap: { ...DEFAULT_WRAP, keep: false },
     align: { mode: 'mate', offset: 0, center: true },
     props: { diameter: 2, spacing: 8, margin: 2, maxLength: 10000, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
     label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },
