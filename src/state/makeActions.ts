@@ -222,7 +222,8 @@ export async function previewMoulds() {
     apply: () => {
       const s = getState();
       const gone = keepOriginal ? new Set<string>() : new Set(made.map((m) => m.part.id));
-      const created = pieces.map((p) => partFromWorld(p.name, p.mesh, p.color));
+      // moulds are shown x-ray straight away, so the cavity (and the part in it) can be seen
+      const created = pieces.map((p) => ({ ...partFromWorld(p.name, p.mesh, p.color), opacity: 0.25 }));
       const placed = new Map(made.map((m) => [m.part.id, m.part]));
       commit(`VC mould${made.length > 1 ? 's' : ''}`, [...s.parts.filter((p) => !gone.has(p.id)).map((p) => placed.get(p.id) ?? p), ...created], { selection: created.map((c) => c.id) });
     },

@@ -31,6 +31,8 @@ export interface Part {
   lockRotation?: boolean;
   /** repaired in Mesh prep: saved (exported) as name_repaired */
   repaired?: boolean;
+  /** see-through display: 0.5 (half) or 0.25 (x-ray); none = solid */
+  opacity?: number;
 }
 
 export type ToolId =

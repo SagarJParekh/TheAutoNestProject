@@ -505,3 +505,6 @@ table.report tr:last-child td { border-bottom: none; }
 @media (max-width: 1800px) { .tb.tool { padding: 4px 5px; gap: 3px; } .tools-row { gap: 1px; } }
 @media (max-width: 1590px) and (min-width: 1240px) { .tb.tool svg { display: none; } }
 @media (max-width: 1239px) { .tb.tool span { display: none; } .tb.tool svg { display: inline-block; } }
+.parts-opacity { align-items: center; gap: 4px; }
+.parts-opacity .muted { font-size: 11px; margin-right: 2px; }
+.parts-opacity .mini.on { border-color: var(--accent); color: var(--accent); }

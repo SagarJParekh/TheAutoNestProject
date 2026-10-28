@@ -41,6 +41,7 @@ export const Icon = {
   report: P(<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M3 14h18M9 9v11M15 9v11" /></>),
   hand: P(<><path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12" /><path d="M11 11V4a1.5 1.5 0 0 1 3 0v7" /><path d="M14 11V5.5a1.5 1.5 0 0 1 3 0V13" /><path d="M8 13V9.5a1.5 1.5 0 0 0-3 0V14a7 7 0 0 0 7 7h1a6 6 0 0 0 6-6v-5a1.5 1.5 0 0 0-3 0" /></>),
   offset: P(<><path d="M4 20V10a6 6 0 0 1 6-6h10" /><path d="M8 20v-9a3 3 0 0 1 3-3h9" strokeDasharray="2 2" /></>),
+  transparency: P(<><circle cx="12" cy="12" r="8.5" /><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" fillOpacity=".35" /></>),
   cursor: P(<path d="M5 3l14 7-6 1.8L10 18z" />),
   arrange: P(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
   mould: P(<><rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M3 12h18" strokeDasharray="2 2" /><path d="M9 9h6v6H9z" /></>),

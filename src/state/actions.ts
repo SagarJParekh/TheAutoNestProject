@@ -184,6 +184,15 @@ export function renamePart(id: string, name: string) {
 export function setPartColor(id: string, color: string) {
   updateParts('Change colour', [id], (p) => ({ ...p, color }));
 }
+/** Transparency levels of the parts list: solid, half (50 %) and x-ray (25 %). */
+export const OPACITY_LEVELS = [1, 0.5, 0.25] as const;
+
+/** Make parts see-through (0.5 or 0.25) or solid again (1). */
+export function setPartOpacity(ids: string[], opacity: number) {
+  if (!ids.length) return;
+  updateParts(opacity < 1 ? 'Make transparent' : 'Make solid', ids, (p) => ({ ...p, opacity: opacity < 1 ? opacity : undefined }));
+}
+
 export function toggleVisible(id: string) {
   updateParts('Toggle visibility', [id], (p) => ({ ...p, visible: !p.visible }));
 }

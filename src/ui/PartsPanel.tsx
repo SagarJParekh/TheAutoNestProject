@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Icon } from './icons';
 import { useStore } from '../state/store';
 import {
-  deleteParts, duplicateParts, hideOthers, renamePart, showAllParts, repairParts, setRotationLock, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
+  OPACITY_LEVELS, setPartOpacity, deleteParts, duplicateParts, hideOthers, renamePart, showAllParts, repairParts, setRotationLock, select, selectAll, selectRange, setPartColor, toggleLocked, toggleVisible,
 } from '../state/actions';
 import { sendPartsToBuild } from '../state/buildActions';
 import type { Part } from '../state/types';
@@ -34,6 +34,25 @@ export function PartsPanel() {
           <button className="mini" onClick={showAllParts} disabled={!parts.some((p) => !p.visible)} title="Show every part again (Shift+V)">
             {Icon.eye} Show all
           </button>
+        </div>
+      )}
+      {selection.length > 0 && (
+        <div className="parts-vis parts-opacity">
+          <span className="muted">Selected:</span>
+          {([
+            [1, 'Solid'],
+            [0.5, '50 %'],
+            [0.25, 'X-ray'],
+          ] as const).map(([o, label]) => (
+            <button
+              key={o}
+              className={`mini ${parts.filter((p) => sel.has(p.id)).every((p) => (p.opacity ?? 1) === o) ? 'on' : ''}`}
+              onClick={() => setPartOpacity(selection, o)}
+              title={o === 1 ? 'Show the selected parts solid' : o === 0.5 ? 'Make the selected parts 50 % see-through' : 'Make the selected parts x-ray (25 %, outlined)'}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
       <div className="parts-list" role="listbox" aria-multiselectable>
@@ -138,6 +157,17 @@ function PartRow({ part, selected }: { part: Part; selected: boolean }) {
       <div className="row-actions" onClick={(e) => e.stopPropagation()}>
         <button className="icon-btn" title={part.visible ? 'Hide' : 'Show'} onClick={() => toggleVisible(part.id)}>
           {part.visible ? Icon.eye : Icon.eyeOff}
+        </button>
+        <button
+          className={`icon-btn ${part.opacity && part.opacity < 1 ? 'on' : ''}`}
+          title={`Transparency: ${!part.opacity || part.opacity >= 1 ? 'solid' : part.opacity >= 0.5 ? '50 %' : 'x-ray (25 %)'} — click for ${!part.opacity || part.opacity >= 1 ? '50 %' : part.opacity >= 0.5 ? 'x-ray' : 'solid'}`}
+          data-help-text="Transparency of this part: click to go from solid to 50 % see-through, to x-ray (25 %, outlined), and back to solid. It only changes how the part is shown."
+          onClick={() => {
+            const i = OPACITY_LEVELS.findIndex((o) => o === (part.opacity ?? 1));
+            setPartOpacity([part.id], OPACITY_LEVELS[(Math.max(0, i) + 1) % OPACITY_LEVELS.length]);
+          }}
+        >
+          {Icon.transparency}
         </button>
         <button
           className={`icon-btn ${part.lockRotation ? 'on' : ''}`}

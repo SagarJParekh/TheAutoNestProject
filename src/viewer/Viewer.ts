@@ -573,15 +573,18 @@ export class Viewer {
     material.color.copy(color);
     material.emissive.copy(selected ? color.clone().multiplyScalar(0.18) : new Color(0));
     material.wireframe = mode === 'wireframe';
-    const xray = mode === 'xray' || ghost;
+    // the part's own transparency (parts list): half or x-ray
+    const own = part.opacity ?? 1;
+    const xray = mode === 'xray' || ghost || own < 1;
     material.transparent = xray;
-    material.opacity = ghost ? 0.12 : mode === 'xray' ? 0.28 : 1;
+    material.opacity = ghost ? 0.12 : mode === 'xray' ? Math.min(0.28, own) : own;
     material.depthWrite = !xray;
     // clipping plane count / transparency are picked up by the renderer without a program rebuild
     this.clipMaterial(material, this.inClip(part.id));
 
     // feature edges
-    const wantEdges = (mode === 'edges' || mode === 'xray') && !ghost && part.visible;
+    const seeThrough = own <= 0.3;
+    const wantEdges = (mode === 'edges' || mode === 'xray' || seeThrough) && !ghost && part.visible;
     if (wantEdges) {
       const e = meshEntry(part.mesh);
       if (e.edges && obj.edgesFor !== e.edges) {
@@ -600,7 +603,7 @@ export class Viewer {
     if (obj.edges) {
       obj.edges.visible = wantEdges;
       const lm = obj.edges.material as LineBasicMaterial;
-      lm.color.set(mode === 'xray' ? color : new Color(0x0b0d10));
+      lm.color.set(mode === 'xray' || seeThrough ? color : new Color(0x0b0d10));
       this.clipMaterial(lm, this.inClip(part.id));
     }
 

@@ -7,7 +7,7 @@
  * side along X and the shortest along Z.
  */
 import type { Manifold } from 'manifold-3d';
-import { MeshData, Vec3, computeBounds, boundsDiagonal } from './mesh';
+import { MeshData, Vec3, computeBounds } from './mesh';
 import { getManifold, fromManifold } from './manifold';
 import { planeBasis } from './triangulate';
 
@@ -73,15 +73,20 @@ function minRect(pts: [number, number][]): { axis: [number, number]; w: number; 
 export async function minimumBox(mesh: MeshData): Promise<MinBox> {
   const b = computeBounds(mesh.positions);
   const aabbVolume = (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]) * (b.max[2] - b.min[2]);
-  // convex hull of the vertices (near-duplicates merged so huge meshes stay quick)
-  const q = Math.max(1e-6, boundsDiagonal(b) * 2e-5);
-  const seen = new Set<string>();
-  const pts: Vec3[] = [];
+  // convex hull of the vertices, from one vertex per cell of a 128-cell grid so even meshes of
+  // millions of triangles stay quick; the final sizes are measured on every vertex
   const p = mesh.positions;
+  const G = 64;
+  const ext = [0, 1, 2].map((k) => Math.max(b.max[k] - b.min[k], 1e-9));
+  const seen = new Uint8Array(G * G * G);
+  const pts: Vec3[] = [];
   for (let i = 0; i < p.length; i += 3) {
-    const k = `${Math.round(p[i] / q)},${Math.round(p[i + 1] / q)},${Math.round(p[i + 2] / q)}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
+    const ix = Math.min(G - 1, ((p[i] - b.min[0]) / ext[0]) * G) | 0;
+    const iy = Math.min(G - 1, ((p[i + 1] - b.min[1]) / ext[1]) * G) | 0;
+    const iz = Math.min(G - 1, ((p[i + 2] - b.min[2]) / ext[2]) * G) | 0;
+    const k = ix + G * (iy + G * iz);
+    if (seen[k]) continue;
+    seen[k] = 1;
     pts.push([p[i], p[i + 1], p[i + 2]]);
   }
   if (pts.length < 4) throw new Error('The part is too small or flat to measure');
@@ -97,25 +102,29 @@ export async function minimumBox(mesh: MeshData): Promise<MinBox> {
   const hp = hull.positions, hi = hull.indices;
   const verts: Vec3[] = [];
   for (let i = 0; i < hp.length; i += 3) verts.push([hp[i], hp[i + 1], hp[i + 2]]);
-  // candidate directions: hull face normals, merged when within about half a degree, plus X / Y / Z
-  const dirs = new Map<string, Vec3>();
-  const add = (n: Vec3) => {
+  // candidate directions: hull face normals merged within about a degree, the ones covering the
+  // most hull area first (smooth curved parts have tens of thousands), plus X / Y / Z
+  const dirs = new Map<string, { n: Vec3; area: number }>();
+  const add = (n: Vec3, area: number) => {
     const l = Math.hypot(n[0], n[1], n[2]);
     if (l < 1e-12) return;
     let u: Vec3 = [n[0] / l, n[1] / l, n[2] / l];
     // n and −n give the same box
     if (u[2] < 0 || (u[2] === 0 && (u[1] < 0 || (u[1] === 0 && u[0] < 0)))) u = [-u[0], -u[1], -u[2]];
-    dirs.set(u.map((x) => Math.round(x * 120)).join(), u);
+    const key = u.map((x) => Math.round(x * 60)).join();
+    const d = dirs.get(key);
+    if (d) d.area += area;
+    else dirs.set(key, { n: u, area });
   };
   for (let t = 0; t < hi.length; t += 3) {
     const a = verts[hi[t]], bb = verts[hi[t + 1]], c = verts[hi[t + 2]];
-    add(cross([bb[0] - a[0], bb[1] - a[1], bb[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]));
+    const n = cross([bb[0] - a[0], bb[1] - a[1], bb[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]);
+    add(n, Math.hypot(n[0], n[1], n[2]));
   }
-  add([1, 0, 0]);
-  add([0, 1, 0]);
-  add([0, 0, 1]);
-  let best: { vol: number; axes: [Vec3, Vec3, Vec3]; size: Vec3; center: Vec3 } | null = null;
-  for (const n of dirs.values()) {
+  const candidates = [...dirs.values()].sort((x, y) => y.area - x.area).slice(0, 300).map((d) => d.n);
+  candidates.push([1, 0, 0], [0, 1, 0], [0, 0, 1]);
+  type Box = { vol: number; axes: [Vec3, Vec3, Vec3]; size: Vec3; center: Vec3 };
+  const evaluate = (n: Vec3): Box => {
     const { u, v } = planeBasis(n);
     let lo = Infinity, up = -Infinity;
     const xy: [number, number][] = verts.map((pt) => {
@@ -125,18 +134,50 @@ export async function minimumBox(mesh: MeshData): Promise<MinBox> {
       return [dot(pt, u), dot(pt, v)];
     });
     const r = minRect(xy);
-    const vol = r.w * r.h * (up - lo);
-    if (best && vol >= best.vol) continue;
     const a: Vec3 = [u[0] * r.axis[0] + v[0] * r.axis[1], u[1] * r.axis[0] + v[1] * r.axis[1], u[2] * r.axis[0] + v[2] * r.axis[1]];
-    const bAx = cross(n, a);
     const mid = (lo + up) / 2;
     const center: Vec3 = [0, 1, 2].map((k) => u[k] * r.c[0] + v[k] * r.c[1] + n[k] * mid) as Vec3;
-    best = { vol, axes: [a, bAx, n], size: [r.w, r.h, up - lo], center };
+    return { vol: r.w * r.h * (up - lo), axes: [a, cross(n, a), n], size: [r.w, r.h, up - lo], center };
+  };
+  let best: Box | null = null;
+  for (const n of candidates) {
+    const b0 = evaluate(n);
+    if (!best || b0.vol < best.vol) best = b0;
+  }
+  // fine-tune: tilt the best direction a little each way while that makes the box smaller
+  for (const deg of [3, 1.5, 0.75, 0.35, 0.15]) {
+    const t = (deg * Math.PI) / 180;
+    for (let improved = true, guard = 0; improved && guard < 20; guard++) {
+      improved = false;
+      const n = best!.axes[2], { u, v } = planeBasis(n);
+      for (const [a, b2] of [[t, 0], [-t, 0], [0, t], [0, -t]]) {
+        const m: Vec3 = [0, 1, 2].map((k) => n[k] * Math.cos(Math.hypot(a, b2)) + (u[k] * a + v[k] * b2)) as Vec3;
+        const l = Math.hypot(m[0], m[1], m[2]);
+        const c = evaluate([m[0] / l, m[1] / l, m[2] / l]);
+        if (c.vol < best!.vol - 1e-9) {
+          best = c;
+          improved = true;
+        }
+      }
+    }
   }
   const B = best!;
+  // exact extents along the chosen axes, over every vertex
+  const eLo = [Infinity, Infinity, Infinity], eHi = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      const ax = B.axes[k];
+      const d = p[i] * ax[0] + p[i + 1] * ax[1] + p[i + 2] * ax[2];
+      if (d < eLo[k]) eLo[k] = d;
+      if (d > eHi[k]) eHi[k] = d;
+    }
+  }
+  const size = [0, 1, 2].map((k) => eHi[k] - eLo[k]) as Vec3;
+  const mid = [0, 1, 2].map((k) => (eLo[k] + eHi[k]) / 2);
+  const center = [0, 1, 2].map((c) => B.axes[0][c] * mid[0] + B.axes[1][c] * mid[1] + B.axes[2][c] * mid[2]) as Vec3;
   // longest side first, and keep the frame right-handed
-  const order = [0, 1, 2].sort((i, j) => B.size[j] - B.size[i]);
+  const order = [0, 1, 2].sort((i, j) => size[j] - size[i]);
   const axes = order.map((i) => B.axes[i]) as [Vec3, Vec3, Vec3];
   axes[2] = cross(axes[0], axes[1]);
-  return { axes, size: order.map((i) => B.size[i]) as Vec3, center: B.center, volume: B.vol, aabbVolume };
+  return { axes, size: order.map((i) => size[i]) as Vec3, center, volume: size[0] * size[1] * size[2], aabbVolume };
 }
