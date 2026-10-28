@@ -1,10 +1,31 @@
 import { useEffect, useState } from 'react';
 import { HELP, helpKey } from './help';
+import { INPUT_HELP } from './helpInputs';
+import { getState } from '../state/store';
 
 const DELAY = 3000;
 const KEY = 'autonest.hoverHelp';
 /** controls that can explain themselves */
-const TARGET = 'button, label, select, input, summary, [data-help], [title], [role="tab"]';
+const TARGET = 'button, label, select, input, summary, [data-help], [title], [role="tab"], .row, .vec-row, .axis-row';
+const ROW = '.row, .vec-row, .axis-row';
+
+/** Which tool a control belongs to, for explanations that differ between tools. */
+function contextOf(el: HTMLElement): string {
+  if (el.closest('.modal')) return 'export';
+  const s = getState();
+  if (s.workspace === 'build') return 'build';
+  if (el.closest('.face-pick')) return 'face pick';
+  return s.tool === 'clip' ? 'cut' : s.tool;
+}
+
+/** Explanation for a label in a tool: the tool's own entry first, then a general one. */
+function lookup(ctx: string, label: string): string | undefined {
+  const k = helpKey(label);
+  if (!k) return undefined;
+  return INPUT_HELP[`${ctx}:${k}`] ?? INPUT_HELP[k] ?? HELP[k];
+}
+
+const rowLabel = (row: Element) => (row.querySelector('.row-label, .vec-label, .axis-name')?.textContent ?? '').replace(/:$/, '').trim();
 
 export function hoverHelpOn(): boolean {
   try {
@@ -40,11 +61,21 @@ export function HoverHelp() {
     let el: HTMLElement | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let at = { x: 0, y: 0 };
+    // tooltips held back while the cursor is on a control (its own, and those of the fields in a row)
+    let held: HTMLElement[] = [];
+    const hold = (n: HTMLElement) => {
+      const t = n.getAttribute('title');
+      if (!t) return;
+      n.dataset.hhTitle = t;
+      n.removeAttribute('title');
+      held.push(n);
+    };
     const restore = () => {
-      if (el?.dataset.hhTitle !== undefined) {
-        el.setAttribute('title', el.dataset.hhTitle);
-        delete el.dataset.hhTitle;
+      for (const n of held) {
+        if (n.dataset.hhTitle !== undefined) n.setAttribute('title', n.dataset.hhTitle);
+        delete n.dataset.hhTitle;
       }
+      held = [];
     };
     const stop = () => {
       if (timer) clearTimeout(timer);
@@ -53,11 +84,28 @@ export function HoverHelp() {
     };
     const show = () => {
       if (!el || !el.isConnected) return;
-      const label = (el.dataset.helpTitle || el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
+      const ctx = contextOf(el);
+      const isRow = el.matches(ROW);
+      const label = (el.dataset.helpTitle || (isRow ? rowLabel(el) : '') || el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
       const tip = el.dataset.hhTitle || '';
-      const text = el.dataset.helpText ?? HELP[el.dataset.help ?? ''] ?? HELP[helpKey(label)] ?? HELP[helpKey(tip.split('(')[0])] ?? tip;
+      // the control itself, then (for buttons, fields and sliders inside a settings row) the row it is in
+      const row = isRow ? null : el.closest(ROW);
+      const rLabel = row ? rowLabel(row) : '';
+      let title = label;
+      let text: string | undefined = el.dataset.helpText ?? HELP[el.dataset.help ?? ''] ?? lookup(ctx, label);
+      if (!text && row) {
+        text = (row as HTMLElement).dataset.helpText ?? lookup(ctx, rLabel);
+        if (text) title = (row as HTMLElement).dataset.helpTitle || rLabel;
+      }
+      text ??= HELP[helpKey(tip.split('(')[0])] ?? (tip || undefined);
+      if (!text && row) {
+        // a field without its own entry: the tooltip of the field in the row
+        const inner = row.querySelector('[title], [data-hh-title]') as HTMLElement | null;
+        text = inner?.dataset.hhTitle || inner?.getAttribute('title') || undefined;
+        if (text) title = rLabel || title;
+      }
       if (!text) return;
-      const title = label && label.length <= 40 ? label : tip.split(/[(.:]/)[0].trim() || label.slice(0, 40);
+      if (!title || title.length > 40) title = tip.split(/[(.:]/)[0].trim() || title.slice(0, 40);
       setCard({ title, text, x: at.x, y: at.y });
     };
     const arm = () => {
@@ -65,19 +113,18 @@ export function HoverHelp() {
       timer = setTimeout(show, DELAY);
     };
     const over = (e: MouseEvent) => {
-      const t = (e.target as HTMLElement | null)?.closest?.(TARGET) as HTMLElement | null;
-      // the viewport canvas and plain text fields are not "functions"
-      const target = t && t.tagName !== 'CANVAS' && !(t.tagName === 'INPUT' && ['text', 'number', 'search'].includes((t as HTMLInputElement).type)) ? t : null;
+      let t = (e.target as HTMLElement | null)?.closest?.(TARGET) as HTMLElement | null;
+      // a typing field or slider explains itself through its settings row
+      if (t && (t.tagName === 'INPUT' || (t.tagName === 'LABEL' && t.classList.contains('field'))) && ['text', 'number', 'search', 'range', ''].includes((t as HTMLInputElement).type ?? '')) t = (t.closest(ROW) as HTMLElement | null) ?? t;
+      if (t?.tagName === 'LABEL' && t.classList.contains('field')) t = (t.closest(ROW) as HTMLElement | null) ?? t;
+      const target = t && t.tagName !== 'CANVAS' ? t : null;
       if (target === el) return;
       restore();
       stop();
       el = target;
       if (!el) return;
-      const title = el.getAttribute('title');
-      if (title) {
-        el.dataset.hhTitle = title;
-        el.removeAttribute('title');
-      }
+      hold(el);
+      if (el.matches(ROW)) el.querySelectorAll<HTMLElement>('[title]').forEach(hold);
       at = { x: e.clientX, y: e.clientY };
       arm();
     };

@@ -82,7 +82,11 @@ function AxisCutRow({ axis, row, parts, onChange }: { axis: Axis; row: AxisRow; 
   const cycle = () => onChange(!row.on ? { on: true, flip: false } : !row.flip ? { flip: true } : { on: false, flip: false });
   const state = !row.on ? 'off' : row.flip ? `keeps the side above ${A} = ${row.offset}` : `keeps the side below ${A} = ${row.offset}`;
   return (
-    <div className={`axis-row ${row.on ? 'on' : ''}`}>
+    <div
+      className={`axis-row ${row.on ? 'on' : ''}`}
+      data-help-title={`${A} plane`}
+      data-help-text={`The ${A} plane: the icon switches it off, keeps the lower side or keeps the upper side; ‹ › move it 1 mm (Shift: 10 mm), the slider drags it, and the field is its position along ${A} in mm. Any combination of X, Y and Z works together.`}
+    >
       <span className="axis-name">{A}:</span>
       <button className="side-btn" onClick={cycle} title={`${A} plane ${state}. Click: off → keep below → keep above`}>
         <SideIcon row={row} />
