@@ -320,7 +320,7 @@ export async function regenerateBuilds(force = false) {
     // copies not in a nested build yet are shown in a quick layout (not nested)
     const placed = new Set([...kept.flatMap((b) => b.placements.map((pl) => pl.key)), ...unplaced.map((u) => `${u.partId}#${u.copy}`)]);
     const missing = s0.parts.flatMap((p) => Array.from({ length: p.quantity }, (_, c) => c).filter((c) => !placed.has(`${p.id}#${c}`)).map((c) => ({ part: p, copy: c })));
-    const builds = [...kept, ...previewBuilds(missing, s0)].map((b, i) => ({ ...b, name: b.preview ? `Build ${i + 1} (not nested)` : `Build ${i + 1}` }));
+    const builds = [...kept, ...previewBuilds(missing, s0)].map((b, i) => ({ ...b, name: b.preview ? (kept.length ? 'Not nested yet' : 'Parts (not nested)') : `Build ${i + 1}` }));
     const wasEmpty = !s0.builds.length;
     setBg({ stale: true, builds, unplaced, active: Math.min(s0.active, Math.max(0, builds.length - 1)) });
     if (wasEmpty && builds.length) fitBuildView();
@@ -346,9 +346,10 @@ export async function regenerateBuilds(force = false) {
 }
 
 /**
- * A quick look at parts that are not nested yet: their boxes side by side on
- * the platform (in their current orientation), filling as many platforms as
- * needed. Nothing like a real nesting; Start nesting replaces it.
+ * Parts that are not nested yet: laid out beside the platform (outside the
+ * build volume, in columns as deep as the platform) in their current
+ * orientation, all in one "not nested" build. Nothing is spread over builds
+ * until nesting starts.
  */
 function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenState): Build[] {
   if (!copies.length) return [];
@@ -362,38 +363,24 @@ function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenS
     qOf.set(part.id, q);
     boxOf.set(part.id, rotatedBounds(part.mesh, q));
   }
-  const items: PackItem[] = copies.map(({ part, copy }) => {
-    const b = boxOf.get(part.id)!;
-    return { key: `${part.id}#${copy}`, w: b.max.x - b.min.x, d: b.max.y - b.min.y, h: b.max.z - b.min.z, fixed: true };
-  });
-  const r = packBuilds(items, { volume: printer.volume, margin: s.margin, gap: 2, zOffset: s.zOffset, allowRotate: false, stack: true });
-  const byKey = new Map(copies.map((c) => [`${c.part.id}#${c.copy}`, c]));
-  const builds: Build[] = r.builds.map((b) => ({
-    name: '',
-    height: b.height,
-    utilization: b.utilization,
-    preview: true,
-    placements: b.items.map((it): BuildPlacement => {
-      const { part, copy } = byKey.get(it.key)!;
-      const q = qOf.get(part.id)!;
-      const min = boxOf.get(part.id)!.min;
-      return { key: it.key, partId: part.id, copy, position: [it.x - min.x, it.y - min.y, it.z - min.z], quaternion: [q.x, q.y, q.z, q.w] };
-    }),
-  }));
-  // too big for the printer: one per platform, at the middle, so it can still be seen
-  for (const u of r.unplaced) {
-    const { part, copy } = byKey.get(u.key)!;
-    const q = qOf.get(part.id)!;
-    const b = boxOf.get(part.id)!;
-    builds.push({
-      name: '',
-      height: b.max.z - b.min.z,
-      utilization: 0,
-      preview: true,
-      placements: [{ key: u.key, partId: part.id, copy, position: [-(b.min.x + b.max.x) / 2, -(b.min.y + b.max.y) / 2, s.zOffset - b.min.z], quaternion: [q.x, q.y, q.z, q.w] }],
-    });
+  const gap = 5;
+  const depthLimit = Math.max(printer.volume[1], 100);
+  let x = printer.volume[0] + 20, y = 0, colW = 0;
+  const placements: BuildPlacement[] = [];
+  for (const { part, copy } of copies) {
+    const b = boxOf.get(part.id)!, q = qOf.get(part.id)!;
+    const w = b.max.x - b.min.x, d = b.max.y - b.min.y;
+    // next column when this one is as deep as the platform
+    if (y > 0 && y + d > depthLimit) {
+      x += colW + gap;
+      y = 0;
+      colW = 0;
+    }
+    placements.push({ key: `${part.id}#${copy}`, partId: part.id, copy, position: [x - b.min.x, y - b.min.y, s.zOffset - b.min.z], quaternion: [q.x, q.y, q.z, q.w] });
+    y += d + gap;
+    colW = Math.max(colW, w);
   }
-  return builds;
+  return [{ name: '', height: 0, utilization: 0, preview: true, placements }];
 }
 
 /**
@@ -1023,10 +1010,12 @@ export async function cageBuildParts(ids: string[]) {
   const s = bg();
   const targets = s.parts.filter((p) => ids.includes(p.id) && !p.cage);
   if (!targets.length) return notify('warning', 'Select the parts to put in a cage');
+  if (currentPrinter(s).tech !== 'powder') return notify('warning', 'Cages are for HP MJF / SLS (powder bed) printers');
   const o = s.cageSettings ?? DEFAULT_CAGE;
   const clearance = Math.max(0.5, s.clearance3d);
-  const powder = currentPrinter(s).tech === 'powder';
-  void powder;
+  // parts whose orientation is locked (or rotation locked on a copy) keep it inside the cage too
+  const locks = s.locks ?? {};
+  const rotLocked = (p: BuildPart) => !!p.lockRotation || Object.entries(locks).some(([k, L]) => partOfKey(k) === p.id && L.r.some(Boolean));
   const rule = orientRule(s);
   const job = startJob('Making a cage');
   try {
@@ -1035,7 +1024,7 @@ export async function cageBuildParts(ids: string[]) {
     const oriented = await Promise.all(
       targets.map(async (p) => {
         let q: [number, number, number, number] | undefined;
-        if (p.lockRotation || !s.autoOrient) q = [0, 0, 0, 1];
+        if (rotLocked(p) || !s.autoOrient) q = [0, 0, 0, 1];
         else if (p.orient?.mesh === p.mesh && (p.orient.rule ?? 'flat') === rule) q = p.orient.q;
         else
           q =
@@ -1065,7 +1054,7 @@ export async function cageBuildParts(ids: string[]) {
         'Packing the parts for the cage',
         'nest3d',
         {
-          parts: oriented.map(({ part, mesh }) => ({ id: part.id, mesh, count: part.quantity })),
+          parts: oriented.map(({ part, mesh }) => ({ id: part.id, mesh, count: part.quantity, fixed: rotLocked(part) })),
           params: { volume: [side, side, Math.max(side * 3, maxZ + 2)], margin: 0, clearance, zOffset: 0, maxHeight: 0, rotations: true, interlockFree: false, budget: 6e6, variants: [{ order: 'volume', pattern: false }] },
         },
         { silent: true },
@@ -1106,10 +1095,41 @@ export async function cageBuildParts(ids: string[]) {
       cage: { options: o, contents: targets },
     };
     const gone = new Set(targets.map((p) => p.id));
-    commitBuild(`Put ${copies} part${copies > 1 ? 's' : ''} in a cage`, { parts: [...bg().parts.filter((p) => !gone.has(p.id)), cagePart] });
-    setState({ selection: [`${cagePart.id}#0`] });
-    notify('success', `Cage made around ${copies} part${copies > 1 ? 's' : ''}: it is nested as one part`);
-    scheduleRegenerate();
+    // the cage stays in the build its parts were in: it takes their place there, and a build lock keeps
+    // it in that build when nesting again (it may still move within the build)
+    const now = bg();
+    const counts = now.builds.map((b) => (b.preview ? 0 : b.placements.filter((pl) => gone.has(pl.partId)).length));
+    const home = counts.reduce((best, n, i) => (n > (counts[best] ?? 0) ? i : best), -1);
+    const key = `${cagePart.id}#0`;
+    const patch: Partial<BuildGenState> = { parts: [...now.parts.filter((p) => !gone.has(p.id)), cagePart] };
+    const nextLocks = Object.fromEntries(Object.entries(now.locks ?? {}).filter(([k]) => !gone.has(partOfKey(k))));
+    if (home >= 0) {
+      const build = now.builds[home];
+      const old = build.placements.filter((pl) => gone.has(pl.partId));
+      // centre the cage where its parts were, kept on the platform
+      const vol = currentPrinter(now).volume;
+      const cb = computeBounds(cagePart.mesh.positions);
+      const size = [cb.max[0] - cb.min[0], cb.max[1] - cb.min[1]];
+      const centre = [0, 1].map((k) => old.reduce((a, pl) => a + pl.position[k], 0) / old.length);
+      const xy = [0, 1].map((k) => Math.min(Math.max(centre[k] - size[k] / 2, now.margin), Math.max(now.margin, vol[k] - now.margin - size[k])));
+      const position: Vec3 = [xy[0] - cb.min[0], xy[1] - cb.min[1], now.zOffset - cb.min[2]];
+      patch.builds = now.builds.map((b, i) =>
+        i !== home ? { ...b, placements: b.placements.filter((pl) => !gone.has(pl.partId)) } : { ...b, placements: [...b.placements.filter((pl) => !gone.has(pl.partId)), { key, partId: cagePart.id, copy: 0, position, quaternion: [0, 0, 0, 1] }] },
+      );
+      nextLocks[key] = { t: [false, false, false], r: [true, true, true], build: home, position, quaternion: [0, 0, 0, 1] };
+      patch.stale = true;
+      patch.checks = null;
+    }
+    patch.locks = nextLocks;
+    commitBuild(`Put ${copies} part${copies > 1 ? 's' : ''} in a cage`, patch);
+    setState({ selection: [key] });
+    notify(
+      'success',
+      home >= 0
+        ? `Cage made around ${copies} part${copies > 1 ? 's' : ''} and kept in ${now.builds[home].name}; nesting keeps it in that build (Re-arrange to fit it in without overlaps)`
+        : `Cage made around ${copies} part${copies > 1 ? 's' : ''}: it is nested as one part`,
+    );
+    if (home < 0 || now.autoNest) scheduleRegenerate();
   } finally {
     job.end();
   }
@@ -1119,7 +1139,8 @@ export async function cageBuildParts(ids: string[]) {
 export function uncageBuildPart(id: string) {
   const cage = bg().parts.find((p) => p.id === id && p.cage);
   if (!cage) return;
-  commitBuild('Remove cage', { parts: [...bg().parts.filter((p) => p.id !== id), ...cage.cage!.contents] });
+  const locks = Object.fromEntries(Object.entries(bg().locks ?? {}).filter(([k]) => partOfKey(k) !== id));
+  commitBuild('Remove cage', { parts: [...bg().parts.filter((p) => p.id !== id), ...cage.cage!.contents], locks });
   setState({ selection: [] });
   scheduleRegenerate();
 }

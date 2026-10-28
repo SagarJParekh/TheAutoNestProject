@@ -46,8 +46,11 @@ function CageBox({ ids }: { ids: string[] }) {
   const parts = useStore((s) => s.buildGen.parts);
   const settings = useStore((s) => s.buildGen.cageSettings) ?? DEFAULT_CAGE;
   const busy = useStore((s) => s.jobs.some((j) => j.label === 'Making a cage'));
+  const powder = useStore((s) => currentPrinter(s.buildGen).tech === 'powder');
   const sel = parts.filter((p) => ids.includes(p.id));
   const cage = sel.length === 1 && sel[0].cage ? sel[0] : null;
+  // cages keep small parts together in the powder: HP MJF / SLS only
+  if (!powder && !cage) return null;
   if (cage)
     return (
       <div className="density-box">
@@ -765,9 +768,15 @@ export function BuildsPanel() {
           {active && <EditBox />}
           <NestLogBox />
           {active && <LockBox />}
-          {active && <ChecksBox />}
-          {active && <DensityBox />}
-          {active && (
+          {active?.preview && (
+            <Hint>
+              The parts wait beside the platform until they are nested. Arrange or lock copies by hand if you like, then press Start nesting to place them in
+              builds.
+            </Hint>
+          )}
+          {active && !active.preview && <ChecksBox />}
+          {active && !active.preview && <DensityBox />}
+          {active && !active.preview && (
             <div className="btn-grid two">
               <button className="btn primary" onClick={() => exportBuilds(g.active, '3mf')}>
                 Export {active.name} (3MF)
@@ -785,7 +794,7 @@ export function BuildsPanel() {
               </button>
             </div>
           )}
-          {active && resin && (
+          {active && !active.preview && resin && (
             <Row label="SLC layer">
               <NumberField value={g.slcLayer ?? 0.05} min={0.005} step={0.005} precision={3} suffix="mm" title="Layer thickness of the SLC export" onChange={(v) => setSlcLayer(Math.max(0.005, v))} />
             </Row>
