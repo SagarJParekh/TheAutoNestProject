@@ -200,6 +200,8 @@ export interface Measurement {
   extras: { label: string; value: number; unit: 'mm' | '°' }[];
   note?: string;
   draw: MeasureDraw;
+  /** parts it was taken on: deleting one of them removes the measurement */
+  partIds?: string[];
 }
 
 export interface MeasurePending {

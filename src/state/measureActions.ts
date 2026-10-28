@@ -5,7 +5,7 @@
 import { Matrix3, Vector3 } from 'three';
 import { angle3, angleBetween, circleFrom3Points, measureDistance, vec } from '../geometry/measure3d';
 import type { MEntity, Vec3 } from '../geometry';
-import { getState, notify, partById, setState } from './store';
+import { getState, notify, partById, setState, useStore } from './store';
 import type { Measurement, MeasureDraw } from './types';
 import { matrixOf } from './math';
 import { runJob } from './actions';
@@ -16,13 +16,29 @@ let mid = 1;
 const fmt = (v: number, unit: 'mm' | '°') => (unit === 'mm' ? `${v.toFixed(2)} mm` : `${v.toFixed(2)}°`);
 const midpoint = (a: Vec3, b: Vec3): Vec3 => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
 
+/** parts picked for the measurement being built */
+let pendingParts: string[] = [];
+
 export function resetPending() {
+  pendingParts = [];
   setState({ measurePending: { entities: [], points: [] } });
 }
 
 export function clearMeasurements() {
+  pendingParts = [];
   setState({ measurements: [], measurePending: { entities: [], points: [] } });
 }
+
+// measurements go with their parts: when a part is deleted (or replaced), its measurements are removed
+useStore.subscribe((s, prev) => {
+  if (s.parts === prev.parts) return;
+  const ids = new Set(s.parts.map((p) => p.id));
+  const keep = s.measurements.filter((m) => !m.partIds || m.partIds.every((id) => ids.has(id)));
+  const pendingGone = pendingParts.some((id) => !ids.has(id));
+  if (keep.length === s.measurements.length && !pendingGone) return;
+  if (pendingGone) pendingParts = [];
+  setState({ measurements: keep, ...(pendingGone ? { measurePending: { entities: [], points: [] } } : {}) });
+});
 
 export function deleteMeasurement(id: number) {
   setState((s) => ({ measurements: s.measurements.filter((m) => m.id !== id) }));
@@ -36,7 +52,9 @@ export function setMeasureLabel(id: number, offset: [number, number] | null) {
 }
 
 function add(m: Omit<Measurement, 'id'>) {
-  setState((s) => ({ measurements: [...s.measurements, { ...m, id: mid++ }], measurePending: { entities: [], points: [] } }));
+  const partIds = pendingParts;
+  pendingParts = [];
+  setState((s) => ({ measurements: [...s.measurements, { ...m, id: mid++, partIds }], measurePending: { entities: [], points: [] } }));
 }
 
 function describe(e: MEntity): string {
@@ -71,6 +89,9 @@ export async function onMeasurePick(info: PickInfo) {
   if (!viewer) return;
   const s = getState();
   const { mode, pickAs } = s.settings.measure;
+  // remember the parts picked for this measurement (a new measurement starts with this pick)
+  const fresh = !s.measurePending.entities.length && !s.measurePending.points.length;
+  pendingParts = fresh ? [info.partId] : [...new Set([...pendingParts, info.partId])];
 
   if (mode === 'thickness') {
     const n = info.normal;
