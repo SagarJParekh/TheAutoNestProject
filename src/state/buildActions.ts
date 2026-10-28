@@ -171,11 +171,24 @@ export function setSlcLayer(slcLayer: number) {
   setState((s) => ({ buildGen: { ...s.buildGen, slcLayer } }));
 }
 
+/** default margin at the edges and distance from the platform, mm: powder beds, the other printers */
+const POWDER_SPACING = 1, RESIN_SPACING = 5;
+
 export function updateBuildSettings(patch: Partial<BuildGenState>) {
   const before = bg();
   if (patch.printerId && printerById(patch.printerId).tech === 'powder' && printerById(before.printerId).tech !== 'powder' && before.tilt.angle === 30 && !patch.tilt) {
     // powder bed: the SLS / MJF orientation rules replace the old "flat face down + 30°" default
     patch = { ...patch, tilt: { angle: 0, azimuth: 0 } };
+  }
+  if (patch.printerId) {
+    // powder beds default to 1 mm margins and 1 mm off the platform, the other printers to 5 mm;
+    // values typed in by hand are kept
+    const toPowder = printerById(patch.printerId).tech === 'powder', fromPowder = printerById(before.printerId).tech === 'powder';
+    const [from, to] = toPowder && !fromPowder ? [RESIN_SPACING, POWDER_SPACING] : !toPowder && fromPowder ? [POWDER_SPACING, RESIN_SPACING] : [null, null];
+    if (from !== null && to !== null) {
+      if (before.margin === from && patch.margin === undefined) patch = { ...patch, margin: to };
+      if (before.zOffset === from && patch.zOffset === undefined) patch = { ...patch, zOffset: to };
+    }
   }
   commitBuild('Build settings', patch);
   // switching automatic nesting off changes nothing to arrange
