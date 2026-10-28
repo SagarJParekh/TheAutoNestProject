@@ -51,3 +51,4 @@ export * from './shapes';
 export * from './lattice';
 export * from './wrap';
 export * from './minbox';
+export * from './mould';

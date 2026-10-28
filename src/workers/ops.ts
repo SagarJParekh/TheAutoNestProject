@@ -400,6 +400,11 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
   },
 
+  async mould(args: { mesh: MeshData; split: boolean }): Promise<Result<G.MouldResult>> {
+    const r = await G.makeMould(args.mesh, { split: args.split });
+    return { result: r, transfer: r.pieces.flatMap(meshBuffers) };
+  },
+
   async minBox(args: { mesh: MeshData }): Promise<Result<G.MinBox>> {
     return { result: await G.minimumBox(args.mesh), transfer: [] };
   },

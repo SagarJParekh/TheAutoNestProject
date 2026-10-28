@@ -197,6 +197,7 @@ export const useStore = create<AppState>(() => ({
     shape: { ...DEFAULT_SHAPE },
     lattice: { ...DEFAULT_LATTICE },
     wrap: { ...DEFAULT_WRAP, keep: false },
+    vc: { scope: 'all', split: false, keepOriginal: true, spread: true },
     align: { mode: 'mate', offset: 0, center: true },
     props: { diameter: 2, spacing: 8, margin: 2, maxLength: 10000, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
     label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },

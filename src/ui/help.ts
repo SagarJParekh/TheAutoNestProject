@@ -25,6 +25,7 @@ export const HELP: Record<string, string> = {
   align: 'Align: move one part so a picked face lies on (or against) a face of another part.',
   props: 'Props: add supporting props between surfaces, or a single prop from a picked point to the platform.',
   offset: 'Offset & fillet: grow or shrink a whole part, push single faces, and round (fillet) or bevel (chamfer) sharp edges.',
+  'vc module': 'VC module (vacuum casting): arrange parts in their minimum bounding box, then create silicone mould blocks around all or selected parts — 20 / 30 / 50 mm clearance on all sides by part size — with the part as the cavity.',
   shrinkwrap: 'Shrinkwrap: wrap one closed surface around a part and make it solid — closes holes, gaps and cavities up to a size; good for broken scans.',
   measure: 'Measure: distances, angles, diameters and wall thickness between points, edges, surfaces, circles and spheres; plus a wall-thickness heat map.',
   dimensions: 'Dimensions: the bounding box, size, volume and surface of the selected parts, drawn on the part; arrange parts in their smallest box.',

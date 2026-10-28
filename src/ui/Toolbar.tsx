@@ -26,6 +26,7 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
   { id: 'offset', label: 'Offset', icon: Icon.offset, key: 'U' },
   { id: 'wrap', label: 'Shrinkwrap', icon: Icon.wrap, key: 'palette: wrap' },
+  { id: 'vc', label: 'VC Module', icon: Icon.mould, key: 'palette: vc' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
   { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
   { id: 'report', label: 'Report', icon: Icon.report, key: 'N' },

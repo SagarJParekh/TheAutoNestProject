@@ -498,3 +498,10 @@ table.report tr:last-child td { border-bottom: none; }
 .hover-help p { margin: 0; color: var(--text); }
 .hover-help-toggle { display: block; margin: 0 0 10px; }
 @keyframes hh-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.vc-rule { width: 100%; border-collapse: collapse; margin: 2px 0 8px; font-size: 12px; }
+.vc-rule td { padding: 3px 6px; border-bottom: 1px solid var(--line); }
+.vc-rule td:last-child { text-align: right; font-weight: 600; color: var(--accent); }
+/* with the VC module the tool row needs ~1630 px with icons, ~1215 px with names only */
+@media (max-width: 1800px) { .tb.tool { padding: 4px 5px; gap: 3px; } .tools-row { gap: 1px; } }
+@media (max-width: 1590px) and (min-width: 1240px) { .tb.tool svg { display: none; } }
+@media (max-width: 1239px) { .tb.tool span { display: none; } .tb.tool svg { display: inline-block; } }

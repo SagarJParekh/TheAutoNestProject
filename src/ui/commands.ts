@@ -106,6 +106,7 @@ export function buildCommands(): Command[] {
     { id: 'boolean', label: 'Boolean operations (union / subtract / intersect)', group: 'Tools', keywords: 'combine merge join difference', run: () => setTool('boolean') },
     { id: 'lattice', label: 'Lattice infill (lightweight)', group: 'Tools', keywords: 'gyroid diamond infill lighten weight reduce mass', run: () => setTool('lattice') },
     { id: 'shapes', label: 'Create a basic shape', group: 'Tools', keywords: 'primitive cube box cylinder cone sphere donut torus tube pyramid prism wedge capsule', run: () => setTool('shapes') },
+    { id: 'vc', label: 'VC module: vacuum casting moulds', group: 'Tools', keywords: 'mould mold silicone vacuum casting minimum box', run: () => setTool('vc') },
     { id: 'wrap', label: 'Shrinkwrap (wrap a solid around the part)', group: 'Tools', keywords: 'wrap envelope close holes solidify scan', run: () => setTool('wrap') },
     { id: 'offset', label: 'Offset part (grow / shrink)', group: 'Tools', keywords: 'shell thicken thin grow shrink global', shortcut: 'U', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'global' } } })); } },
     { id: 'offset-local', label: 'Offset a face (local)', group: 'Tools', keywords: 'push pull face move surface', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'local' } } })); } },

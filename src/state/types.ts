@@ -35,7 +35,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap';
+  | 'dimensions' | 'report' | 'offset' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -250,6 +250,8 @@ export interface ToolSettings {
   shape: ShapeParams;
   lattice: LatticeParams;
   wrap: WrapParams & { keep: boolean };
+  /** VC module: which parts, split the mould in two halves, keep the master parts */
+  vc: { scope: 'all' | 'selected'; split: boolean; keepOriginal: boolean; spread: boolean };
   align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
   props: PropParams & { merge: boolean; mode: 'single' | 'array' };
   label: Omit<LabelParams, 'curveSegments'> & { font: string };

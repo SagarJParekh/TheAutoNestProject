@@ -40,6 +40,11 @@ export const INPUT_HELP: Record<string, string> = {
   'wrap:offset': 'How far the wrap stands off the part’s surface, in mm. 0 hugs the surface.',
   'wrap:quality': 'Resolution of the wrap: Draft is quick, Fine keeps more detail. Detail finer than the voxel size is smoothed.',
   'wrap:voxel size': 'Size of the grid cells the wrap is built from, in mm. 0 chooses it from the quality. Smaller keeps more detail but needs more memory and time.',
+  // ---------------------------------------------------------------- VC module
+  'vc:parts': 'Make moulds (and arrange) for all visible parts, or only the selected ones.',
+  'split each mould in two halves at mid-height': 'Cut every mould block into a bottom and a top half at the part’s mid-height, the parting plane where the mould is opened.',
+  'space the parts so the moulds do not overlap': 'Before the moulds are made, the parts are laid out side by side in X + Y so their mould blocks stand 10 mm apart (the parts move with their moulds).',
+  'keep the master parts': 'Keep the original parts next to their moulds; untick to replace each part by its mould.',
   // ---------------------------------------------------------------- hollow
   'hollow:wall thickness': 'Thickness of the shell left after hollowing, in mm. Typical: 1.5–2.5 mm for resin, 2 mm or more for powder.',
   'hollow:resolution': 'Accuracy of the inner wall: Draft is quick, Fine follows the outer shape most closely.',

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { useStore } from '../../state/store';
-import { previewLattice, previewShape, previewShrinkwrap } from '../../state/makeActions';
+import { previewLattice, previewMinBox, previewMoulds, previewShape, previewShrinkwrap, vcParts } from '../../state/makeActions';
 import { live } from '../../state/livePreview';
 import { useSetting } from './RepairTabs';
 import { SHAPES, shapeFields, DEFAULT_SHAPE, type ShapeKind, type ShapeParams } from '../../geometry/shapes';
@@ -213,5 +213,72 @@ export function WrapPanel({ parts }: { parts: Part[] }) {
         part. Works on broken scans and meshes with many shells or open edges. Detail finer than the voxel size is smoothed.
       </Hint>
     </Section>
+  );
+}
+
+// ------------------------------------------------------------------ VC module
+
+export function VcPanel() {
+  const [vc, setVc] = useSetting('vc');
+  const preview = useStore((s) => s.preview);
+  useStore((s) => s.selection);
+  useStore((s) => s.parts);
+  const parts = vcParts();
+  return (
+    <>
+      <Section title="VC module (vacuum casting)">
+        <Row label="Parts">
+          <Segmented
+            value={vc.scope}
+            onChange={(scope) => setVc({ scope })}
+            options={[
+              { value: 'all', label: 'All parts' },
+              { value: 'selected', label: 'Selected parts' },
+            ]}
+          />
+        </Row>
+        <Hint>{parts.length ? `${parts.length} part${parts.length > 1 ? 's' : ''}.` : vc.scope === 'all' ? 'No parts yet.' : 'Select the parts.'}</Hint>
+      </Section>
+      <Section title="1. Minimum bounding box">
+        <button className="btn wide" disabled={!parts.length || !!preview} onClick={() => previewMinBox(parts)}>
+          Arrange in minimum bounding box
+        </button>
+        <Hint>Turns each part so its smallest box lines up with X / Y / Z (longest side along X, shortest along Z), so the mould comes out as small as possible.</Hint>
+      </Section>
+      <Section title="2. Mould">
+        <table className="vc-rule">
+          <tbody>
+            <tr>
+              <td>Largest side under 300 mm</td>
+              <td>20 mm</td>
+            </tr>
+            <tr>
+              <td>300 – 900 mm</td>
+              <td>30 mm</td>
+            </tr>
+            <tr>
+              <td>Over 900 mm</td>
+              <td>50 mm</td>
+            </tr>
+          </tbody>
+        </table>
+        <Check checked={vc.split} onChange={(split) => setVc({ split })}>
+          Split each mould in two halves at mid-height
+        </Check>
+        <Check checked={vc.keepOriginal} onChange={(keepOriginal) => setVc({ keepOriginal })}>
+          Keep the master parts
+        </Check>
+        <Check checked={vc.spread} onChange={(spread) => setVc({ spread })}>
+          Space the parts so the moulds do not overlap
+        </Check>
+        <button className="btn primary wide" disabled={!parts.length || !!preview} onClick={() => live(previewMoulds)}>
+          Create mould{parts.length > 1 ? 's' : ''} for {vc.scope === 'all' ? 'all' : 'selected'} parts
+        </button>
+        <Hint>
+          A block is put around each part with the clearance above on all six sides (chosen from the part’s largest bounding-box side), and the part is
+          taken out of it as the cavity. Parts must be watertight. Moulds are named name_mould (or name_mould_bottom / name_mould_top).
+        </Hint>
+      </Section>
+    </>
   );
 }

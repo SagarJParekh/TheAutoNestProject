@@ -43,6 +43,7 @@ export const Icon = {
   offset: P(<><path d="M4 20V10a6 6 0 0 1 6-6h10" /><path d="M8 20v-9a3 3 0 0 1 3-3h9" strokeDasharray="2 2" /></>),
   cursor: P(<path d="M5 3l14 7-6 1.8L10 18z" />),
   arrange: P(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
+  mould: P(<><rect x="3" y="5" width="18" height="14" rx="1.5" /><path d="M3 12h18" strokeDasharray="2 2" /><path d="M9 9h6v6H9z" /></>),
   boolean: P(<><circle cx="9" cy="10" r="6" /><circle cx="15" cy="14" r="6" /></>),
   lattice: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /><path d="M3 3l18 18M21 3 3 21" strokeOpacity=".45" /></>),
   shapes: P(<><path d="M3 13l4-2 4 2v5l-4 2-4-2z" /><circle cx="17" cy="7" r="4" /><path d="M14 21l3-6 3 6z" /></>),
