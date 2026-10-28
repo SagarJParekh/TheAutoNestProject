@@ -466,3 +466,29 @@ table.report tr:last-child td { border-bottom: none; }
 @media (max-width: 1800px) { .tb.tool { padding: 4px 6px; gap: 4px; font-size: 12px; } }
 @media (max-width: 1540px) and (min-width: 1181px) { .tb.tool svg { display: none; } }
 .preview-actions .xray-toggle { margin-right: auto; font-size: 12px; }
+/* X / Y / Z cut and clip rows (axis icon, ‹ slider ›, position) */
+.axis-cuts { position: relative; border: 1px solid var(--line-2); border-radius: 6px; padding: 14px 8px 8px; margin: 12px 0 8px; }
+.axis-cuts-title { position: absolute; top: -8px; left: 8px; padding: 0 5px; background: var(--panel); font-size: 12px; font-weight: 600; color: var(--muted); }
+.axis-row { display: grid; grid-template-columns: 16px 28px 16px minmax(60px, 1fr) 16px 64px 22px; align-items: center; gap: 3px; margin: 3px 0; }
+.axis-row .axis-name { font-weight: 600; font-size: 12px; }
+.axis-row:not(.on) .axis-name { color: var(--muted); }
+.axis-row .field { width: 64px !important; }
+.axis-row .axis-unit { font-size: 11px; color: var(--muted); }
+.side-btn { display: grid; place-items: center; height: 22px; padding: 0; background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.side-btn:hover { border-color: var(--line-2); background: var(--panel-2); }
+.side-btn .side-off { fill: var(--panel-2); stroke: var(--muted); stroke-width: 1.2; }
+.side-btn .side-on { fill: none; stroke: #f39c12; stroke-width: 3; stroke-linejoin: round; }
+.step-btn { height: 22px; padding: 0; background: none; border: none; color: var(--text); font-size: 15px; line-height: 1; cursor: pointer; border-radius: 3px; }
+.step-btn:hover { background: var(--panel-2); color: var(--accent); }
+.axis-row input[type='range'] { width: 100%; min-width: 0; }
+.axis-cuts .check { margin: 6px 0 2px; }
+.axis-scope { margin: 8px 0 4px; height: 28px; }
+.axis-buttons { display: grid; grid-template-columns: 1fr 1.3fr 1fr; gap: 6px; margin-top: 6px; }
+.axis-buttons .btn { justify-content: center; }
+.clip-widget { width: 330px; }
+.clip-widget .axis-cuts { margin-top: 10px; }
+.clip-chip { position: absolute; right: 12px; top: 12px; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); font-size: 12px; cursor: pointer; }
+.clip-chip:hover { border-color: var(--accent); color: var(--accent); }
+.clip-chip svg { width: 15px; height: 15px; }
+.repair-tabs.two-tabs .segmented { grid-template-columns: 1fr 1fr; }
+.axis-buttons .btn { white-space: nowrap; padding-left: 4px; padding-right: 4px; }

@@ -15,7 +15,7 @@ import { nextColor } from './palette';
 import type { FaceSelection, Part, Preview, ToolId } from './types';
 import { meshEntry, updateMeshEntry } from './meshCache';
 import {
-  centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, planesFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
+  centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, planeNames, planesFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
 } from './math';
 import { viewerApi } from '../viewer/api';
 import { endLive } from './livePreview';
@@ -362,6 +362,21 @@ export function replaceWithWorldMeshes(label: string, partId: string, results: {
   commit(label, parts, { selection: created.map((c) => c.id), faceSelection: null });
 }
 
+/** Replace several parts, each by its own new world-space meshes, as a single undo step. */
+export function replaceManyWithWorldMeshes(label: string, items: { id: string; results: { name: string; mesh: MeshData; color?: string }[] }[]) {
+  let parts = getState().parts;
+  const created: Part[] = [];
+  for (const { id, results } of items) {
+    const idx = parts.findIndex((p) => p.id === id);
+    if (idx < 0) continue;
+    const old = parts[idx];
+    const made = results.map((r, i) => ({ ...partFromWorld(r.name, r.mesh, r.color ?? (i === 0 ? old.color : undefined), old.source), sourcePath: old.sourcePath, importedAt: old.importedAt }));
+    created.push(...made);
+    parts = [...parts.slice(0, idx), ...made, ...parts.slice(idx + 1)];
+  }
+  commit(label, parts, { selection: created.map((c) => c.id), faceSelection: null });
+}
+
 /** Replace a part's local mesh keeping its transform (repairs). */
 export function replaceLocalMesh(label: string, partId: string, mesh: MeshData) {
   prepareMesh(mesh);
@@ -370,55 +385,110 @@ export function replaceLocalMesh(label: string, partId: string, mesh: MeshData) 
 
 // ---------------------------------------------------------------- cut
 
-export async function previewCut() {
+/** Parts a plane cut applies to: every visible unlocked part, or the selected unlocked ones. */
+export function cutTargets(): Part[] {
   const s = getState();
-  const part = editable()[0];
-  if (!part) return notify('warning', 'Select an unlocked part to cut');
+  return (s.cutPlane.scope ?? 'all') === 'all' ? s.parts.filter((p) => p.visible && !p.locked) : s.parts.filter((p) => s.selection.includes(p.id) && !p.locked);
+}
+
+/** Cut planes back through the middle of the parts, keeping the lower sides. */
+export function resetCutPlanes() {
+  const s = getState();
+  const parts = cutTargets();
+  const c = centeredPlane(s.cutPlane, parts.length ? parts : s.parts);
+  const r = c.rows;
+  setState({ cutPlane: { ...c, flip: false, rows: r && { x: { ...r.x, flip: false }, y: { ...r.y, flip: false }, z: { ...r.z, flip: false } } }, preview: null });
+}
+
+/** Cut the target parts by every active plane; null when cancelled or nothing was cut. */
+async function computeCut(): Promise<{ replaces: string[]; pieces: { name: string; mesh: MeshData; color: string; from: string }[]; summary: string[] } | null> {
+  const s = getState();
+  const parts = cutTargets();
+  if (!parts.length) {
+    notify('warning', (s.cutPlane.scope ?? 'all') === 'all' ? 'There are no unlocked parts to cut' : 'Select the parts to cut');
+    return null;
+  }
   const planes = planesFromSettings(s.cutPlane);
-  const names = [s.cutPlane.axis === 'free' ? 'P' : s.cutPlane.axis.toUpperCase(), ...(s.cutPlane.extra ?? []).map((e) => e.axis.toUpperCase())];
-  // cut by each plane in turn: every piece so far is split again
-  let pieces: { mesh: MeshData; sides: number[] }[] = [{ mesh: worldMesh(part), sides: [] }];
-  const methods = new Set<string>();
-  for (let k = 0; k < planes.length; k++) {
-    const next: typeof pieces = [];
-    for (const pc of pieces) {
-      const r = await runJob(planes.length > 1 ? `Cutting (${names[k]})` : 'Cutting', 'cut', { mesh: pc.mesh, plane: planes[k] });
-      if (!r) return;
-      methods.add(r.method);
-      if (r.above.indices.length) next.push({ mesh: r.above, sides: [...pc.sides, 1] });
-      if (r.below.indices.length) next.push({ mesh: r.below, sides: [...pc.sides, -1] });
-    }
-    pieces = next;
+  if (!planes.length) {
+    notify('warning', 'Switch on at least one cut plane (click an axis icon)');
+    return null;
   }
-  if (pieces.length < 2) {
-    notify('warning', planes.length > 1 ? 'The planes do not intersect the part' : 'The plane does not intersect the part');
-    return;
-  }
-  // the gap moves every piece away from each plane it was cut by
+  const names = planeNames(s.cutPlane);
   const gap = s.settings.cut.gap;
-  const shift = (m: MeshData, sides: number[]): MeshData => {
-    if (!gap) return m;
-    const d = [0, 0, 0];
-    sides.forEach((side, k) => planes[k].normal.forEach((v, a) => (d[a] += (v * side * gap) / 2)));
-    const p = m.positions.slice();
-    for (let i = 0; i < p.length; i += 3) {
-      p[i] += d[0];
-      p[i + 1] += d[1];
-      p[i + 2] += d[2];
+  const methods = new Set<string>();
+  const replaces: string[] = [];
+  const out: { name: string; mesh: MeshData; color: string; from: string }[] = [];
+  for (const part of parts) {
+    // cut by each plane in turn: every piece so far is split again
+    let pieces: { mesh: MeshData; sides: number[] }[] = [{ mesh: worldMesh(part), sides: [] }];
+    for (let k = 0; k < planes.length; k++) {
+      const next: typeof pieces = [];
+      for (const pc of pieces) {
+        const r = await runJob(`Cutting ${part.name}${planes.length > 1 ? ` (${names[k]})` : ''}`, 'cut', { mesh: pc.mesh, plane: planes[k] });
+        if (!r) return null;
+        methods.add(r.method);
+        if (r.above.indices.length) next.push({ mesh: r.above, sides: [...pc.sides, 1] });
+        if (r.below.indices.length) next.push({ mesh: r.below, sides: [...pc.sides, -1] });
+      }
+      pieces = next;
     }
-    return { positions: p, indices: m.indices };
-  };
-  const label = (sides: number[]) =>
-    planes.length === 1 ? (sides[0] > 0 ? 'A' : 'B') : sides.map((side, k) => `${names[k]}${side > 0 ? '+' : '−'}`).join(' ');
-  const out = pieces.map((pc, i) => ({ name: `${part.name} ${label(pc.sides)}`, mesh: shift(pc.mesh, pc.sides), color: i === 0 ? part.color : nextColor() }));
+    if (pieces.length < 2) continue; // the planes miss this part
+    replaces.push(part.id);
+    // the gap moves every piece away from each plane it lies past
+    const shift = (m: MeshData, sides: number[]): MeshData => {
+      if (!gap) return m;
+      const d = [0, 0, 0];
+      sides.forEach((side, k) => planes[k].normal.forEach((v, a) => (d[a] += (v * side * gap) / 2)));
+      const p = m.positions.slice();
+      for (let i = 0; i < p.length; i += 3) {
+        p[i] += d[0];
+        p[i + 1] += d[1];
+        p[i + 2] += d[2];
+      }
+      return { positions: p, indices: m.indices };
+    };
+    const label = (sides: number[]) =>
+      planes.length === 1 ? (sides[0] > 0 ? 'A' : 'B') : sides.map((side, k) => `${names[k]}${side > 0 ? '+' : '−'}`).join(' ');
+    pieces.forEach((pc, i) => out.push({ name: `${part.name} ${label(pc.sides)}`, mesh: shift(pc.mesh, pc.sides), color: i === 0 ? part.color : nextColor(), from: part.id }));
+  }
+  if (!replaces.length) {
+    notify('warning', planes.length > 1 ? 'The planes do not intersect the parts' : 'The plane does not intersect the parts');
+    return null;
+  }
+  const summary = [
+    `Method: ${[...methods].join(', ')}`,
+    `${replaces.length} part${replaces.length > 1 ? 's' : ''} cut into ${out.length} pieces`,
+    ...(out.length <= 12 ? out.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`) : []),
+  ];
+  return { replaces, pieces: out, summary };
+}
+
+function applyCut(c: { replaces: string[]; pieces: { name: string; mesh: MeshData; color: string; from: string }[] }) {
+  replaceManyWithWorldMeshes('Cut', c.replaces.map((id) => ({ id, results: c.pieces.filter((p) => p.from === id) })));
+}
+
+export async function previewCut() {
+  const c = await computeCut();
+  if (!c) return;
+  const planes = planeNames(getState().cutPlane);
   setPreview({
     tool: 'cut',
-    label: planes.length > 1 ? `Cut (${names.join(' + ')})` : 'Cut',
-    replaces: [part.id],
-    meshes: out,
-    summary: [`Method: ${[...methods].join(', ')}`, ...(planes.length > 1 ? [`${out.length} pieces`] : []), ...out.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`)],
-    apply: () => replaceWithWorldMeshes('Cut', part.id, out),
+    label: planes.length > 1 ? `Cut (${planes.join(' + ')})` : 'Cut',
+    replaces: c.replaces,
+    meshes: c.pieces,
+    summary: c.summary,
+    apply: () => applyCut(c),
   });
+}
+
+/** Cut right away (one undo step). */
+export async function executeCut() {
+  endLive();
+  setState({ preview: null });
+  const c = await computeCut();
+  if (!c) return;
+  applyCut(c);
+  notify('success', c.summary[1]);
 }
 
 /** Split along a lap / tongue joint profile laid on the cut plane, so the pieces key together. */

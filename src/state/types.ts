@@ -82,15 +82,19 @@ export interface PlaneSettings {
   /** tilt of an axis plane about its two perpendicular world axes, degrees */
   tiltA?: number;
   tiltB?: number;
-  /** further axis planes used together with this one (several axes at once) */
-  extra?: AxisPlane[];
+  /** X / Y / Z cut rows, any combination of them; used unless `angled` */
+  rows?: Record<'x' | 'y' | 'z', AxisRow>;
+  /** one plane at any angle (axis or free, with tilt) instead of the X / Y / Z rows */
+  angled?: boolean;
   /** section clip with several planes: cut away only the corner where they all meet (default), or keep only what lies inside all of them */
   combine?: 'corner' | 'common';
+  /** clip / cut all parts or only the selected ones */
+  scope?: 'all' | 'selected';
 }
 
-/** An extra axis-aligned plane: position along its axis (mm) and which side is kept / which side is "above". */
-export interface AxisPlane {
-  axis: 'x' | 'y' | 'z';
+/** One axis row of the cut / clip panel: on or off, position along the axis (mm) and which side is kept (flip = keep the upper side). */
+export interface AxisRow {
+  on: boolean;
   offset: number;
   flip: boolean;
 }

@@ -111,9 +111,22 @@ export function planeFromSettings(s: { axis: string; azimuth: number; elevation:
     : { normal: n, constant: s.offset };
 }
 
-/** All planes of the settings: the main one, then the extra axis planes (several axes at once). */
-export function planesFromSettings(s: { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number; tiltA?: number; tiltB?: number; extra?: { axis: string; offset: number; flip: boolean }[] }) {
-  return [planeFromSettings(s), ...(s.extra ?? []).map((e) => planeFromSettings({ axis: e.axis, azimuth: 0, elevation: 0, flip: e.flip, offset: e.offset }))];
+type PlaneLike = { axis: string; azimuth: number; elevation: number; flip: boolean; offset: number; tiltA?: number; tiltB?: number; rows?: Record<'x' | 'y' | 'z', { on: boolean; offset: number; flip: boolean }>; angled?: boolean };
+
+/** Axes of the X / Y / Z rows that are switched on (empty when the settings use one angled plane). */
+export function activeAxes(s: PlaneLike): ('x' | 'y' | 'z')[] {
+  return s.rows && !s.angled ? (['x', 'y', 'z'] as const).filter((a) => s.rows![a].on) : [];
+}
+
+/** All planes of the settings: the X / Y / Z rows that are on, or the one angled plane. */
+export function planesFromSettings(s: PlaneLike) {
+  if (!s.rows || s.angled) return [planeFromSettings(s)];
+  return activeAxes(s).map((a) => planeFromSettings({ axis: a, azimuth: 0, elevation: 0, flip: s.rows![a].flip, offset: s.rows![a].offset }));
+}
+
+/** Names of the planes, as used for the pieces of a cut (X, Y, Z, or P for an angled plane). */
+export function planeNames(s: PlaneLike): string[] {
+  return !s.rows || s.angled ? [s.axis === 'free' ? 'P' : s.axis.toUpperCase()] : activeAxes(s).map((a) => a.toUpperCase());
 }
 
 const localBoundsCache = new WeakMap<MeshData, Box3>();
@@ -145,5 +158,11 @@ export function centeredPlane<T extends { axis: string; azimuth: number; elevati
   if (b.isEmpty()) return s;
   const c = b.getCenter(new Vector3());
   const n = planeNormal({ ...s, flip: false });
-  return { ...s, offset: Math.round((c.x * n[0] + c.y * n[1] + c.z * n[2]) * 100) / 100 };
+  const r = (v: number) => Math.round(v * 100) / 100;
+  const rows = (s as { rows?: Record<'x' | 'y' | 'z', { on: boolean; offset: number; flip: boolean }> }).rows;
+  return {
+    ...s,
+    offset: r(c.x * n[0] + c.y * n[1] + c.z * n[2]),
+    ...(rows ? { rows: { x: { ...rows.x, offset: r(c.x) }, y: { ...rows.y, offset: r(c.y) }, z: { ...rows.z, offset: r(c.z) } } } : {}),
+  };
 }

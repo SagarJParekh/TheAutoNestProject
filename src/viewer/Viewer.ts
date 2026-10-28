@@ -77,6 +77,14 @@ interface CapSet {
   sectionKey?: string;
 }
 
+/** Anything that can get section caps: a part, or a mesh of a preview. */
+interface CapHost {
+  mesh: Mesh;
+  group: Group;
+  part: { color: string };
+  caps?: CapSet[];
+}
+
 interface PartObject {
   part: Part;
   group: Group;
@@ -156,15 +164,20 @@ export class Viewer {
   private clipPlanes: Plane[] = [];
   /** several planes: cut away only the corner where all of them clip (else keep only what all of them keep) */
   private clipCorner = true;
-  /** is a point left visible by the clip planes? */
-  private unclipped(p: Vector3): boolean {
+  /** "clip selected parts": only these parts are clipped (null = all) */
+  private clipScope: Set<string> | null = null;
+  private inClip(partId: string) {
+    return !this.clipScope || this.clipScope.has(partId);
+  }
+  /** is a point (of a part) left visible by the clip planes? */
+  private unclipped(p: Vector3, partId?: string): boolean {
     const ps = this.clipPlanes;
-    if (!ps.length) return true;
+    if (!ps.length || (partId && !this.inClip(partId))) return true;
     return this.clipCorner && ps.length > 1 ? ps.some((q) => q.distanceToPoint(p) >= 0) : ps.every((q) => q.distanceToPoint(p) >= 0);
   }
   /** apply the clip planes to a material */
-  private clipMaterial(m: Material) {
-    m.clippingPlanes = this.clipPlanes.length ? this.clipPlanes : null;
+  private clipMaterial(m: Material, on = true) {
+    m.clippingPlanes = on && this.clipPlanes.length ? this.clipPlanes : null;
     m.clipIntersection = this.clipCorner && this.clipPlanes.length > 1;
   }
   private previewKey: unknown = null;
@@ -471,6 +484,7 @@ export class Viewer {
       this.clipPlanes = s.clipEnabled ? planesFromSettings(s.clip).map((p) => new Plane(new Vector3(-p.normal[0], -p.normal[1], -p.normal[2]), p.constant)) : [];
       this.clipCorner = s.clip.combine !== 'common';
     }
+    this.clipScope = s.clipEnabled && s.clip.scope === 'selected' ? new Set(s.selection) : null;
 
     const seen = new Set<string>();
     const selected = new Set(s.selection);
@@ -564,7 +578,7 @@ export class Viewer {
     material.opacity = ghost ? 0.12 : mode === 'xray' ? 0.28 : 1;
     material.depthWrite = !xray;
     // clipping plane count / transparency are picked up by the renderer without a program rebuild
-    this.clipMaterial(material);
+    this.clipMaterial(material, this.inClip(part.id));
 
     // feature edges
     const wantEdges = (mode === 'edges' || mode === 'xray') && !ghost && part.visible;
@@ -587,7 +601,7 @@ export class Viewer {
       obj.edges.visible = wantEdges;
       const lm = obj.edges.material as LineBasicMaterial;
       lm.color.set(mode === 'xray' ? color : new Color(0x0b0d10));
-      this.clipMaterial(lm);
+      this.clipMaterial(lm, this.inClip(part.id));
     }
 
     // selection bounding box (the Dimensions tab draws its own exact box)
@@ -603,7 +617,7 @@ export class Viewer {
       obj.selBox.visible = true;
     } else if (obj.selBox) obj.selBox.visible = false;
 
-    this.updateClipCaps(obj, index, part.visible && !ghost);
+    this.updateClipCaps(obj, index, part.visible && !ghost && this.inClip(part.id));
   }
 
   /** Called by the canvas component to fetch edges lazily. */
@@ -611,7 +625,7 @@ export class Viewer {
 
   // ------------------------------------------------------------------ clipping caps
 
-  private updateClipCaps(obj: PartObject, index: number, visible: boolean) {
+  private updateClipCaps(obj: CapHost, index: number, visible: boolean) {
     const planes = this.clipPlanes;
     const caps = (obj.caps ??= []);
     caps.forEach((c, i) => {
@@ -679,7 +693,7 @@ export class Viewer {
     });
   }
 
-  private makeCapSet(obj: PartObject): CapSet {
+  private makeCapSet(obj: CapHost): CapSet {
     const base = {
       depthWrite: false,
       depthTest: false,
@@ -770,45 +784,63 @@ export class Viewer {
 
   // ------------------------------------------------------------------ preview & overlays
 
+  /** preview meshes, each in its own group so it can get section caps */
+  private previewHosts: CapHost[] = [];
+
   private syncPreview(s: AppState) {
     const p = s.preview;
-    if (this.previewKey === p) {
-      for (const c of this.previewGroup.children) if (c instanceof Mesh) this.clipMaterial(c.material as Material);
-      return;
-    }
-    this.previewKey = p;
-    for (const c of this.previewGroup.children) {
-      if (c instanceof Mesh || c instanceof LineSegments) {
-        c.geometry.dispose();
-        (c.material as Material).dispose();
+    if (this.previewKey !== p) {
+      this.previewKey = p;
+      for (const h of this.previewHosts) for (const c of h.caps ?? []) {
+        c.section?.geometry.dispose();
+        this.capsGroup.remove(c.cap);
+      }
+      this.previewHosts = [];
+      this.previewGroup.traverse((c) => {
+        if (c instanceof Mesh || c instanceof LineSegments) {
+          // stencil meshes share the preview geometry, section outlines are freed with their caps above
+          if (c.userData.previewMesh) c.geometry.dispose();
+          (c.material as Material).dispose();
+        }
+      });
+      this.previewGroup.clear();
+      if (p) {
+        for (const pm of p.meshes) {
+          const g = new BufferGeometry();
+          g.setAttribute('position', new BufferAttribute(pm.mesh.positions, 3));
+          g.setIndex(new BufferAttribute(pm.mesh.indices, 1));
+          g.computeBoundingSphere();
+          const m = createPartMaterial(pm.color);
+          m.emissive.set(pm.color).multiplyScalar(0.12);
+          if (p.xray) {
+            // see-through, so the inside (lattice, inner wall) shows
+            m.transparent = true;
+            m.opacity = 0.3;
+            m.depthWrite = false;
+          }
+          const mesh = new Mesh(g, m);
+          mesh.raycast = () => {};
+          mesh.userData.previewMesh = true;
+          const group = new Group();
+          group.add(mesh);
+          this.previewGroup.add(group);
+          this.previewHosts.push({ mesh, group, part: { color: pm.color } });
+        }
+        if (p.lines && p.lines.length) {
+          const g = new BufferGeometry().setAttribute('position', new BufferAttribute(p.lines, 3));
+          const l = new LineSegments(g, new LineBasicMaterial({ color: ACCENT }));
+          l.userData.previewMesh = true;
+          this.previewGroup.add(l);
+        }
       }
     }
-    this.previewGroup.clear();
-    if (!p) return;
-    for (const pm of p.meshes) {
-      const g = new BufferGeometry();
-      g.setAttribute('position', new BufferAttribute(pm.mesh.positions, 3));
-      g.setIndex(new BufferAttribute(pm.mesh.indices, 1));
-      g.computeBoundingSphere();
-      const m = createPartMaterial(pm.color);
-      m.emissive.set(pm.color).multiplyScalar(0.12);
-      this.clipMaterial(m);
-      if (p.xray) {
-        // see-through, so the inside (lattice, inner wall) shows
-        m.transparent = true;
-        m.opacity = 0.3;
-        m.depthWrite = false;
-      }
-      const mesh = new Mesh(g, m);
-      mesh.raycast = () => {};
-      this.previewGroup.add(mesh);
-    }
-    if (p.lines && p.lines.length) {
-      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(p.lines, 3));
-      const l = new LineSegments(g, new LineBasicMaterial({ color: ACCENT }));
-      this.previewGroup.add(l);
-    }
+    // the clip planes cut the preview too, with caps, so it can be checked inside before Apply
+    this.previewHosts.forEach((h, i) => {
+      this.clipMaterial(h.mesh.material as Material);
+      this.updateClipCaps(h, 1000 + i, true);
+    });
   }
+
 
   private syncOverlays(s: AppState) {
     // per-part overlays: analysis highlights, face selection
@@ -1257,7 +1289,7 @@ export class Viewer {
       const i = h.faceIndex * 3;
       return groups.some((g) => i >= g.start && i < g.start + g.count);
     };
-    const hit = hits.find((h) => this.unclipped(h.point) && drawn(h));
+    const hit = hits.find((h) => this.unclipped(h.point, h.object.userData.partId) && drawn(h));
     if (!hit || hit.faceIndex === undefined || hit.faceIndex === null || !hit.face) return null;
     const nm = new Matrix3().getNormalMatrix(hit.object.matrixWorld);
     const n = hit.face.normal.clone().applyMatrix3(nm).normalize();

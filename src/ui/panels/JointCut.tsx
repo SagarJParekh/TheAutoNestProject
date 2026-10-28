@@ -88,7 +88,7 @@ export function JointCut({ target }: { target?: Part }) {
           </button>
         ))}
       </div>
-      <PlaneControls value={{ ...plane, extra: undefined }} parts={target ? [target] : []} onChange={(p) => setState({ cutPlane: p, preview: null })} />
+      <PlaneControls value={plane} parts={target ? [target] : []} onChange={(p) => setState({ cutPlane: { ...p, rows: plane.rows, angled: plane.angled }, preview: null })} />
       {tongue ? (
         <>
           {mmField('Overlap length', 'depth', 'How far the two pieces overlap along the plane normal (0 = automatic, from the section size)')}

@@ -103,7 +103,11 @@ export interface AppState {
   showExport: boolean;
 }
 
-const defaultPlane = (axis: PlaneSettings['axis']): PlaneSettings => ({ axis, azimuth: 30, elevation: 20, offset: 0, flip: false });
+const defaultPlane = (axis: PlaneSettings['axis']): PlaneSettings => ({
+  axis, azimuth: 30, elevation: 20, offset: 0, flip: false,
+  rows: { x: { on: false, offset: 0, flip: false }, y: { on: false, offset: 0, flip: false }, z: { on: true, offset: 0, flip: false } },
+  scope: 'all',
+});
 
 export const useStore = create<AppState>(() => ({
   parts: [],

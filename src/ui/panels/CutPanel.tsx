@@ -1,8 +1,8 @@
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { startLasso, startPolyline } from '../../state/editActions';
 import { getState, setState, useStore } from '../../state/store';
-import { previewCut } from '../../state/actions';
-import { PlaneControls } from './PlaneControls';
+import { executeCut, previewCut, resetCutPlanes } from '../../state/actions';
+import { AxisCuts } from './PlaneControls';
 import { JointCut } from './JointCut';
 import type { Part } from '../../state/types';
 import { live } from '../../state/livePreview';
@@ -12,6 +12,10 @@ export function CutPanel({ parts }: { parts: Part[] }) {
   const gap = useStore((s) => s.settings.cut.gap);
   const preview = useStore((s) => s.preview);
   const target = parts.find((p) => !p.locked);
+  const all = useStore((s) => s.parts);
+  const selection = useStore((s) => s.selection);
+  const scoped = (plane.scope ?? 'all') === 'all' ? all.filter((p) => p.visible && !p.locked) : all.filter((p) => selection.includes(p.id) && !p.locked);
+  const busy = useStore((s) => s.jobs.length > 0);
   const mode = useStore((s) => s.settings.cutMode);
   const lassoing = useStore((s) => s.lassoMode);
   const drawing = useStore((s) => s.polyMode);
@@ -75,21 +79,33 @@ export function CutPanel({ parts }: { parts: Part[] }) {
   return (
     <Section title="Cut">
       {modes}
-      {!target && <Hint>Select one unlocked part to cut.</Hint>}
-      <PlaneControls value={plane} parts={target ? [target] : []} multi onChange={(p) => setState({ cutPlane: p, preview: null })} />
-      <Row label="Gap">
-        <NumberField
-          value={gap}
-          min={0}
-          suffix="mm"
-          onChange={(g) => setState({ settings: { ...getState().settings, cut: { gap: g } }, preview: null })}
-          title="Move the two halves apart after cutting"
-        />
-      </Row>
-      <button className="btn primary wide" disabled={!target || !!preview} onClick={() => live(previewCut)}>
-        Preview cut
-      </button>
-      <Hint>Splits the part into two closed parts; the cut faces are capped. Use the tilt sliders (or Free) to angle the plane. With several axes at once the part is cut by every plane: X and Y give four pieces, X, Y and Z eight.</Hint>
+      <AxisCuts kind="cut" value={plane} parts={scoped.length ? scoped : all} onChange={(p) => setState({ cutPlane: p, preview: null })}>
+        <Row label="Gap">
+          <NumberField
+            value={gap}
+            min={0}
+            suffix="mm"
+            onChange={(g) => setState({ settings: { ...getState().settings, cut: { gap: g } }, preview: null })}
+            title="Move the pieces apart after cutting"
+          />
+        </Row>
+        {!scoped.length && <Hint>{(plane.scope ?? 'all') === 'all' ? 'No unlocked parts to cut.' : 'Select the parts to cut.'}</Hint>}
+        <div className="btn-row axis-buttons">
+          <button className="btn" disabled={!scoped.length || !!preview || busy} onClick={() => live(previewCut)} title="Show the pieces first; Apply or Cancel on the preview card">
+            Preview
+          </button>
+          <button className="btn primary" disabled={!scoped.length || busy} onClick={() => executeCut()} title="Cut now (undo with Ctrl+Z)">
+            Execute cut
+          </button>
+          <button className="btn" onClick={resetCutPlanes} title="Planes back through the middle of the parts">
+            Reset
+          </button>
+        </div>
+      </AxisCuts>
+      <Hint>
+        Click an axis icon to switch that plane on, choose the side or switch it off; ‹ › step by 1 mm (Shift: 10 mm). Every plane that is on cuts the
+        parts: X and Y give four pieces, X, Y and Z eight. Angled plane cuts with one plane at any angle. The cut faces are capped.
+      </Hint>
     </Section>
   );
 }

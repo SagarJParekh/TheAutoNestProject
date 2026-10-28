@@ -1,87 +1,34 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Vector3 } from 'three';
 import { NumberField, Row, Segmented, Slider, Check } from '../controls';
-import type { AxisPlane, Part, PlaneSettings } from '../../state/types';
+import type { AxisRow, Part, PlaneSettings } from '../../state/types';
 import { approxSceneBounds, planeNormal, TILT_AXES } from '../../state/math';
 
 type Axis = 'x' | 'y' | 'z';
 const AXES: Axis[] = ['x', 'y', 'z'];
-
-/** Position slider + flip for one axis plane (several-axes mode). */
-function AxisRows({ axis, offset, flip, parts, onChange }: { axis: Axis; offset: number; flip: boolean; parts: Part[]; onChange: (p: { offset?: number; flip?: boolean }) => void }) {
-  const range = useMemo(() => {
-    const b = approxSceneBounds(parts);
-    if (b.isEmpty()) return { min: -100, max: 100 };
-    const lo = b.min[axis], hi = b.max[axis], pad = (hi - lo) * 0.02 + 0.01;
-    return { min: lo - pad, max: hi + pad };
-  }, [parts, axis]);
-  const A = axis.toUpperCase();
-  return (
-    <>
-      <Row label={`${A} position`}>
-        <Slider value={offset} min={range.min} max={range.max} step={(range.max - range.min) / 1000 || 0.01} onChange={(o) => onChange({ offset: o })} />
-        <NumberField value={offset} onChange={(o) => onChange({ offset: o })} suffix="mm" precision={2} width={90} />
-      </Row>
-      <Row>
-        <Check checked={flip} onChange={(f) => onChange({ flip: f })}>
-          Flip {A} side
-        </Check>
-      </Row>
-    </>
-  );
-}
+const OFF: AxisRow = { on: false, offset: 0, flip: false };
 
 /**
- * Plane settings. With `multi`, several axis planes can be used at once (X, Y and Z together);
- * with `combine`, the choice of how a section clip combines them is shown too.
+ * The cut / clip panel: one row per axis (side switch, ‹ slider › and position),
+ * any combination of X, Y and Z, then which parts it applies to. "Angled plane"
+ * swaps the rows for one plane at any angle.
  */
-export function PlaneControls({ value, onChange, parts, multi = false, combine = false }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[]; multi?: boolean; combine?: boolean }) {
-  if (multi && value.extra) return <MultiAxis value={value} onChange={onChange} parts={parts} combine={combine} />;
-  return <SinglePlane value={value} onChange={onChange} parts={parts} multi={multi} />;
-}
-
-const centreOf = (parts: Part[], axis: Axis) => {
-  const b = approxSceneBounds(parts);
-  return b.isEmpty() ? 0 : Math.round(((b.min[axis] + b.max[axis]) / 2) * 100) / 100;
-};
-
-function MultiAxis({ value, onChange, parts, combine }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[]; combine: boolean }) {
-  const main = value.axis as Axis;
-  const extra = value.extra ?? [];
-  const active = new Set<Axis>([main, ...extra.map((e) => e.axis)]);
-  const toggle = (a: Axis) => {
-    if (!active.has(a)) return onChange({ ...value, extra: [...extra, { axis: a, offset: centreOf(parts, a), flip: false }] });
-    if (active.size === 1) return;
-    if (a !== main) return onChange({ ...value, extra: extra.filter((e) => e.axis !== a) });
-    // the main axis goes: the first extra plane takes its place
-    const [first, ...rest] = extra;
-    onChange({ ...value, axis: first.axis, offset: first.offset, flip: first.flip, extra: rest });
-  };
-  const setExtra = (a: Axis, patch: Partial<AxisPlane>) => onChange({ ...value, extra: extra.map((e) => (e.axis === a ? { ...e, ...patch } : e)) });
+export function AxisCuts({ value, onChange, parts, kind, children }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[]; kind: 'clip' | 'cut'; children?: ReactNode }) {
+  const rows = value.rows ?? { x: OFF, y: OFF, z: { ...OFF, on: true } };
+  const setRow = (a: Axis, patch: Partial<AxisRow>) => onChange({ ...value, rows: { ...rows, [a]: { ...rows[a], ...patch } } });
+  const on = AXES.filter((a) => rows[a].on).length;
   return (
-    <>
-      <Row>
-        <Check checked onChange={() => onChange({ ...value, extra: undefined })}>
-          Several axes at once
-        </Check>
-      </Row>
-      <Row label="Axes">
-        <div className="segmented" role="group">
-          {AXES.map((a) => (
-            <button key={a} className={active.has(a) ? 'active' : ''} aria-pressed={active.has(a)} onClick={() => toggle(a)} title={`Use a ${a.toUpperCase()} plane`}>
-              {a.toUpperCase()}
-            </button>
-          ))}
-        </div>
-      </Row>
-      {AXES.filter((a) => active.has(a)).map((a) =>
-        a === main ? (
-          <AxisRows key={a} axis={a} offset={value.offset} flip={value.flip} parts={parts} onChange={(p) => onChange({ ...value, ...p })} />
-        ) : (
-          <AxisRows key={a} axis={a} offset={extra.find((e) => e.axis === a)!.offset} flip={extra.find((e) => e.axis === a)!.flip} parts={parts} onChange={(p) => setExtra(a, p)} />
-        ),
+    <div className="axis-cuts">
+      <div className="axis-cuts-title">{kind === 'clip' ? 'Clips' : 'Cuts'}</div>
+      {value.angled ? (
+        <PlaneControls value={value} parts={parts} onChange={onChange} />
+      ) : (
+        AXES.map((a) => <AxisCutRow key={a} axis={a} row={rows[a]} parts={parts} onChange={(p) => setRow(a, p)} />)
       )}
-      {combine && active.size > 1 && (
+      <Check checked={!!value.angled} onChange={(angled) => onChange({ ...value, angled, rows })}>
+        Angled plane (tilt / free direction)
+      </Check>
+      {kind === 'clip' && !value.angled && on > 1 && (
         <Row label="Cut away">
           <Segmented
             value={value.combine ?? 'corner'}
@@ -93,11 +40,68 @@ function MultiAxis({ value, onChange, parts, combine }: { value: PlaneSettings; 
           />
         </Row>
       )}
-    </>
+      <select className="tb-select wide axis-scope" value={value.scope ?? 'all'} onChange={(e) => onChange({ ...value, scope: e.target.value as 'all' | 'selected' })}>
+        <option value="all">{kind === 'clip' ? 'Clip all parts' : 'Cut all parts'}</option>
+        <option value="selected">{kind === 'clip' ? 'Clip selected parts' : 'Cut selected parts'}</option>
+      </select>
+      {children}
+    </div>
   );
 }
 
-function SinglePlane({ value, onChange, parts, multi }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[]; multi: boolean }) {
+/** Icon of an axis row: grey when off, an orange bracket open towards the side that is cut away when on. */
+function SideIcon({ row }: { row: AxisRow }) {
+  return (
+    <svg viewBox="0 0 22 16" width="22" height="16" aria-hidden>
+      {!row.on ? (
+        <rect x="2" y="2.5" width="18" height="11" rx="3" className="side-off" />
+      ) : row.flip ? (
+        <path d="M18 2.5H7.5v11H18" className="side-on" />
+      ) : (
+        <path d="M4 2.5h10.5v11H4" className="side-on" />
+      )}
+    </svg>
+  );
+}
+
+function AxisCutRow({ axis, row, parts, onChange }: { axis: Axis; row: AxisRow; parts: Part[]; onChange: (p: Partial<AxisRow>) => void }) {
+  const range = useMemo(() => {
+    const b = approxSceneBounds(parts);
+    if (b.isEmpty()) return { min: -100, max: 100 };
+    const lo = b.min[axis], hi = b.max[axis], pad = (hi - lo) * 0.02 + 0.01;
+    return { min: lo - pad, max: hi + pad };
+  }, [parts, axis]);
+  const A = axis.toUpperCase();
+  const span = range.max - range.min;
+  // ‹ › step a millimetre (Shift: ten), never past the ends of the slider
+  const step = (dir: number, big: boolean) => {
+    const v = Math.round((row.offset + dir * (big ? 10 : 1)) * 100) / 100;
+    onChange({ offset: Math.min(range.max, Math.max(range.min, v)), on: true });
+  };
+  // click: off → keep the lower side → keep the upper side → off
+  const cycle = () => onChange(!row.on ? { on: true, flip: false } : !row.flip ? { flip: true } : { on: false, flip: false });
+  const state = !row.on ? 'off' : row.flip ? `keeps the side above ${A} = ${row.offset}` : `keeps the side below ${A} = ${row.offset}`;
+  return (
+    <div className={`axis-row ${row.on ? 'on' : ''}`}>
+      <span className="axis-name">{A}:</span>
+      <button className="side-btn" onClick={cycle} title={`${A} plane ${state}. Click: off → keep below → keep above`}>
+        <SideIcon row={row} />
+      </button>
+      <button className="step-btn" onClick={(e) => step(-1, e.shiftKey)} title="−1 mm (Shift: −10 mm)">
+        ‹
+      </button>
+      <Slider value={row.offset} min={range.min} max={range.max} step={span / 1000 || 0.01} onChange={(offset) => onChange({ offset, on: true })} />
+      <button className="step-btn" onClick={(e) => step(1, e.shiftKey)} title="+1 mm (Shift: +10 mm)">
+        ›
+      </button>
+      <NumberField value={row.offset} onChange={(offset) => onChange({ offset })} precision={2} width={70} />
+      <span className="axis-unit">mm</span>
+    </div>
+  );
+}
+
+/** One plane: X / Y / Z or a free direction, with tilt angles, position and side. */
+export function PlaneControls({ value, onChange, parts }: { value: PlaneSettings; onChange: (p: PlaneSettings) => void; parts: Part[] }) {
   const n = planeNormal({ ...value, flip: false });
   const range = useMemo(() => {
     const b = approxSceneBounds(parts);
@@ -187,28 +191,6 @@ function SinglePlane({ value, onChange, parts, multi }: { value: PlaneSettings; 
           Flip side
         </Check>
       </Row>
-      {multi && (
-        <Row>
-          <Check
-            checked={false}
-            onChange={() => {
-              // start from the current axis (a free plane becomes Z) plus the next one
-              const main: Axis = value.axis === 'free' ? 'z' : value.axis;
-              const next: Axis = main === 'z' ? 'x' : main === 'x' ? 'y' : 'z';
-              onChange({
-                ...value,
-                axis: main,
-                tiltA: 0,
-                tiltB: 0,
-                offset: value.axis === 'free' || value.tiltA || value.tiltB ? centreOf(parts, main) : value.offset,
-                extra: [{ axis: next, offset: centreOf(parts, next), flip: false }],
-              });
-            }}
-          >
-            Several axes at once
-          </Check>
-        </Row>
-      )}
     </>
   );
 }
