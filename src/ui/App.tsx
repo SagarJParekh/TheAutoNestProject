@@ -7,6 +7,7 @@ import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
 import { ClipWidget } from './panels/ClipCutPanel';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
+import { HoverHelp } from './HoverHelp';
 import { initBuildSession } from '../state/buildSession';
 import { useShortcuts } from './shortcuts';
 import { importFiles } from '../state/actions';
@@ -95,6 +96,7 @@ export function App() {
       <ExportDialog />
       <ShortcutsDialog />
       <CommandPalette />
+      <HoverHelp />
       {dragging && (
         <div className="drop-overlay">
           <div>

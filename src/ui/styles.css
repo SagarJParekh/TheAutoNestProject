@@ -492,3 +492,9 @@ table.report tr:last-child td { border-bottom: none; }
 .clip-chip svg { width: 15px; height: 15px; }
 .repair-tabs.two-tabs .segmented { grid-template-columns: 1fr 1fr; }
 .axis-buttons .btn { white-space: nowrap; padding-left: 4px; padding-right: 4px; }
+/* function explanation after resting the cursor 3 s */
+.hover-help { position: fixed; z-index: 1000; padding: 9px 12px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); font-size: 12px; line-height: 1.45; pointer-events: none; animation: hh-in 0.15s ease-out; }
+.hover-help strong { display: block; margin-bottom: 3px; color: var(--accent); font-size: 12.5px; }
+.hover-help p { margin: 0; color: var(--text); }
+.hover-help-toggle { display: block; margin: 0 0 10px; }
+@keyframes hh-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }

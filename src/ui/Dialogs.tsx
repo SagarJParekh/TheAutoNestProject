@@ -5,6 +5,7 @@ import { Icon } from './icons';
 import { NumberField, Row, Segmented } from './controls';
 import { setState, useStore } from '../state/store';
 import { exportParts } from '../state/actions';
+import { hoverHelpOn, setHoverHelp } from './HoverHelp';
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -282,11 +283,29 @@ export const SHORTCUTS: [string, string][] = [
   ['?', 'This help'],
 ];
 
+function HoverHelpToggle() {
+  const [on, setOn] = useState(hoverHelpOn());
+  return (
+    <label className="check hover-help-toggle">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setHoverHelp(e.target.checked);
+          setOn(e.target.checked);
+        }}
+      />{' '}
+      Explain a function when the cursor rests on it for 3 seconds
+    </label>
+  );
+}
+
 export function ShortcutsDialog() {
   const open = useStore((s) => s.showShortcuts);
   if (!open) return null;
   return (
     <Modal title="Keyboard shortcuts" onClose={() => setState({ showShortcuts: false })}>
+      <HoverHelpToggle />
       <table className="shortcuts">
         <tbody>
           {SHORTCUTS.map(([k, v]) => (

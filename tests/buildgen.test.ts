@@ -123,11 +123,13 @@ describe('build generation setup', () => {
   it('has every printer from the sheet with its build volume', () => {
     const v = (name: string, tech: string) => PRINTERS.find((p) => p.name === name && p.tech === tech)?.volume;
     expect(v('Eplus', 'sla')).toEqual([800, 800, 320]);
-    expect(v('Form 4L', 'sla')).toEqual([353, 196, 353]);
-    expect(v('YouSu', 'sla')).toEqual([211, 118, 240]);
+    expect(v('Magform', 'sla')).toEqual([600, 600, 400]);
+    expect(v('Figure 4 (3D Systems)', 'dlp')).toEqual([124.8, 70.2, 196]);
+    expect(v('Form 4L', 'dlp')).toEqual([353, 196, 353]);
+    expect(v('YouSu', 'dlp')).toEqual([211, 118, 240]);
     expect(v('M2', 'dmls')).toEqual([245, 245, 300]);
     expect(v('MLab 200R', 'dmls')).toEqual([100, 100, 100]);
-    for (const tech of ['sla', 'dmls', 'powder']) expect(PRINTERS.some((p) => p.tech === tech && p.custom)).toBe(true);
+    for (const tech of ['sla', 'dlp', 'dmls', 'powder']) expect(PRINTERS.some((p) => p.tech === tech && p.custom)).toBe(true);
   });
 });
 

@@ -11,7 +11,7 @@ import {
   updateBuildSettings,
   setSlcLayer,
 } from '../../state/buildActions';
-import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
+import { PRINTERS, TECHNOLOGIES, isResin, printerById, type Technology } from '../../state/printers';
 import { importableExtensions } from '../../loaders/registry';
 import type { BuildPart, Tilt } from '../../state/types';
 
@@ -455,7 +455,7 @@ export function BuildSetupPanel() {
           <div className="printer-tree">
             {TECHNOLOGIES.map((t) => (
               <div key={t.id} className={`tech ${open === t.id ? 'open' : ''}`}>
-                <button className="tech-head" onClick={() => setOpen(open === t.id ? (null as never) : t.id)}>
+                <button className="tech-head" data-help={t.id === 'powder' ? 'hp mjf / sls' : t.id} data-help-title={t.label} onClick={() => setOpen(open === t.id ? (null as never) : t.id)}>
                   <span className="caret">{open === t.id ? '▾' : '▸'}</span>
                   {t.label}
                   {printer.tech === t.id && <span className="tech-current">{printer.name}</span>}
@@ -464,7 +464,7 @@ export function BuildSetupPanel() {
                   <ul>
                     {PRINTERS.filter((p) => p.tech === t.id).map((p) => (
                       <li key={p.id}>
-                        <label className={g.printerId === p.id ? 'active' : ''}>
+                        <label className={g.printerId === p.id ? 'active' : ''} data-help={p.custom ? 'custom' : undefined} data-help-title={p.custom ? 'Custom printer' : p.name} data-help-text={p.custom ? undefined : `${t.label} printer with a build volume of ${p.volume.join(' × ')} mm (X × Y × Z). Select it and the builds are arranged for this platform.`}>
                           <input type="radio" name="printer" checked={g.printerId === p.id} onChange={() => updateBuildSettings({ printerId: p.id })} />
                           <span className="pname">{p.name}</span>
                           <span className="pvol">{p.custom ? 'your size' : p.volume.join('×')}</span>
@@ -691,7 +691,7 @@ export function BuildsPanel() {
   const active = g.builds[g.active];
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
   const groups = groupLabels(g.parts);
-  const resin = currentPrinter(g).tech === 'sla';
+  const resin = isResin(currentPrinter(g).tech);
   return (
     <aside className="panel right">
       <header className="panel-head">
