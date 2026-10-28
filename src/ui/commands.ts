@@ -77,7 +77,7 @@ export function buildCommands(): Command[] {
     { id: 'repair-selected', label: 'Repair selected parts', group: 'Repair', keywords: 'auto fix batch', run: () => repairParts('selected') },
     { id: 'send-build', label: 'Send parts to Build generation', group: 'File', keywords: 'build platform printer nest pack', run: sendPartsToBuild },
     { id: 'auto-arrange', label: 'Auto arrange (flattest face down, arrange in X / Y)', group: 'Transform', keywords: 'orient lay flat nest pack bed bottom', run: autoArrange },
-    { id: 'arrange', label: 'Arrange parts on bed', group: 'Transform', keywords: 'layout pack nest 2d', run: arrangeOnBed },
+    { id: 'arrange', label: 'Arrange parts on bed', group: 'Transform', keywords: 'layout pack nest 2d', run: () => arrangeOnBed() },
     ...(['x', 'y', 'xy'] as const).map((ax) => ({
       id: `arrange-${ax}`,
       label: `Arrange along ${ax.toUpperCase().split('').join(' + ')}`,

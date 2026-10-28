@@ -322,13 +322,14 @@ function arrangeAxes(): ('x' | 'y')[] {
   return a.length ? a : ['x', 'y'];
 }
 
-export function arrangeOnBed() {
+/** Lay the parts out side by side (the selected ones if several are selected); `along` overrides the chosen directions. */
+export function arrangeOnBed(along?: ('x' | 'y')[]) {
   const s = getState();
   const sel = selectedParts();
   const parts = (sel.length > 1 ? sel : s.parts).filter((p) => !p.locked && p.visible);
   if (!parts.length) return notify('warning', 'Nothing to arrange');
   const { gap } = s.settings.arrange;
-  const axes = arrangeAxes();
+  const axes = along ?? arrangeAxes();
   const boxes = new Map(parts.map((p) => [p.id, worldBounds(p)]));
   const { placements, size } = arrangeBoxes(
     parts.map((p) => {

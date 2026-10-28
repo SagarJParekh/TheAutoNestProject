@@ -139,7 +139,8 @@ export async function importFiles(files: File[]) {
       importedAt: Date.now(),
     }));
     const s = getState();
-    commit(`Import ${file.name}`, [...s.parts, ...parts], { selection: parts.map((p) => p.id) });
+    // imported parts are not selected: the view just shows them (cursor mode, no gizmo)
+    commit(`Import ${file.name}`, [...s.parts, ...parts], { selection: [], ...(s.tool === 'transform' ? { gizmo: 'none' as const } : {}) });
     const tris = parts.reduce((a, p) => a + p.mesh.indices.length / 3, 0);
     notify('success', `Imported ${file.name}: ${parts.length} part${parts.length > 1 ? 's' : ''}, ${tris.toLocaleString()} triangles`);
   });

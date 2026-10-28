@@ -117,7 +117,7 @@ export const useStore = create<AppState>(() => ({
   buildFuture: [],
   selection: [],
   tool: 'transform',
-  gizmo: 'translate',
+  gizmo: 'none',
   display: 'shaded',
   orthographic: false,
   showGrid: true,

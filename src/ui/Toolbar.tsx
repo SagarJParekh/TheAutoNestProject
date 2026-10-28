@@ -5,6 +5,7 @@ import { BuildTabs } from './build/BuildPanels';
 import { setWorkspace } from '../state/buildActions';
 import { getState, redo, setState, undo, undoLabel, useStore } from '../state/store';
 import { importFiles, setImportQuality, setTool } from '../state/actions';
+import { arrangeOnBed } from '../state/featureActions';
 import { viewerApi } from '../viewer/api';
 import { importableExtensions } from '../loaders/registry';
 import type { DisplayMode, ToolId } from '../state/types';
@@ -108,6 +109,17 @@ export function Toolbar() {
       <>
       <div className="tb-group">
         <button
+          className={`tb icon ${tool === 'transform' && gizmo === 'none' ? 'active' : ''}`}
+          title="Cursor: select and view parts, no handles"
+          data-help-text="Cursor: click parts to select them and look around the view, without move or rotate handles. Imported parts open in this mode."
+          onClick={() => {
+            setTool('transform');
+            setState({ gizmo: 'none' });
+          }}
+        >
+          {Icon.cursor}
+        </button>
+        <button
           className={`tb icon ${tool === 'transform' && gizmo === 'translate' ? 'active' : ''}`}
           title="Move gizmo (W)"
           onClick={() => {
@@ -146,6 +158,14 @@ export function Toolbar() {
           }}
         >
           {Icon.layflat}
+        </button>
+        <button
+          className="tb icon"
+          title="Arrange parts side by side in X + Y (the selected parts if several are selected, else all)"
+          data-help-text="Arrange parts: lays the parts out side by side in X and Y with the arrange gap, so none overlap — the selected parts if several are selected, otherwise all visible unlocked parts."
+          onClick={() => arrangeOnBed(['x', 'y'])}
+        >
+          {Icon.arrange}
         </button>
       </div>
       </>

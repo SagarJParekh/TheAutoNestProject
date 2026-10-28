@@ -53,9 +53,10 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
     <Section title="Transform">
       <Row label="Mouse">
         <Segmented
-          value={gizmo === 'rotate' ? 'rotate' : gizmo === 'place' ? 'place' : 'translate'}
+          value={gizmo}
           onChange={(g) => setState({ gizmo: g })}
           options={[
+            { value: 'none', label: 'Cursor', title: 'Select and view parts, no handles' },
             { value: 'translate', label: 'Move gizmo' },
             { value: 'rotate', label: 'Rotate' },
             { value: 'place', label: 'Pick & place' },
@@ -270,7 +271,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
         Finds each part's largest flat face it can stand on (coplanar faces like the bottoms of feet count together), puts it down, then lays the parts
         out along the chosen directions without stacking. Parts with no flat face keep their tilt.
       </Hint>
-      <button className="btn wide" onClick={arrangeOnBed} title="Lay out the selected parts (or all) without overlaps along the chosen directions, keeping their orientation">
+      <button className="btn wide" onClick={() => arrangeOnBed()} title="Lay out the selected parts (or all) without overlaps along the chosen directions, keeping their orientation">
         Arrange along {arr.axes.map((a) => a.toUpperCase()).join(' + ')} (keep orientation)
       </button>
       <Hint>{arrangeHint(arr.axes)}</Hint>
