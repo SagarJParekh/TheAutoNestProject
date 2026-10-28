@@ -11,6 +11,7 @@ import type { FaceSelection, Part, PickSlot } from './types';
 import { eulerDegFromQuaternion, matrixOf, worldMesh } from './math';
 import { partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview, analyzePart, mergeFacePicks } from './actions';
 import { nextColor } from './palette';
+import { SUFFIX, withSuffix } from './naming';
 
 type Slot = Exclude<PickSlot, 'primary'>;
 
@@ -252,7 +253,7 @@ export async function previewBoolean() {
   const r = await runJob(`Boolean ${op}`, 'boolean', { op, base: worldMesh(base), others: others.map(worldMesh) });
   if (!r) return;
   if (r.indices.length === 0) return notify('warning', `The ${op} result is empty`);
-  const name = `${base.name} (${op})`;
+  const name = withSuffix(base.name, SUFFIX.boolean);
   setPreview({
     tool: 'boolean',
     label: `Boolean ${op}`,

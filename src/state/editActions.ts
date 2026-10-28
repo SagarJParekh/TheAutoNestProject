@@ -17,6 +17,7 @@ import { analyzePart, requestEdges, newId, partFromWorld, prepareMesh, replaceLo
 import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
 import type { PickInfo } from '../viewer/Viewer';
+import { cutName } from './naming';
 
 const firstEditable = (): Part | undefined => {
   const p = selectedParts().find((x) => !x.locked);
@@ -528,7 +529,7 @@ export function startLasso() {
 export async function onLassoDone(points: [number, number][]) {
   setState({ lassoMode: false });
   if (points.length < 3) return;
-  await cutWithOutline(points, 'Lasso cut', ['inside', 'outside']);
+  await cutWithOutline(points, 'Lasso cut');
 }
 
 export function startPolyline() {
@@ -546,15 +547,15 @@ export async function onPolylineDone(points: [number, number][], closed = false)
   if (closed) {
     // the line came back to its start: cut out the enclosed shape (through the part, along the view)
     if (points.length < 3) return notify('warning', 'A closed shape needs at least three points');
-    return cutWithOutline(points, 'Shape cut', ['inside', 'outside']);
+    return cutWithOutline(points, 'Shape cut');
   }
   if (points.length < 2) return notify('warning', 'Click at least two points');
   const vp = document.querySelector('.viewport')?.getBoundingClientRect();
   const reach = vp ? Math.hypot(vp.width, vp.height) * 4 : 20000;
-  await cutWithOutline(polylineToOutline(points, reach), 'Line cut', ['side A', 'side B']);
+  await cutWithOutline(polylineToOutline(points, reach), 'Line cut');
 }
 
-async function cutWithOutline(outline: [number, number][], label: string, names: [string, string]) {
+async function cutWithOutline(outline: [number, number][], label: string) {
   const viewer = viewerApi.current?.viewer;
   const part = selectedParts().find((p) => !p.locked);
   if (!viewer || !part) return;
@@ -563,8 +564,8 @@ async function cutWithOutline(outline: [number, number][], label: string, names:
   const r = await runJob(label, 'lassoCut', { mesh: worldMesh(part), outline: cam.outline, camera: cam.camera });
   if (!r) return;
   const pieces = [
-    { name: `${part.name} (${names[0]})`, mesh: r.inside, color: nextColor() },
-    { name: `${part.name} (${names[1]})`, mesh: r.outside, color: part.color },
+    { name: cutName(part.name, 1), mesh: r.inside, color: nextColor() },
+    { name: cutName(part.name, 2), mesh: r.outside, color: part.color },
   ].filter((p) => p.mesh.indices.length);
   if (pieces.length < 2)
     return notify('warning', pieces.length ? (label === 'Line cut' ? 'The line must cross the whole part' : label === 'Shape cut' ? 'The shape does not cross the part' : 'The lasso does not cross the part') : 'Nothing was cut');

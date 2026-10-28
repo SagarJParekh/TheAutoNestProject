@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { canPickFolder, canPickLocation, chooseFolder, folderName, savedFolder, saveMode, setSaveMode } from '../state/save';
 import type { SaveMode } from '../state/save';
 import { Icon } from './icons';
-import { Check, NumberField, Row, Segmented } from './controls';
+import { NumberField, Row, Segmented } from './controls';
 import { setState, useStore } from '../state/store';
 import { exportParts } from '../state/actions';
 
@@ -90,9 +90,10 @@ export function ExportDialog() {
   const parts = useStore((s) => s.parts);
   const selCount = selection.length;
   const total = parts.length;
-  const [format, setFormat] = useState<'stl' | '3mf' | 'obj'>('stl');
+  const [format, setFormat] = useState<'stl' | '3mf' | 'obj' | 'slc'>('stl');
   const [scope, setScope] = useState<'selected' | 'all'>('selected');
-  const [zip, setZip] = useState(false);
+  const [output, setOutput] = useState<'one' | 'separate' | 'zip'>('one');
+  const [layer, setLayer] = useState(0.05);
   const [preset, setPreset] = useState<QualityPreset>('original');
   const [custom, setCustom] = useState(50);
   const [stlAscii, setStlAscii] = useState(false);
@@ -106,7 +107,8 @@ export function ExportDialog() {
   const ratio = preset === 'custom' ? Math.min(100, Math.max(1, custom)) / 100 : QUALITY[preset];
   const outTris = Math.round(tris * ratio);
   const outVerts = Math.round(verts * ratio);
-  const text = format !== 'stl' || stlAscii;
+  const slc = format === 'slc';
+  const text = !slc && (format !== 'stl' || stlAscii);
   const dec = decimals === 'full' ? undefined : Number(decimals);
   const numLen = dec === undefined ? 11 : dec + 5;
   const size =
@@ -129,9 +131,15 @@ export function ExportDialog() {
               { value: 'stl', label: 'STL' },
               { value: '3mf', label: '3MF' },
               { value: 'obj', label: 'OBJ' },
+              { value: 'slc', label: 'SLC', title: 'Slice contours for SLA / DLP printers' },
             ]}
           />
         </Row>
+        {slc && (
+          <Row label="Layer thickness">
+            <NumberField value={layer} min={0.005} step={0.005} precision={3} suffix="mm" title="Height of each slice (layer) in the SLC file" onChange={(v) => setLayer(Math.max(0.005, v))} />
+          </Row>
+        )}
         {format === 'stl' && (
           <Row label="STL encoding">
             <Segmented
@@ -154,7 +162,7 @@ export function ExportDialog() {
             ]}
           />
         </Row>
-        <Row label="Quality">
+        {!slc && <Row label="Quality">
           <Segmented
             value={preset}
             onChange={setPreset}
@@ -167,8 +175,8 @@ export function ExportDialog() {
               { value: 'custom', label: 'Custom' },
             ]}
           />
-        </Row>
-        {preset === 'custom' && (
+        </Row>}
+        {!slc && preset === 'custom' && (
           <Row label="Keep triangles">
             <NumberField value={custom} min={1} max={100} step={5} precision={0} suffix="%" onChange={(v) => setCustom(Math.round(v))} />
           </Row>
@@ -187,22 +195,38 @@ export function ExportDialog() {
             />
           </Row>
         )}
-        <Row>
-          <Check checked={zip} onChange={setZip}>
-            One file per part (ZIP)
-          </Check>
+        <Row label="Output">
+          <Segmented
+            value={output}
+            onChange={setOutput}
+            options={[
+              { value: 'one', label: 'One file', title: 'All parts in one file' },
+              { value: 'separate', label: 'Separate files', title: 'Every part as its own file, saved into a folder' },
+              { value: 'zip', label: 'ZIP', title: 'Every part as its own file, packed in a ZIP' },
+            ]}
+          />
         </Row>
-        <SaveLocationRow />
-        <p className="muted small export-estimate">
+        {output === 'separate' ? (
+          <p className="muted small">
+            {canPickFolder
+              ? `Every part is saved as its own file (part name${slc ? '.slc' : `.${format}`}) into a folder: the export folder set below, or one you choose when you press Export.`
+              : 'Every part is saved as its own file; this browser puts them in Downloads (it may ask once to allow several downloads).'}
+          </p>
+        ) : (
+          <SaveLocationRow />
+        )}
+        {!slc && <p className="muted small export-estimate">
           {ratio < 1
             ? `${Math.round(tris).toLocaleString()} → about ${outTris.toLocaleString()} triangles (${Math.round(ratio * 100)}%).`
             : `${Math.round(tris).toLocaleString()} triangles, unchanged.`}{' '}
           Estimated size ≈ {fmtBytes(size)}.
-        </p>
+        </p>}
         <p className="muted small">
           {ratio < 1 ? 'Triangles are reduced with quadric edge collapse: flat areas lose detail first, edges, borders and the overall shape are kept. ' : ''}
-          Transforms are baked in. {format === 'stl' && !zip && n > 1 ? 'All parts are merged into one STL.' : ''}
-          {format !== 'stl' && !zip && n > 1 ? 'Parts are kept as separate objects in one file.' : ''}
+          Transforms are baked in. Repaired parts are saved as name_repaired.{' '}
+          {slc ? `SLC: the parts are sliced every ${layer} mm into closed contours (outer outlines counter-clockwise, holes clockwise)${output === 'one' && n > 1 ? ', all parts together in one file' : ''}.` : ''}
+          {format === 'stl' && output === 'one' && n > 1 ? 'All parts are merged into one STL.' : ''}
+          {format !== 'stl' && !slc && output === 'one' && n > 1 ? 'Parts are kept as separate objects in one file.' : ''}
         </p>
       </div>
       <footer className="modal-foot">
@@ -214,10 +238,10 @@ export function ExportDialog() {
           disabled={n === 0}
           onClick={() => {
             close();
-            exportParts(format, effScope, zip, { quality: ratio, stlAscii: format === 'stl' && stlAscii, decimals: text ? dec : undefined });
+            exportParts(format, effScope, output, { quality: ratio, stlAscii: format === 'stl' && stlAscii, decimals: text ? dec : undefined, layer });
           }}
         >
-          Export {n} part{n === 1 ? '' : 's'}
+          Export {n} part{n === 1 ? '' : 's'}{output === 'separate' && n > 1 ? ` (${n} files)` : ''}
         </button>
       </footer>
     </Modal>

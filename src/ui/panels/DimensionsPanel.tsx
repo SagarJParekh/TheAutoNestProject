@@ -1,6 +1,7 @@
 import { Check, Hint, Section } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { meshEntry } from '../../state/meshCache';
+import { previewMinBox } from '../../state/makeActions';
 import { partShellsLabel, usePartStats } from './dimensionsData';
 import type { Part } from '../../state/types';
 
@@ -37,11 +38,28 @@ export function DimensionsPanel({ parts }: { parts: Part[] }) {
   return (
     <>
       <DimToggles />
+      <MinBoxSection parts={parts} />
       {parts.length > 1 && <Combined parts={parts} />}
       {parts.map((p) => (
         <PartDims key={p.id} part={p} />
       ))}
     </>
+  );
+}
+
+function MinBoxSection({ parts }: { parts: Part[] }) {
+  const preview = useStore((s) => s.preview);
+  const locked = parts.filter((p) => p.lockRotation).length;
+  return (
+    <Section title="Minimum box">
+      <button className="btn wide" disabled={!!preview || locked === parts.length} onClick={() => previewMinBox()} title="Turn the parts so their smallest box lines up with X / Y / Z">
+        Arrange in minimum dimension box
+      </button>
+      <Hint>
+        Finds the smallest box around each selected part and turns the part so that box lines up with X / Y / Z: longest side along X, shortest along Z.
+        {locked ? ` ${locked} part${locked > 1 ? 's have' : ' has'} the orientation locked and stay${locked > 1 ? '' : 's'} as it is.` : ''}
+      </Hint>
+    </Section>
   );
 }
 

@@ -50,3 +50,4 @@ export * from './joint';
 export * from './shapes';
 export * from './lattice';
 export * from './wrap';
+export * from './minbox';

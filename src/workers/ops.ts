@@ -400,6 +400,10 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.above), ...meshBuffers(r.below)] };
   },
 
+  async minBox(args: { mesh: MeshData }): Promise<Result<G.MinBox>> {
+    return { result: await G.minimumBox(args.mesh), transfer: [] };
+  },
+
   async makeShape(args: { params: G.ShapeParams }): Promise<Result<MeshData>> {
     const m = await G.makeShape(args.params);
     return { result: m, transfer: meshBuffers(m) };

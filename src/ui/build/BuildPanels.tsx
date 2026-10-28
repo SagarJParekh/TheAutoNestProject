@@ -9,6 +9,7 @@ import { acceptSavedSession } from '../../state/buildSession';
 import {
   addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
+  setSlcLayer,
 } from '../../state/buildActions';
 import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
 import { importableExtensions } from '../../loaders/registry';
@@ -687,6 +688,7 @@ export function BuildsPanel() {
   const active = g.builds[g.active];
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
   const groups = groupLabels(g.parts);
+  const resin = currentPrinter(g).tech === 'sla';
   return (
     <aside className="panel right">
       <header className="panel-head">
@@ -773,10 +775,20 @@ export function BuildsPanel() {
               <button className="btn" onClick={() => exportBuilds(g.active, 'stl')}>
                 STL
               </button>
+              {resin && (
+                <button className="btn" onClick={() => exportBuilds(g.active, 'slc')} title={`Slice the build into contours every ${g.slcLayer ?? 0.05} mm (SLC, for SLA / DLP)`}>
+                  SLC
+                </button>
+              )}
               <button className="btn" onClick={() => openBuildInPrep(g.active)} title="Copy this build's parts, placed, into Mesh prep">
                 Open in Mesh prep
               </button>
             </div>
+          )}
+          {active && resin && (
+            <Row label="SLC layer">
+              <NumberField value={g.slcLayer ?? 0.05} min={0.005} step={0.005} precision={3} suffix="mm" title="Layer thickness of the SLC export" onChange={(v) => setSlcLayer(Math.max(0.005, v))} />
+            </Row>
           )}
           {g.builds.length > 0 && <SaveLocationRow />}
         </Section>

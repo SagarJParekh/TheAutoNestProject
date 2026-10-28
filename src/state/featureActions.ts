@@ -12,6 +12,7 @@ import { newId, partFromWorld, prepareMesh, replaceWithWorldMeshes, runJob, setP
 import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
 import type { PickInfo } from '../viewer/Viewer';
+import { SUFFIX, withSuffix } from './naming';
 
 // ---------------------------------------------------------------- point picks
 
@@ -217,7 +218,7 @@ export async function previewLabel() {
       `Rotation ${params.rotation}°, ${params.conform ? 'follows the surface' : 'flat'}`,
     ],
     apply: () => {
-      replaceWithWorldMeshes(params.mode === 'emboss' ? 'Emboss label' : 'Engrave label', w.part.id, [{ name: w.part.name, mesh: r.mesh, color: w.part.color }]);
+      replaceWithWorldMeshes(params.mode === 'emboss' ? 'Emboss label' : 'Engrave label', w.part.id, [{ name: withSuffix(w.part.name, SUFFIX.label), mesh: r.mesh, color: w.part.color }]);
       setState({ pointPicks: { ...getState().pointPicks, label: undefined } });
     },
   });
@@ -287,7 +288,7 @@ export async function previewTexture() {
       st.pattern === 'image' && (st.imageFit ?? 'fit') === 'fit' ? `Image fitted to the area, depth ${st.depth} mm` : `Period ${st.period} mm, depth ${st.depth} mm`,
       `Triangles: ${(p.mesh.indices.length / 3).toLocaleString()} → ${(r.indices.length / 3).toLocaleString()}`,
     ],
-    apply: () => replaceWithWorldMeshes('Texture', p.id, [{ name: p.name, mesh: r, color: p.color }]),
+    apply: () => replaceWithWorldMeshes('Texture', p.id, [{ name: withSuffix(p.name, SUFFIX.texture), mesh: r, color: p.color }]),
   });
 }
 

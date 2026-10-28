@@ -123,6 +123,7 @@ const TYPES: Record<string, { description: string; accept: Record<string, string
   '3mf': { description: '3MF model', accept: { 'model/3mf': ['.3mf'] } },
   obj: { description: 'OBJ mesh', accept: { 'model/obj': ['.obj'] } },
   zip: { description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } },
+  slc: { description: 'SLC slice contours', accept: { 'application/octet-stream': ['.slc'] } },
   csv: { description: 'CSV table', accept: { 'text/csv': ['.csv'] } },
 };
 
@@ -189,4 +190,39 @@ export async function saveFile(name: string, data: BlobPart, mime?: string): Pro
   const t = await pickSaveTarget(name);
   if (!t) return null;
   return writeSaveTarget(t, data, mime);
+}
+
+// ---------------------------------------------------------------- several files into one folder
+
+export type FolderTarget = { kind: 'folder'; dir: FsDirHandle } | { kind: 'downloads' };
+
+/**
+ * Where separate files go: the export folder chosen in "Save to" (if that is the
+ * mode and access is still allowed), otherwise a folder picked now. Browsers
+ * without folder access download every file. Null when the picker was cancelled.
+ */
+export async function pickExportFolder(): Promise<FolderTarget | null> {
+  if (!canPickFolder) return { kind: 'downloads' };
+  if (saveMode() === 'folder') {
+    const dir = await savedFolder();
+    if (dir) {
+      let ok: PermissionState = (await dir.queryPermission?.({ mode: 'readwrite' })) ?? 'granted';
+      if (ok !== 'granted') ok = (await dir.requestPermission?.({ mode: 'readwrite' }).catch(() => 'denied' as PermissionState)) ?? 'denied';
+      if (ok === 'granted') return { kind: 'folder', dir };
+    }
+  }
+  try {
+    const dir = await w.showDirectoryPicker!({ id: 'autonest-export', mode: 'readwrite' });
+    folder = dir;
+    await idb((st) => st.put(dir, 'exportFolder'), 'readwrite');
+    return { kind: 'folder', dir };
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') return null;
+    return { kind: 'downloads' };
+  }
+}
+
+/** Write one file of a set into the folder picked with pickExportFolder. */
+export function writeIntoFolder(t: FolderTarget, name: string, data: BlobPart): Promise<string> {
+  return writeSaveTarget(t.kind === 'folder' ? { kind: 'folder', dir: t.dir, name } : { kind: 'download', name }, data);
 }

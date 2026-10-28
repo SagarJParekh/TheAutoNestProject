@@ -63,7 +63,7 @@ async function previewLocalOffset() {
     meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r }), color: part.color }],
     summary: [`${pick.tris.length.toLocaleString()} triangles moved along their normals`, 'Side walls connect the face to the rest of the part'],
     apply: () => {
-      replaceLocalMesh('Offset face', part.id, r);
+      replaceLocalMesh('Offset face', part.id, r, false);
       setState((x) => {
         const f = { ...x.facePicks };
         delete f.offset;

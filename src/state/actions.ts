@@ -19,7 +19,8 @@ import {
 } from './math';
 import { viewerApi } from '../viewer/api';
 import { endLive } from './livePreview';
-import { pickSaveTarget, writeSaveTarget } from './save';
+import { pickExportFolder, pickSaveTarget, writeIntoFolder, writeSaveTarget } from './save';
+import { SUFFIX, cutName, savedName, withSuffix } from './naming';
 
 let uid = 1;
 export const newId = () => `p${Date.now().toString(36)}${(uid++).toString(36)}`;
@@ -355,7 +356,7 @@ export function replaceWithWorldMeshes(label: string, partId: string, results: {
   const created = results.map((r, i) => {
     const np = partFromWorld(r.name, r.mesh, r.color ?? (i === 0 ? old.color : undefined), old.source);
     // results of an edit keep the original file's path
-    return { ...np, sourcePath: old.sourcePath, importedAt: old.importedAt };
+    return { ...np, sourcePath: old.sourcePath, importedAt: old.importedAt, ...(old.repaired ? { repaired: true } : {}) };
   });
   const idx = s.parts.findIndex((p) => p.id === partId);
   const parts = [...s.parts.slice(0, idx), ...created, ...s.parts.slice(idx + 1)];
@@ -370,7 +371,7 @@ export function replaceManyWithWorldMeshes(label: string, items: { id: string; r
     const idx = parts.findIndex((p) => p.id === id);
     if (idx < 0) continue;
     const old = parts[idx];
-    const made = results.map((r, i) => ({ ...partFromWorld(r.name, r.mesh, r.color ?? (i === 0 ? old.color : undefined), old.source), sourcePath: old.sourcePath, importedAt: old.importedAt }));
+    const made = results.map((r, i) => ({ ...partFromWorld(r.name, r.mesh, r.color ?? (i === 0 ? old.color : undefined), old.source), sourcePath: old.sourcePath, importedAt: old.importedAt, ...(old.repaired ? { repaired: true } : {}) }));
     created.push(...made);
     parts = [...parts.slice(0, idx), ...made, ...parts.slice(idx + 1)];
   }
@@ -378,9 +379,10 @@ export function replaceManyWithWorldMeshes(label: string, items: { id: string; r
 }
 
 /** Replace a part's local mesh keeping its transform (repairs). */
-export function replaceLocalMesh(label: string, partId: string, mesh: MeshData) {
+export function replaceLocalMesh(label: string, partId: string, mesh: MeshData, repair = true) {
   prepareMesh(mesh);
-  updateParts(label, [partId], (p) => ({ ...p, mesh }));
+  // repaired parts are saved as name_repaired
+  updateParts(label, [partId], (p) => ({ ...p, mesh, ...(repair ? { repaired: true } : {}) }));
 }
 
 // ---------------------------------------------------------------- cut
@@ -447,9 +449,7 @@ async function computeCut(): Promise<{ replaces: string[]; pieces: { name: strin
       }
       return { positions: p, indices: m.indices };
     };
-    const label = (sides: number[]) =>
-      planes.length === 1 ? (sides[0] > 0 ? 'A' : 'B') : sides.map((side, k) => `${names[k]}${side > 0 ? '+' : '−'}`).join(' ');
-    pieces.forEach((pc, i) => out.push({ name: `${part.name} ${label(pc.sides)}`, mesh: shift(pc.mesh, pc.sides), color: i === 0 ? part.color : nextColor(), from: part.id }));
+    pieces.forEach((pc, i) => out.push({ name: cutName(part.name, i + 1), mesh: shift(pc.mesh, pc.sides), color: i === 0 ? part.color : nextColor(), from: part.id }));
   }
   if (!replaces.length) {
     notify('warning', planes.length > 1 ? 'The planes do not intersect the parts' : 'The plane does not intersect the parts');
@@ -512,8 +512,8 @@ export async function previewJointCut() {
     return { positions: p, indices: m.indices };
   };
   const pieces = [
-    { name: `${part.name} A`, mesh: shift(r.above, gap / 2), color: part.color },
-    { name: `${part.name} B`, mesh: shift(r.below, -gap / 2), color: params.recolor ? nextColor() : part.color },
+    { name: cutName(part.name, 1), mesh: shift(r.above, gap / 2), color: part.color },
+    { name: cutName(part.name, 2), mesh: shift(r.below, -gap / 2), color: params.recolor ? nextColor() : part.color },
   ];
   const mm = (v: number) => `${+v.toFixed(3)} mm`;
   const name = [...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind;
@@ -857,12 +857,13 @@ export async function previewHollow() {
     keepPlugs: h.keepPlugs,
   });
   if (!r) return;
+  const hollowName = withSuffix(part.name, SUFFIX.hollow);
   setPreview({
     tool: 'hollow',
     label: `Hollow ${h.thickness} mm`,
     xray: true,
     replaces: [part.id],
-    meshes: [{ name: part.name, mesh: r.mesh, color: part.color }, ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs, color: '#ffd23f' }] : [])],
+    meshes: [{ name: hollowName, mesh: r.mesh, color: part.color }, ...(r.plugs && r.plugs.indices.length ? [{ name: `${hollowName}_plugs`, mesh: r.plugs, color: '#ffd23f' }] : [])],
     summary: [
       `Wall: ${h.thickness} mm (voxel ${r.voxelSize.toFixed(2)} mm)`,
       `Drain holes: ${r.drained}${r.drained && h.drainExit && h.drainExit !== h.drainDiameter ? ` (tapered Ø${h.drainDiameter} → Ø${h.drainExit} mm)` : r.drained ? ` (Ø${h.drainDiameter} mm)` : ''}`,
@@ -872,8 +873,8 @@ export async function previewHollow() {
     ],
     apply: () => {
       replaceWithWorldMeshes('Hollow', part.id, [
-        { name: part.name, mesh: r.mesh, color: part.color },
-        ...(r.plugs && r.plugs.indices.length ? [{ name: `${part.name} plugs`, mesh: r.plugs }] : []),
+        { name: hollowName, mesh: r.mesh, color: part.color },
+        ...(r.plugs && r.plugs.indices.length ? [{ name: `${hollowName}_plugs`, mesh: r.plugs }] : []),
       ]);
       setState((st) => ({ settings: { ...st.settings, hollow: { ...st.settings.hollow, drainHoles: [] } } }));
     },
@@ -888,31 +889,61 @@ export interface ExportSettings {
   stlAscii?: boolean;
   /** decimal places for text formats; undefined = full precision */
   decimals?: number;
+  /** SLC layer thickness, mm */
+  layer?: number;
 }
 
-export async function exportParts(format: 'stl' | '3mf' | 'obj', scope: 'selected' | 'all', zip: boolean, opts: ExportSettings = {}) {
+/** File names for a set of exports: safe characters, no two the same. */
+function uniqueNames(names: string[], ext: string): string[] {
+  const used = new Set<string>();
+  return names.map((n) => {
+    const base = n.replace(/[^\w.-]+/g, '_') || 'part';
+    let name = base, k = 1;
+    while (used.has(name.toLowerCase())) name = `${base}_${++k}`;
+    used.add(name.toLowerCase());
+    return `${name}.${ext}`;
+  });
+}
+
+/**
+ * Export the selected or all parts: one file, a ZIP, or every part as its own
+ * file saved straight into a folder.
+ */
+export async function exportParts(format: 'stl' | '3mf' | 'obj' | 'slc', scope: 'selected' | 'all', output: 'one' | 'separate' | 'zip', opts: ExportSettings = {}) {
   const s = getState();
   const parts = scope === 'all' ? s.parts : selectedParts();
   if (!parts.length) return notify('warning', 'Nothing to export');
-  const base = parts.length === 1 ? parts[0].name.replace(/[^\w.-]+/g, '_') : 'parts';
+  const options = { stlAscii: opts.stlAscii, decimals: opts.decimals, layer: opts.layer };
+  const quality = format === 'slc' ? 1 : (opts.quality ?? 1);
+  const job = quality < 1 ? 'Reducing & exporting' : format === 'slc' ? 'Slicing' : 'Exporting';
+  if (output === 'separate') {
+    // the folder is picked first: browsers only open the picker straight after the click
+    const dir = await pickExportFolder();
+    if (!dir) return;
+    const names = uniqueNames(parts.map(savedName), format);
+    let where = '';
+    for (let i = 0; i < parts.length; i++) {
+      const r = await runJob(`${job} ${parts[i].name}`, 'export', { format, items: [{ name: savedName(parts[i]), mesh: worldMesh(parts[i]) }], zip: false, quality, options });
+      if (!r) return;
+      where = await writeIntoFolder(dir, names[i], r.bytes as BlobPart);
+    }
+    const folderName = dir.kind === 'folder' ? dir.dir.name : 'Downloads';
+    notify('success', parts.length === 1 ? `Exported to ${where}` : `Exported ${parts.length} files into ${folderName}`);
+    return;
+  }
+  const base = parts.length === 1 ? savedName(parts[0]).replace(/[^\w.-]+/g, '_') : 'parts';
+  const zip = output === 'zip';
   const name = zip ? `${base}-${format}.zip` : `${base}.${format}`;
   // choose where to save first: browsers only open the picker straight after the click
   const target = await pickSaveTarget(name);
   if (!target) return;
-  const items = parts.map((p) => ({ name: p.name, mesh: worldMesh(p) }));
-  const quality = opts.quality ?? 1;
-  const r = await runJob(quality < 1 ? 'Reducing & exporting' : 'Exporting', 'export', {
-    format,
-    items,
-    zip,
-    quality,
-    options: { stlAscii: opts.stlAscii, decimals: opts.decimals },
-  });
+  const items = parts.map((p) => ({ name: savedName(p), mesh: worldMesh(p) }));
+  const r = await runJob(job, 'export', { format, items, zip, quality, options });
   if (!r) return;
   const where = await writeSaveTarget(target, r.bytes as BlobPart);
   const tris = r.trianglesAfter < r.trianglesBefore
     ? ` (${r.trianglesBefore.toLocaleString()} → ${r.trianglesAfter.toLocaleString()} triangles)`
-    : ` (${r.trianglesAfter.toLocaleString()} triangles)`;
+    : format === 'slc' ? '' : ` (${r.trianglesAfter.toLocaleString()} triangles)`;
   notify('success', `Exported ${parts.length} part${parts.length > 1 ? 's' : ''} to ${where}${tris}`);
 }
 

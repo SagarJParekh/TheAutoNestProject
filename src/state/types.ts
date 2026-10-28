@@ -29,6 +29,8 @@ export interface Part {
   importCenter?: Vec3;
   /** orientation locked: the part can be moved in X / Y / Z but never rotated (Mesh prep and Build generation) */
   lockRotation?: boolean;
+  /** repaired in Mesh prep: saved (exported) as name_repaired */
+  repaired?: boolean;
 }
 
 export type ToolId =
@@ -393,6 +395,8 @@ export interface BuildGenState {
   nestDetail: 'fast' | 'normal' | 'fine';
   /** stop nesting after this many minutes and keep the best builds found (0 = no limit) */
   nestTimeLimit?: number;
+  /** SLA / DLP: layer thickness of SLC exports, mm */
+  slcLayer?: number;
   /** powder printers: orientation by best packing (flat face down or on a side, whichever packs best; default) or by the SLS / MJF rules */
   powderOrient?: 'packing' | 'rules';
   /** cage (sinter box) settings: bar thickness, bar width, gap between bars, mm */

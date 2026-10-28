@@ -5,10 +5,14 @@
 import type { MeshData } from '../geometry';
 import { LATTICES } from '../geometry/lattice';
 import { SHAPES } from '../geometry/shapes';
-import { commit, getState, notify, selectedParts } from './store';
-import { worldBounds, worldMesh } from './math';
+import { Matrix4, Quaternion, Vector3 } from 'three';
+import { applyMatrix } from '../geometry/transform';
+import { commit, getState, notify, selectedParts, updateParts } from './store';
+import type { Part, Transform } from './types';
+import { eulerDegFromQuaternion, quaternionOf, worldBounds, worldMesh } from './math';
 import { partFromWorld, replaceWithWorldMeshes, runJob, setPreview } from './actions';
 import { nextColor } from './palette';
+import { SUFFIX, withSuffix } from './naming';
 
 const mm = (v: number) => `${+v.toFixed(3)} mm`;
 const tris = (m: MeshData) => (m.indices.length / 3).toLocaleString();
@@ -66,7 +70,7 @@ export async function previewLattice() {
     label: `${type} lattice`,
     xray: true,
     replaces: [part.id],
-    meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],
+    meshes: [{ name: withSuffix(part.name, SUFFIX.lattice), mesh: r.mesh, color: part.color }],
     summary: [
       `${type}: cell ${mm(params.cell)}, walls ${mm(params.thickness)}, skin ${mm(params.skin)}`,
       `Volume: ${(r.before / 1000).toFixed(2)} → ${(r.after / 1000).toFixed(2)} cm³ (${saved.toFixed(0)}% lighter)`,
@@ -74,7 +78,7 @@ export async function previewLattice() {
       `Triangles: ${tris(r.mesh)}`,
       ...(params.skin > 0 ? ['The lattice is closed inside the skin: add drain holes (Hollow / Perforate) to get powder or resin out.'] : []),
     ],
-    apply: () => replaceWithWorldMeshes(`${type} lattice`, part.id, [{ name: part.name, mesh: r.mesh, color: part.color }]),
+    apply: () => replaceWithWorldMeshes(`${type} lattice`, part.id, [{ name: withSuffix(part.name, SUFFIX.lattice), mesh: r.mesh, color: part.color }]),
   });
 }
 
@@ -101,5 +105,47 @@ export async function previewShrinkwrap() {
     ],
     apply: () =>
       keep ? addWorldParts('Shrinkwrap', [{ name, mesh: r.mesh, color }]) : replaceWithWorldMeshes('Shrinkwrap', part.id, [{ name, mesh: r.mesh, color }]),
+  });
+}
+
+// ---------------------------------------------------------------- minimum box
+
+/**
+ * Turn the selected parts so their smallest-volume box lines up with X / Y / Z
+ * (longest side along X, shortest along Z), each about its box centre.
+ */
+export async function previewMinBox() {
+  const all = selectedParts().filter((p) => !p.locked);
+  const parts = all.filter((p) => !p.lockRotation);
+  if (!parts.length) return notify('warning', all.length ? 'The selected parts have their orientation locked' : 'Select the parts to orient');
+  const moves: { part: Part; transform: Transform; mesh: MeshData; line: string }[] = [];
+  for (const part of parts) {
+    const r = await runJob(`Minimum box of ${part.name}`, 'minBox', { mesh: worldMesh(part) });
+    if (!r) return;
+    // rotation taking the box axes onto X, Y, Z, about the box centre
+    const R = new Matrix4().makeBasis(new Vector3(...r.axes[0]), new Vector3(...r.axes[1]), new Vector3(...r.axes[2])).transpose();
+    const c = new Vector3(...r.center);
+    const M = new Matrix4().makeTranslation(c.x, c.y, c.z).multiply(R).multiply(new Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+    const q = new Quaternion().setFromRotationMatrix(R).multiply(quaternionOf(part.transform));
+    const pos = new Vector3(...part.transform.position).applyMatrix4(M);
+    const transform: Transform = { ...part.transform, position: [pos.x, pos.y, pos.z], rotation: eulerDegFromQuaternion(q) };
+    const saved = r.aabbVolume > 0 ? (1 - r.volume / r.aabbVolume) * 100 : 0;
+    moves.push({
+      part,
+      transform,
+      mesh: applyMatrix(worldMesh(part), M.elements),
+      line: `${part.name}: ${r.size.map((v) => v.toFixed(2)).join(' × ')} mm${saved > 0.5 ? ` (box ${saved.toFixed(0)}% smaller)` : ' (already at its smallest)'}`,
+    });
+  }
+  setPreview({
+    tool: 'dimensions',
+    label: 'Orient to minimum box',
+    replaces: moves.map((m) => m.part.id),
+    meshes: moves.map((m) => ({ name: m.part.name, mesh: m.mesh, color: m.part.color })),
+    summary: [...moves.map((m) => m.line), 'Longest side along X, shortest along Z; each part turns about its box centre.'],
+    apply: () => {
+      const byId = new Map(moves.map((m) => [m.part.id, m.transform]));
+      updateParts('Orient to minimum box', [...byId.keys()], (p) => ({ ...p, transform: byId.get(p.id) ?? p.transform }));
+    },
   });
 }

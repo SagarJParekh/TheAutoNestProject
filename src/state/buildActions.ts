@@ -166,6 +166,11 @@ export function setPartTilt(id: string, tilt: Tilt | null) {
   scheduleRegenerate();
 }
 
+/** SLC layer thickness for exports (changes nothing in the builds). */
+export function setSlcLayer(slcLayer: number) {
+  setState((s) => ({ buildGen: { ...s.buildGen, slcLayer } }));
+}
+
 export function updateBuildSettings(patch: Partial<BuildGenState>) {
   const before = bg();
   if (patch.printerId && printerById(patch.printerId).tech === 'powder' && printerById(before.printerId).tech !== 'powder' && before.tilt.angle === 30 && !patch.tilt) {
@@ -874,8 +879,11 @@ function buildItems(s: BuildGenState, i: number) {
 }
 
 
-/** Export one build (index) or every build ('all', zipped) as 3MF or STL, parts in their build positions. */
-export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' = '3mf') {
+/**
+ * Export one build (index) or every build ('all', zipped) as 3MF, STL or SLC
+ * (sliced contours for SLA / DLP), parts in their build positions.
+ */
+export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' | 'slc' = '3mf') {
   const s = bg();
   if (!s.builds.length) return notify('warning', 'There are no builds yet');
   const printer = currentPrinter(s);
@@ -887,7 +895,7 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
   if (!target) return;
   const files: Record<string, Uint8Array> = {};
   for (const i of indices) {
-    const r = await runJob(`Exporting ${s.builds[i].name}`, 'export', { format, items: buildItems(s, i), zip: false });
+    const r = await runJob(`${format === 'slc' ? 'Slicing' : 'Exporting'} ${s.builds[i].name}`, 'export', { format, items: buildItems(s, i), zip: false, options: { layer: s.slcLayer ?? 0.05 } });
     if (!r) return;
     files[fileName(i)] = r.bytes;
   }

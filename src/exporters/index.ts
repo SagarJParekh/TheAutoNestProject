@@ -1,11 +1,16 @@
 import { zipSync, strToU8 } from 'fflate';
 import type { MeshData } from '../geometry';
+import { exportSLC } from './slc';
+
+export { exportSLC, sliceMesh, readSLC } from './slc';
 
 export interface ExportOptions {
   /** write ASCII instead of binary STL */
   stlAscii?: boolean;
   /** decimal places for text formats (OBJ, 3MF, ASCII STL); undefined = full float precision */
   decimals?: number;
+  /** SLC: layer thickness, mm */
+  layer?: number;
 }
 
 export interface ExportItem {
@@ -148,7 +153,7 @@ export function export3MF(items: ExportItem[], decimals?: number): Uint8Array {
   );
 }
 
-export type ExportFormat = 'stl' | '3mf' | 'obj';
+export type ExportFormat = 'stl' | '3mf' | 'obj' | 'slc';
 
 export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: ExportOptions = {}): Uint8Array {
   switch (format) {
@@ -158,6 +163,8 @@ export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: Ex
       return exportOBJ(items, opts.decimals);
     case '3mf':
       return export3MF(items, opts.decimals);
+    case 'slc':
+      return exportSLC(items.map((it) => it.mesh), { layer: opts.layer ?? 0.05 });
   }
 }
 
