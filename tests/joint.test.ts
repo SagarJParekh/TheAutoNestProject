@@ -97,6 +97,21 @@ describe('lap joints follow the outline of the cross-section', () => {
     expect(meshVolume(slope.below) - base).toBeCloseTo(frustum, -1);
   });
 
+  it('tongue & groove on a tube: the tongue sits b in from the outside and from the bore', async () => {
+    const r = await jointSplit(await squareTube(), mid, { ...DEFAULT_JOINT, kind: 'tongue', depth: 5, offset: 1, width: 0, ...zero });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    // tongue between 38 × 38 (rounded corners inside it) and 34 × 34 (square corners)
+    expect(meshVolume(r.below) - (40 * 40 - 32 * 32) * 20).toBeCloseTo((38 * 38 - 34 * 34) * 5, -1);
+    expect(meshVolume(r.above) + meshVolume(r.below)).toBeCloseTo((40 * 40 - 32 * 32) * 40, 0);
+    expect(r.contours).toEqual([2, 2]);
+  });
+
+  it('tongue & groove with a width: a ring tongue set in from the outer wall (solid parts)', async () => {
+    const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind: 'tongue', depth: 4, offset: 3, width: 4, ...zero });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    expect(meshVolume(r.below) - 40 * 40 * 20).toBeCloseTo((34 * 34 - 26 * 26) * 4, -1);
+  });
+
   for (const kind of LAP_JOINTS.map((j) => j.value)) {
     it(`${kind}: two watertight pieces`, async () => {
       const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind, depth: 6, offset: 3, width: 4, count: 2, spacing: 3 });
@@ -130,7 +145,7 @@ describe('tongue joints run across the cross-section', () => {
     expect(jointProfile({ ...DEFAULT_JOINT, kind: 'finger', depth: 4, count: 3 }, 0, 30).length).toBe(12);
   });
 
-  for (const kind of TONGUE_JOINTS.map((j) => j.value)) {
+  for (const kind of TONGUE_JOINTS.map((j) => j.value).filter((k) => k !== 'tongue')) {
     it(`${kind}: two watertight pieces that make up the part`, async () => {
       const exact = await jointSplit(bar, plane, { ...DEFAULT_JOINT, kind, depth: 0, clearance: 0 });
       expect(isWatertight(exact.above) && isWatertight(exact.below)).toBe(true);

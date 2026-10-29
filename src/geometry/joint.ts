@@ -22,7 +22,7 @@ import { fromManifold, getManifold, toManifold, NotManifoldError } from './manif
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 
 export type LapJoint = 'u' | 'square' | 'multiple' | 'step' | 'toothed' | 'dovetail';
-export type TongueJoint = 'halfLap' | 'finger' | 'scarf';
+export type TongueJoint = 'tongue' | 'halfLap' | 'finger' | 'scarf';
 export type JointKind = LapJoint | TongueJoint;
 
 export const LAP_JOINTS: { value: LapJoint; label: string }[] = [
@@ -34,12 +34,16 @@ export const LAP_JOINTS: { value: LapJoint; label: string }[] = [
   { value: 'dovetail', label: 'Dovetail' },
 ];
 export const TONGUE_JOINTS: { value: TongueJoint; label: string }[] = [
+  { value: 'tongue', label: 'Tongue & groove' },
   { value: 'halfLap', label: 'Half lap' },
   { value: 'finger', label: 'Finger joint' },
   { value: 'scarf', label: 'Scarf' },
 ];
 
-export const isTongueJoint = (k: JointKind): k is TongueJoint => k === 'halfLap' || k === 'finger' || k === 'scarf';
+/** Joints that run straight across the cross-section (the rest follow its outline). */
+export const isAcrossJoint = (k: JointKind): boolean => k === 'halfLap' || k === 'finger' || k === 'scarf';
+/** Joints listed under "Tongue joint" in the panel. */
+export const isTongueFamily = (k: JointKind): boolean => k === 'tongue' || isAcrossJoint(k);
 
 export interface JointParams {
   kind: JointKind;
@@ -47,7 +51,7 @@ export interface JointParams {
   depth: number;
   /** lap joints: offset (b), distance of the notch from the outer surface, mm */
   offset: number;
-  /** lap joints: width of each tongue / tooth at its root, mm */
+  /** lap joints: width of each tongue / tooth at its root, mm (tongue & groove: 0 = fill the wall, b in from each side) */
   width: number;
   /** multiple: gap between neighbouring tongues, mm */
   spacing: number;
@@ -103,6 +107,11 @@ export function lapProfile(p: Pick<JointParams, 'kind' | 'depth' | 'offset' | 'w
   switch (p.kind) {
     case 'step':
       out.push([b, 0], [b, a]);
+      break;
+    case 'tongue':
+      // without a width the tongue runs to b from the far wall too (offsets count from every loop)
+      if (p.width > 0) out.push([b, 0], [b, a], [b + w, a], [b + w, 0]);
+      else out.push([b, 0], [b, a]);
       break;
     case 'square':
       out.push([b, 0], [b, a], [b + w, a], [b + w, 0]);
@@ -380,7 +389,7 @@ function distToLoop(pts: [number, number][], q: [number, number]): number {
   return best;
 }
 
-function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, number][], basis: JointParams['basis']): LapRefs | null {
+function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, number][], basis: JointParams['basis'], allLoops = false): LapRefs | null {
   const parts = section.decompose();
   const own: CrossSection[] = [];
   try {
@@ -392,7 +401,7 @@ function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, 
       }
     });
     let used: Loop[];
-    if (!picks.length) used = loops.filter((l) => !l.hole);
+    if (!picks.length) used = loops.filter((l) => allLoops || !l.hole);
     else {
       const hit = new Set<Loop>();
       for (const q of picks) {
@@ -403,7 +412,7 @@ function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, 
         }
         if (best) hit.add(best);
       }
-      used = basis === 'subcontours' ? [...hit] : loops.filter((l) => !l.hole && [...hit].some((h) => h.region === l.region));
+      used = basis === 'subcontours' ? [...hit] : loops.filter((l) => (allLoops || !l.hole) && [...hit].some((h) => h.region === l.region));
     }
     if (!used.length) return null;
     const keepRegions = [...new Set(used.map((l) => l.region))].map((i) => parts[i]);
@@ -565,11 +574,13 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
   const layers = new Map<number, LapRefs | null>();
   let refs0: LapRefs | null = null;
   const basis = p.basis ?? 'contours';
+  // tongue & groove filling the wall: the offset counts from the holes as well, so the tongue sits b in from both sides
+  const allLoops = p.kind === 'tongue' && !(p.width > 0);
   try {
     const section = part.slice(0);
     try {
       if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
-      refs0 = lapRefs(wasm, section, picks, basis);
+      refs0 = lapRefs(wasm, section, picks, basis, allLoops);
     } finally {
       section.delete();
     }
@@ -592,7 +603,7 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
       if (!layers.has(k)) {
         const sec = part.slice(k);
         try {
-          layers.set(k, sec.isEmpty() ? null : lapRefs(wasm, sec, picks, basis));
+          layers.set(k, sec.isEmpty() ? null : lapRefs(wasm, sec, picks, basis, allLoops));
         } finally {
           sec.delete();
         }
@@ -658,7 +669,7 @@ export async function jointSplit(mesh: MeshData, plane: Plane, p: JointParams): 
   const flip = !!p.negative;
   const pl: Plane = flip ? { normal: [-plane.normal[0], -plane.normal[1], -plane.normal[2]], constant: -plane.constant } : plane;
   const swap = (r: { above: MeshData; below: MeshData }) => (flip ? { above: r.below, below: r.above } : { above: r.above, below: r.below });
-  if (!isTongueJoint(p.kind)) {
+  if (!isAcrossJoint(p.kind)) {
     const r = await lapSplit(mesh, pl, p);
     return { ...swap(r), tooDeep: r.tooDeep, lines: r.lines, contours: r.contours };
   }

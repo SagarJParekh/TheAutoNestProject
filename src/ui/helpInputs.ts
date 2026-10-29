@@ -126,6 +126,7 @@ export const INPUT_HELP: Record<string, string> = {
   'transform:mirror': 'Mirror the part across the X, Y or Z plane through its centre.',
   // ---------------------------------------------------------------- joint cut / cut
   'cut:gap': 'Moves the pieces apart after cutting, in mm, so you can see the cut (it does not remove material).',
+  'cut:tongue height (a)': 'How far the tongue stands up from the cut plane, in mm (the groove in the other piece is this deep plus the back clearance).',
   'cut:notch height (a)': 'How far the lap-joint notch stands up from the cut plane, in mm.',
   'cut:offset (b)': 'Distance of the notch in from the indicated contour, in mm: the thickness of the skirt. By default it counts from the outer boundary only, so on a tube the notch runs out to the bore.',
   'cut:show preview': 'Shows the joint (see-through, with the indicated contour and the offset line) as soon as a contour is indicated, and keeps it updated while you change the values.',

@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import type { MeshData, Vec3 } from '../geometry';
 import { mirrorMesh } from '../geometry/transform';
 import { regionNormal } from '../geometry/select';
-import { LAP_JOINTS, TONGUE_JOINTS, isTongueJoint } from '../geometry/joint';
+import { LAP_JOINTS, TONGUE_JOINTS, isAcrossJoint } from '../geometry/joint';
 import { pool, CancelledError } from '../workers/client';
 import type { OpArgs, OpName, OpResult } from '../workers/ops';
 import { getLoader, extensionOf } from '../loaders/registry';
@@ -548,7 +548,7 @@ export async function previewJointCut() {
   const mm = (v: number) => `${+v.toFixed(3)} mm`;
   const name = [...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind;
   const title = /joint$/i.test(name) ? name : `${name} joint`;
-  const tongue = isTongueJoint(params.kind);
+  const tongue = isAcrossJoint(params.kind);
   const counted = params.kind === 'multiple' || params.kind === 'toothed' || params.kind === 'finger';
   const lines = tongue
     ? [
@@ -559,17 +559,21 @@ export async function previewJointCut() {
         `Fit clearance: ${mm(params.clearance)}`,
       ]
     : [
-        `Lap joint: ${name}`,
-        `Notch height (a): ${mm(params.depth)} · offset (b): ${mm(params.offset)}`,
-        ...(params.kind === 'step' ? [] : [`Tongue width: ${mm(params.width)}`]),
+        params.kind === 'tongue' ? `Tongue joint: ${name}` : `Lap joint: ${name}`,
+        `${params.kind === 'tongue' ? 'Tongue height' : 'Notch height'} (a): ${mm(params.depth)} · offset (b): ${mm(params.offset)}`,
+        ...(params.kind === 'step'
+          ? []
+          : params.kind === 'tongue' && !(params.width > 0)
+            ? ['Tongue fills the wall, b in from every contour']
+            : [`Tongue width: ${mm(params.width)}`]),
         ...(params.kind === 'multiple' ? [`Spacing: ${mm(params.spacing)}`] : []),
         ...(counted ? [`Count: ${Math.max(1, Math.round(params.count))}`] : []),
         `Clearance: notch (d) ${mm(params.notchClearance)} · front (c) ${mm(params.frontClearance)} · back (e) ${mm(params.backClearance)}`,
         ...(r.contours
-          ? [`${params.basis === 'subcontours' ? 'Subcontours' : 'Section contours'}: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} outer (none indicated)`} of ${r.contours[1]}`]
+          ? [`${params.basis === 'subcontours' ? 'Subcontours' : 'Section contours'}: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} ${params.kind === 'tongue' && !(params.width > 0) ? 'contours' : 'outer'} (none indicated)`} of ${r.contours[1]}`]
           : []),
         ...(params.straight === false ? ['Notch follows the surface slope'] : []),
-        `Notch on: ${cutName(part.name, params.negative ? 1 : 2)}`,
+        `${params.kind === 'tongue' ? 'Tongue' : 'Notch'} on: ${cutName(part.name, params.negative ? 1 : 2)}`,
       ];
   setPreview({
     tool: 'cut',
