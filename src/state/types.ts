@@ -1,6 +1,6 @@
 import type {
   MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
-  LabelParams, TextureParams, Heightmap, MEntity, JointParams, ShapeParams, LatticeParams, WrapParams,
+  LabelParams, TextureParams, Heightmap, MEntity, JointParams, ShapeParams, LatticeParams, WrapParams, PolyCutParams, LassoCamera,
 } from '../geometry';
 
 export interface Transform {
@@ -310,6 +310,21 @@ export interface ToolSettings {
   joint: JointParams;
   /** drawn cut lines snap their points to the part's corners and sharp edges */
   cutSnap: boolean;
+  /** Draw line cut: teeth, rounding, depth and clearance */
+  polyCut: PolyCutParams;
+  /** Draw line cut: give the second piece its own colour */
+  polyRecolor: boolean;
+  /** the line drawn for the Draw line cut, kept so its teeth and options can be edited */
+  cutLine: CutLine | null;
+}
+
+/** A drawn cut line in camera space, with the view it was drawn in. */
+export interface CutLine {
+  points: [number, number][];
+  closed: boolean;
+  camera: LassoCamera;
+  /** camera-space units per mm at the part */
+  unit: number;
 }
 
 export type { RepairSummary, PerforationPlan, BooleanOp, Heightmap, MEntity };

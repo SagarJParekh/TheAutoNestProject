@@ -551,7 +551,7 @@ export async function previewJointCut() {
   const name = pinJoint ? 'Pins & holes' : ([...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind);
   const title = /joint$/i.test(name) ? name : `${name} joint`;
   const tongue = isAcrossJoint(params.kind);
-  const counted = params.kind === 'multiple' || params.kind === 'toothed' || params.kind === 'finger';
+  const counted = params.kind === 'finger';
   const clr = pinClearances(params);
   const lines = pinJoint
     ? [
@@ -578,8 +578,6 @@ export async function previewJointCut() {
           : params.kind === 'tongue' && !(params.width > 0)
             ? ['Tongue fills the wall, b in from every contour']
             : [`Tongue width: ${mm(params.width)}`]),
-        ...(params.kind === 'multiple' ? [`Spacing: ${mm(params.spacing)}`] : []),
-        ...(counted ? [`Count: ${Math.max(1, Math.round(params.count))}`] : []),
         `Clearance: notch (d) ${mm(params.notchClearance)} · front (c) ${mm(params.frontClearance)} · back (e) ${mm(params.backClearance)}`,
         ...(r.contours
           ? [`${params.basis === 'subcontours' ? 'Subcontours' : 'Section contours'}: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} ${params.kind === 'tongue' && !(params.width > 0) ? 'contours' : 'outer'} (none indicated)`} of ${r.contours[1]}`]

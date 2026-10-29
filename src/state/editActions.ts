@@ -4,7 +4,7 @@
  */
 import { Matrix4, Vector3 } from 'three';
 import {
-  addTriangle, bridgeEdges, brushSelect, openEdgeOfTriangle, polylineToOutline, buildTopology, compactMesh, deleteTriangles, estimateRemeshTriangles, growSelection, invertSelection, meanEdgeLength, shellOfTriangle,
+  addTriangle, bridgeEdges, brushSelect, openEdgeOfTriangle, buildTopology, compactMesh, deleteTriangles, estimateRemeshTriangles, growSelection, invertSelection, meanEdgeLength, shellOfTriangle,
   shrinkSelection, subsetTriangles, vertexTriangles,
 } from '../geometry';
 import type { VertexTriangles } from '../geometry';
@@ -18,6 +18,7 @@ import { nextColor } from './palette';
 import { viewerApi } from '../viewer/api';
 import type { PickInfo } from '../viewer/Viewer';
 import { cutName } from './naming';
+import { endLive, live } from './livePreview';
 
 const firstEditable = (): Part | undefined => {
   const p = selectedParts().find((x) => !x.locked);
@@ -547,12 +548,78 @@ export async function onPolylineDone(points: [number, number][], closed = false)
   if (closed) {
     // the line came back to its start: cut out the enclosed shape (through the part, along the view)
     if (points.length < 3) return notify('warning', 'A closed shape needs at least three points');
-    return cutWithOutline(points, 'Shape cut');
+    return keepCutLine(points, true);
   }
   if (points.length < 2) return notify('warning', 'Click at least two points');
-  const vp = document.querySelector('.viewport')?.getBoundingClientRect();
-  const reach = vp ? Math.hypot(vp.width, vp.height) * 4 : 20000;
-  await cutWithOutline(polylineToOutline(points, reach), 'Line cut');
+  keepCutLine(points, false);
+}
+
+/** Keep the drawn line (in the view it was drawn in) and show the cut, live while its options change. */
+function keepCutLine(points: [number, number][], closed: boolean) {
+  const viewer = viewerApi.current?.viewer;
+  const part = selectedParts().find((p) => !p.locked);
+  if (!viewer || !part) return;
+  const cam = viewer.lassoCamera(points, part.id);
+  if (!cam) return;
+  const s = getState();
+  // teeth go on the longest segment of a fresh line until another is indicated
+  const segs = closed ? points.length : points.length - 1;
+  let longest = 1, best = -1;
+  for (let i = 0; i < segs; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (l > best) (best = l), (longest = i + 1);
+  }
+  const keepSeg = s.settings.polyCut.segment > 0 ? longest : 0;
+  setState({ settings: { ...s.settings, cutLine: { points: cam.outline, closed, camera: cam.camera, unit: cam.unit }, polyCut: { ...s.settings.polyCut, segment: keepSeg } } });
+  void live(previewPolyCut);
+}
+
+export function clearCutLine() {
+  endLive();
+  setState({ settings: { ...getState().settings, cutLine: null }, preview: null });
+}
+
+/** Preview the Draw line cut with the kept line and the current teeth / rounding / depth / clearance. */
+export async function previewPolyCut() {
+  const s = getState();
+  const line = s.settings.cutLine;
+  const part = selectedParts().find((p) => !p.locked);
+  if (!line || !part) return;
+  const label = line.closed ? 'Shape cut' : 'Line cut';
+  const r = await runJob(label, 'polyCut', { mesh: worldMesh(part), points: line.points, closed: line.closed, camera: line.camera, unit: line.unit, params: s.settings.polyCut });
+  if (!r) return;
+  const pieces = [
+    { name: cutName(part.name, 1), mesh: r.inside, color: s.settings.polyRecolor ? nextColor() : part.color },
+    { name: cutName(part.name, 2), mesh: r.outside, color: part.color },
+  ].filter((p) => p.mesh.indices.length);
+  if (pieces.length < 2) {
+    setPreview(null);
+    return notify('warning', pieces.length ? (line.closed ? 'The shape does not cross the part' : 'The line must cross the whole part') : 'Nothing was cut');
+  }
+  const p = s.settings.polyCut;
+  const segs = line.closed ? line.points.length : line.points.length - 1;
+  setPreview({
+    tool: 'cut',
+    label,
+    replaces: [part.id],
+    // the first piece is tinted while previewing, so the two sides can be told apart
+    meshes: s.settings.polyRecolor ? pieces : [{ ...pieces[0], color: '#d0507a' }, pieces[1]],
+    lines: r.lines,
+    xray: true,
+    summary: [
+      `${label}: ${segs} segment${segs === 1 ? '' : 's'}`,
+      ...(p.segment > 0 && p.segment <= segs ? [`Teeth: ${r.teeth} ${p.type} on segment ${p.segment} · size ${p.size} % · offset ${p.offset} %${p.roundTeeth ? ` · rounded ${p.teethRadius} mm` : ''}`] : ['No teeth (indicate a segment to add them)']),
+      ...(p.roundPolyline ? [`Line corners rounded: ${p.polylineRadius} mm`] : []),
+      ...(p.depthOn ? [`Cutting depth: ${p.depth} mm from the front`] : []),
+      ...(p.clearanceOn ? [`Clearance: ${p.clearance} mm`] : []),
+      ...pieces.map((x) => `${x.name}: ${(x.mesh.indices.length / 3).toLocaleString()} triangles`),
+    ],
+    apply: () => {
+      replaceWithWorldMeshes(label, part.id, pieces);
+      setState({ settings: { ...getState().settings, cutLine: null } });
+    },
+  });
 }
 
 async function cutWithOutline(outline: [number, number][], label: string) {

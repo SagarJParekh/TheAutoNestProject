@@ -1623,7 +1623,8 @@ export class Viewer {
     const r = sphere.radius * 1.5 + 1;
     const near = ortho ? d - r : Math.max(d * 0.02, d - r, 0.01);
     const far = d + r;
-    return { outline, camera: { matrixWorld: cam.matrixWorld.elements.slice(), orthographic: ortho, near, far } };
+    // camera-space units per mm at the part's centre (perspective outlines are tangents at depth 1)
+    return { outline, camera: { matrixWorld: cam.matrixWorld.elements.slice(), orthographic: ortho, near, far }, unit: ortho ? 1 : 1 / Math.max(d, 1e-6) };
   }
 
   // ------------------------------------------------------------------ zoom window

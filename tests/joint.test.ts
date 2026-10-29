@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxMesh, isWatertight, jointFrame, jointProfile, lapProfile, jointSplit, meshVolume, computeBounds, mergeMeshes, LAP_JOINTS, TONGUE_JOINTS, DEFAULT_JOINT, type JointKind } from '../src/geometry';
+import { boxMesh, isWatertight, jointFrame, jointProfile, jointSplit, meshVolume, computeBounds, mergeMeshes, LAP_JOINTS, TONGUE_JOINTS, DEFAULT_JOINT, type JointKind } from '../src/geometry';
 
 // a 100 × 30 × 12 bar along X, cut across the middle
 const bar = boxMesh([0, 0, 0], [100, 30, 12]);
@@ -34,21 +34,6 @@ describe('lap joints follow the outline of the cross-section', () => {
     const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind: 'step', depth: 10, offset: 2, negative: true });
     expect(computeBounds(r.above.positions).min[2]).toBeCloseTo(10, 4);
     expect(meshVolume(r.above)).toBeCloseTo(40 * 40 * 20 + 36 * 36 * 10, 0);
-  });
-
-  it('square: a tongue running round the wall of a hollow tube', async () => {
-    // 40 × 40 tube with 4 mm walls, made of four wall boxes
-    const tube = mergeMeshes([boxMesh([0, 0, 0], [40, 4, 40]), boxMesh([0, 36, 0], [40, 40, 40]), boxMesh([0, 4, 0], [4, 36, 40]), boxMesh([36, 4, 0], [40, 36, 40])]);
-    const { unionMeshes } = await import('../src/geometry');
-    const solid = await unionMeshes([tube]);
-    const p = { ...DEFAULT_JOINT, kind: 'square' as JointKind, depth: 5, offset: 1, width: 2, notchClearance: 0, frontClearance: 0, backClearance: 0 };
-    const r = await jointSplit(solid, mid, p);
-    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
-    const wall = 40 * 40 - 32 * 32;
-    // a ring of the tongue between 1 and 3 mm in from the outside (its inner corners rounded)
-    const ring = 38 * 38 - 34 * 34;
-    expect(meshVolume(r.below) - wall * 20).toBeCloseTo(ring * 5, -1);
-    expect(meshVolume(r.above) + meshVolume(r.below)).toBeCloseTo(wall * 40, 0);
   });
 
   // 40 × 40 tube with 4 mm walls, cut half way up (as in the Magics lap joint video)
@@ -114,7 +99,7 @@ describe('lap joints follow the outline of the cross-section', () => {
 
   for (const kind of LAP_JOINTS.map((j) => j.value)) {
     it(`${kind}: two watertight pieces`, async () => {
-      const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind, depth: 6, offset: 3, width: 4, count: 2, spacing: 3 });
+      const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind, depth: 6, offset: 3, width: 4, count: 2 });
       expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
       expect(computeBounds(r.below.positions).max[2]).toBeGreaterThan(24);
       const lost = 40 * 40 * 40 - meshVolume(r.above) - meshVolume(r.below);
@@ -125,16 +110,9 @@ describe('lap joints follow the outline of the cross-section', () => {
 
   it('a notch deeper than the part, or one that does not fit inside the outline, is reported', async () => {
     expect((await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind: 'step', depth: 25, offset: 2 })).tooDeep).toBe(true);
-    await expect(jointSplit(cube, mid, { ...DEFAULT_JOINT, kind: 'square', depth: 5, offset: 21, width: 10 })).rejects.toThrow(/does not fit/);
+    await expect(jointSplit(cube, mid, { ...DEFAULT_JOINT, kind: 'tongue', depth: 5, offset: 21, width: 10 })).rejects.toThrow(/does not fit/);
   });
 
-  it('dovetails flare out but stay inside the outer surface; toothed profiles have one peak per tooth', () => {
-    const d = lapProfile({ ...DEFAULT_JOINT, kind: 'dovetail', width: 4, depth: 3, offset: 2, angle: 20 });
-    expect(d[2][0] - d[1][0]).toBeGreaterThan(d[3][0] - d[0][0]);
-    expect(d[1][0]).toBeGreaterThanOrEqual(0);
-    const t = lapProfile({ ...DEFAULT_JOINT, kind: 'toothed', count: 4, depth: 2 });
-    expect(t.filter(([, n]) => n === 2).length).toBe(4);
-  });
 });
 
 describe('pins & holes', () => {

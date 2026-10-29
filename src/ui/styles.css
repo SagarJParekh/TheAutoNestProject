@@ -515,3 +515,6 @@ table.report tr:last-child td { border-bottom: none; }
 .parts-opacity { align-items: center; gap: 4px; }
 .parts-opacity .muted { font-size: 11px; margin-right: 2px; }
 .parts-opacity .mini.on { border-color: var(--accent); color: var(--accent); }
+.tooth-types { display: flex; gap: 6px; }
+.tooth-types .joint-btn { padding: 4px 6px; }
+.tooth-line { fill: none; stroke: var(--text, currentColor); stroke-width: 1.5; stroke-linejoin: round; }

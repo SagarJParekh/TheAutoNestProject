@@ -6,6 +6,7 @@ import type {
 } from './types';
 import type { ErrorGroup, MeshData, ThicknessResult } from '../geometry';
 import { DEFAULT_JOINT } from '../geometry/joint';
+import { DEFAULT_POLYCUT } from '../geometry/polycut';
 import { DEFAULT_SHAPE } from '../geometry/shapes';
 import { DEFAULT_LATTICE } from '../geometry/lattice';
 import { DEFAULT_WRAP } from '../geometry/wrap';
@@ -228,6 +229,9 @@ export const useStore = create<AppState>(() => ({
     cutMode: 'plane',
     joint: { ...DEFAULT_JOINT },
     cutSnap: true,
+    polyCut: { ...DEFAULT_POLYCUT },
+    polyRecolor: false,
+    cutLine: null,
   },
   jobs: [],
   notices: [],

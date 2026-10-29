@@ -29,8 +29,8 @@ function JointIcon({ kind, params }: { kind: JointKind; params: JointParams }) {
   const prof = tongue
     ? jointProfile({ kind, depth: kind === 'finger' ? 6 : kind === 'scarf' ? 16 : 10, count: Math.min(params.count, 6), angle: params.angle }, 0, 12)
     : kind === 'tongue'
-      ? lapProfile({ kind, depth: 4, offset: 3.5, width: 5, spacing: 0, count: 1, angle: 0 })
-      : lapProfile({ kind, depth: 4, offset: 2, width: kind === 'multiple' || kind === 'toothed' ? 2 : 4, spacing: 1.5, count: Math.min(params.count, 4), angle: params.angle });
+      ? lapProfile({ kind, depth: 4, offset: 3.5, width: 5 })
+      : lapProfile({ kind, depth: 4, offset: 2, width: 4 });
   const ns = prof.map(([, n]) => n);
   const lo = Math.min(...ns, 0), hi = Math.max(...ns, 0), pad = (hi - lo) * 0.6 + 2;
   const x = (s: number) => 3 + (s / 12) * (W - 6);
@@ -215,8 +215,8 @@ export function JointCut({ target }: { target?: Part }) {
   const tg = j.kind === 'tongue';
   const pin = isPinJoint(j.kind);
   const list = family === 'tongue' ? TONGUE_JOINTS : LAP_JOINTS;
-  const counted = j.kind === 'multiple' || j.kind === 'toothed' || j.kind === 'finger';
-  const mmField = (label: string, key: 'depth' | 'offset' | 'width' | 'spacing' | 'notchClearance' | 'frontClearance' | 'backClearance' | 'clearance', title: string, step = 0.5) => (
+  const counted = j.kind === 'finger';
+  const mmField = (label: string, key: 'depth' | 'offset' | 'width' | 'notchClearance' | 'frontClearance' | 'backClearance' | 'clearance', title: string, step = 0.5) => (
     <Row label={label}>
       <NumberField value={j[key]} min={0} step={step} suffix="mm" title={title} onChange={(v) => setJoint({ [key]: Math.max(0, v) })} />
     </Row>
@@ -234,7 +234,7 @@ export function JointCut({ target }: { target?: Part }) {
           ]}
         />
       </div>
-      {!pin && <div className="joint-grid">
+      {family === 'tongue' && !pin && <div className="joint-grid">
         {list.map((o) => (
           <button key={o.value} className={`joint-btn ${j.kind === o.value ? 'on' : ''}`} onClick={() => chooseKind(o.value)} title={o.label}>
             <JointIcon kind={o.value} params={j} />
@@ -309,24 +309,7 @@ export function JointCut({ target }: { target?: Part }) {
               : 'Distance of the notch from the indicated contour (measured inwards across the cut): the thickness of the skirt',
             0.1,
           )}
-          {j.kind !== 'step' &&
-            mmField(
-              'Tongue width',
-              'width',
-              tg ? 'Width of the tongue, from the offset inwards; 0 = fill the wall, ending b from the inner wall too' : j.kind === 'toothed' ? 'Width of each tooth at its root' : 'Width of each tongue at its root',
-              0.5,
-            )}
-          {j.kind === 'multiple' && mmField('Spacing', 'spacing', 'Gap between neighbouring tongues')}
-          {(j.kind === 'multiple' || j.kind === 'toothed') && (
-            <Row label={j.kind === 'toothed' ? 'Teeth' : 'Tongues'}>
-              <NumberField value={j.count} min={1} max={50} step={1} precision={0} onChange={(count) => setJoint({ count: Math.max(1, Math.round(count)) })} />
-            </Row>
-          )}
-          {j.kind === 'dovetail' && (
-            <Row label="Flare angle">
-              <NumberField value={j.angle} min={0} max={45} step={1} suffix="°" onChange={(angle) => setJoint({ angle: Math.max(0, Math.min(45, angle)) })} />
-            </Row>
-          )}
+          {tg && mmField('Tongue width', 'width', 'Width of the tongue, from the offset inwards; 0 = fill the wall, ending b from the inner wall too', 0.5)}
           {mmField('Notch clearance (d)', 'notchClearance', 'Gap at the sides of the notch', 0.05)}
           {mmField('Front clearance (c)', 'frontClearance', 'Gap on the ledge around the notch', 0.05)}
           {mmField('Back clearance (e)', 'backClearance', 'Gap on top of the notch', 0.05)}
@@ -386,7 +369,7 @@ export function JointCut({ target }: { target?: Part }) {
           ? 'Tongue joints run straight across the cross-section at the plane: a half lap halves the thickness, a scarf runs a slope through it and finger joints interlock across the width.'
           : tg
             ? 'Tongue & groove follows the outline of the part where it is cut: one piece gets a tongue set in by the offset b from every wall of the indicated contour (on a tube, b from the outside and b from the bore), the other a matching groove, with the clearances in between. Regions not indicated are cut flat. Give a tongue width to set it from the outer wall only (e.g. on solid parts).'
-            : 'Lap joints follow the outline of the part where it is cut: one piece gets the notch (a plateau, tongues or teeth set in by the offset b from the indicated contour), the other a matching skirt over it, with the clearances in between. Regions not indicated are cut flat. Straight cut keeps the notch walls square to the plane; off, they follow the slope of the surface. A dovetail cannot be pushed together along a closed outline.'}{' '}
+            : 'Lap joints follow the outline of the part where it is cut: one piece gets the notch (a plateau set in by the offset b from the indicated contour), the other a matching skirt over it, with the clearances in between. Regions not indicated are cut flat. Straight cut keeps the notch walls square to the plane; off, they follow the slope of the surface.'}{' '}
         Changes update the preview while it is open. Needs a watertight part.
       </Hint>
     </>

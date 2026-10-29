@@ -394,6 +394,12 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
   },
 
+  async polyCut(args: G.PolyCutArgs, progress: Progress): Promise<Result<{ inside: MeshData; outside: MeshData; lines: Float32Array; teeth: number }>> {
+    progress(0.2, 'Cutting along the line');
+    const r = await G.polyCutSplit(args);
+    return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
+  },
+
   async jointCut(args: { mesh: MeshData; plane: Plane; params: G.JointParams }, progress: Progress): Promise<Result<G.JointResult>> {
     progress(0.2, 'Building the joint');
     const r = await G.jointSplit(args.mesh, args.plane, args.params);

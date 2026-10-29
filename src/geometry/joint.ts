@@ -3,7 +3,7 @@
  * surface so the two pieces key into each other when put back together.
  *
  * Two families, both laid on the cut plane (n = along the plane normal):
- * - lap joints (U, square, multiple, step, toothed, dovetail) follow the part's
+ * - lap joints (and tongue & groove) follow the part's
  *   outline at the cut: the profile is drawn against s = the distance inwards
  *   from the indicated contours (by default each region's outer boundary, so on
  *   a tube the notch runs out to the bore) and swept all the way round the
@@ -21,19 +21,12 @@ import { planeBasis } from './triangulate';
 import { fromManifold, getManifold, toManifold, NotManifoldError } from './manifold';
 import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 
-export type LapJoint = 'u' | 'square' | 'multiple' | 'step' | 'toothed' | 'dovetail';
+export type LapJoint = 'step';
 export type TongueJoint = 'tongue' | 'halfLap' | 'finger' | 'scarf';
 export type PinJoint = 'pins';
 export type JointKind = LapJoint | TongueJoint | PinJoint;
 
-export const LAP_JOINTS: { value: LapJoint; label: string }[] = [
-  { value: 'u', label: 'U' },
-  { value: 'square', label: 'Square' },
-  { value: 'multiple', label: 'Multiple' },
-  { value: 'step', label: 'Step / Z / Rabbet' },
-  { value: 'toothed', label: 'Toothed (multiple V)' },
-  { value: 'dovetail', label: 'Dovetail' },
-];
+export const LAP_JOINTS: { value: LapJoint; label: string }[] = [{ value: 'step', label: 'Lap joint' }];
 export const TONGUE_JOINTS: { value: TongueJoint; label: string }[] = [
   { value: 'tongue', label: 'Tongue & groove' },
   { value: 'halfLap', label: 'Half lap' },
@@ -56,8 +49,6 @@ export interface JointParams {
   offset: number;
   /** lap joints: width of each tongue / tooth at its root, mm (tongue & groove: 0 = fill the wall, b in from each side) */
   width: number;
-  /** multiple: gap between neighbouring tongues, mm */
-  spacing: number;
   /** number of tongues / teeth / fingers (multiple, toothed, finger) */
   count: number;
   /** dovetail flare / finger taper, degrees */
@@ -113,7 +104,7 @@ export interface JointParams {
 }
 
 export const DEFAULT_JOINT: JointParams = {
-  kind: 'step', depth: 3, offset: 0.5, width: 3, spacing: 3, count: 2, angle: 15, rotate: 0,
+  kind: 'step', depth: 3, offset: 0.5, width: 3, count: 2, angle: 15, rotate: 0,
   notchClearance: 0.1, frontClearance: 0.1, backClearance: 0.1, clearance: 0.2, negative: false, recolor: false,
   basis: 'contours', picks: [], straight: true, showPreview: true,
   pinType: 'pins', pinRadius: 0.5, pinHeight: 2, pinTolerance: 0.02, pinSpacing: 4, uniformClearance: true,
@@ -133,53 +124,12 @@ export function pinClearances(p: Pick<JointParams, 'uniformClearance' | 'pinTop'
  * inwards from the outer surface, n = height above the cut plane. The piece on
  * the negative side keeps everything below the line.
  */
-export function lapProfile(p: Pick<JointParams, 'kind' | 'depth' | 'offset' | 'width' | 'spacing' | 'count' | 'angle'>): [number, number][] {
-  const a = Math.max(0, p.depth), b = Math.max(0, p.offset), w = Math.max(0.01, p.width), g = Math.max(0, p.spacing);
-  const k = Math.max(1, Math.round(p.count) || 1);
-  const out: [number, number][] = [];
-  switch (p.kind) {
-    case 'step':
-      out.push([b, 0], [b, a]);
-      break;
-    case 'tongue':
-      // without a width the tongue runs to b from the far wall too (offsets count from every loop)
-      if (p.width > 0) out.push([b, 0], [b, a], [b + w, a], [b + w, 0]);
-      else out.push([b, 0], [b, a]);
-      break;
-    case 'square':
-      out.push([b, 0], [b, a], [b + w, a], [b + w, 0]);
-      break;
-    case 'u': {
-      const seg = 24;
-      for (let i = 0; i <= seg; i++) {
-        const f = Math.PI * (1 - i / seg);
-        out.push([b + w / 2 + (w / 2) * Math.cos(f), a * Math.sin(f)]);
-      }
-      break;
-    }
-    case 'multiple':
-      for (let i = 0; i < k; i++) {
-        const s0 = b + i * (w + g);
-        out.push([s0, 0], [s0, a], [s0 + w, a], [s0 + w, 0]);
-      }
-      break;
-    case 'toothed':
-      for (let i = 0; i < k; i++) {
-        const s0 = b + i * w;
-        if (i === 0) out.push([s0, 0]);
-        out.push([s0 + w / 2, a], [s0 + w, 0]);
-      }
-      break;
-    case 'dovetail': {
-      // flares out towards the top, but never past the outer surface
-      const e = Math.min(a * Math.tan((Math.max(0, Math.min(p.angle, 45)) * Math.PI) / 180), b);
-      out.push([b, 0], [b - e, a], [b + w + e, a], [b + w, 0]);
-      break;
-    }
-    default:
-      out.push([0, 0]);
-  }
-  return out;
+export function lapProfile(p: Pick<JointParams, 'kind' | 'depth' | 'offset' | 'width'>): [number, number][] {
+  const a = Math.max(0, p.depth), b = Math.max(0, p.offset), w = Math.max(0.01, p.width);
+  // tongue & groove with a width: a tongue b..b+w in from the outer wall; otherwise a step at b
+  // (for tongue & groove the offsets count from every loop, so the step ends b from the far wall too)
+  if (p.kind === 'tongue' && p.width > 0) return [[b, 0], [b, a], [b + w, a], [b + w, 0]];
+  return [[b, 0], [b, a]];
 }
 
 /** The sizes actually used by a tongue joint, after the automatic ones are worked out from the section. */
