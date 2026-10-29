@@ -4,10 +4,10 @@ import { Check, Hint, NumberField, Row, Section, Segmented, VecRow } from '../co
 import { getState, setState, updateParts, useStore } from '../../state/store';
 import { centerOnOrigin, dropToBed, mirrorParts, setRotationLock } from '../../state/actions';
 import { alignToReference, arrangeOnBed, arrayParts, autoArrange, mirrorCopies } from '../../state/featureActions';
-import { localBounds } from '../../state/math';
+import { localBounds, worldBounds } from '../../state/math';
 import type { Part, Transform } from '../../state/types';
 import type { Vec3 } from '../../geometry';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Vector3 } from 'three';
 
 export function TransformPanel({ parts }: { parts: Part[] }) {
@@ -47,7 +47,13 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
     />
   );
 
-  const sz = single ? localBounds(single.mesh).getSize(new Vector3()) : null;
+  // size as it stands in the scene: the world bounding box, after rotation and scale
+  const rotKey = single ? single.transform.rotation.join() : '';
+  const scaleKey = single ? single.transform.scale.join() : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sz = useMemo(() => (single ? worldBounds(single).getSize(new Vector3()) : null), [single?.mesh, rotKey, scaleKey]);
+  const local = single ? localBounds(single.mesh).getSize(new Vector3()) : null;
+  const rotated = !!single && single.transform.rotation.some((r) => Math.abs(r) > 1e-9);
 
   return (
     <Section title="Transform">
@@ -102,13 +108,19 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
                 <NumberField
                   key={'d' + k}
                   label={'XYZ'[i]}
-                  value={sz[k] * single.transform.scale[i]}
+                  value={sz[k]}
                   disabled={single.locked || sz[k] === 0}
                   min={0.001}
                   precision={2}
+                  title={rotated ? 'Size along the world axis (the part is rotated): typing a size scales the part uniformly' : undefined}
                   onChange={(v) =>
                     setT('Scale', (t) => {
-                      const f = v / sz[k];
+                      // a rotated part cannot be stretched along a world axis: scale it as a whole
+                      if (rotated || !local || local[k] === 0) {
+                        const r = v / sz[k];
+                        return { scale: t.scale.map((sc) => sc * r) as Vec3 };
+                      }
+                      const f = v / local[k];
                       if (uniform) {
                         const r = f / t.scale[i];
                         return { scale: t.scale.map((s) => s * r) as Vec3 };
