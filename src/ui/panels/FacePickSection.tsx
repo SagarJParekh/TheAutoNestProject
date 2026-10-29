@@ -1,6 +1,6 @@
 import { NumberField, Row } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
-import { regrowFace } from '../../state/actions';
+import { cancelPreview, regrowFace } from '../../state/actions';
 
 export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' }) {
   const fs = useStore((s) => s.faceSelection);
@@ -26,12 +26,19 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' }) {
         <p className="muted small">
           Selected {multi && (fs.groups?.length ?? 1) > 1 ? `${fs.groups!.length} faces · ` : ''}
           {fs.tris.length.toLocaleString()} triangles · {fs.area.toFixed(1)} mm²{' '}
-          {multi && (
-            <button className="mini" onClick={() => setState({ faceSelection: null, preview: null })}>
-              Clear
-            </button>
-          )}
         </p>
+      )}
+      {multi && (
+        <button
+          className="btn wide"
+          disabled={!fs}
+          onClick={() => {
+            cancelPreview();
+            setState({ faceSelection: null, pickMode: getState().pickMode === 'face' ? null : getState().pickMode });
+          }}
+        >
+          Clear selection
+        </button>
       )}
       {multi && <p className="muted small">Click several faces to extrude them together; click a picked face again to drop it.</p>}
       <Row label="Angle tolerance">

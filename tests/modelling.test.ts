@@ -119,3 +119,30 @@ describe('perforation', () => {
     expect(meshVolume(out)).toBeCloseTo(2700 - plan.centers.length * hexArea * 3, 0);
   });
 });
+
+describe('fillet along a circular edge', () => {
+  it('rounds the whole rim of a cylinder: watertight, the right volume, no teeth', async () => {
+    const { getManifold, fromManifold, findSharpEdge, blendEdges, meshVolume, isWatertight } = await import('../src/geometry');
+    const wasm = await getManifold();
+    const N = 128, R = 10, H = 20, r = 2;
+    const m = wasm.Manifold.cylinder(H, R, R, N);
+    const cyl = fromManifold(m);
+    m.delete();
+    // every facet edge of the top rim, as the edge-chain pick sends them
+    const pt = (k: number): [number, number, number] => [R * Math.cos((2 * Math.PI * k) / N), R * Math.sin((2 * Math.PI * k) / N), H];
+    const edges = Array.from({ length: N }, (_, k) => findSharpEdge(cyl, pt(k), pt(k + 1)));
+    expect(edges.every((e) => e.convex)).toBe(true);
+    const out = await blendEdges(cyl, edges, 'fillet', r);
+    expect(isWatertight(out)).toBe(true);
+    // removed: the corner minus a quarter circle, swept round at its centroid radius
+    const ring = r * r * (1 - Math.PI / 4) * 2 * Math.PI * (R - 0.2234 * r);
+    const removed = meshVolume(cyl) - meshVolume(out);
+    expect(removed / ring).toBeGreaterThan(0.93);
+    expect(removed / ring).toBeLessThan(1.07);
+    // nothing of the old sharp rim is left: at the very top no point lies further out than R − r
+    let top = 0;
+    const p = out.positions;
+    for (let i = 0; i < p.length; i += 3) if (p[i + 2] > H - 1e-3) top = Math.max(top, Math.hypot(p[i], p[i + 1]));
+    expect(top).toBeLessThan(R - r + 0.05);
+  });
+});

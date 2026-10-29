@@ -29,3 +29,20 @@ describe('label on an arc', () => {
     expect(Math.max(...p[0].map(([, y]) => y))).toBeGreaterThan(2.5);
   });
 });
+
+describe('circle from a curved edge', () => {
+  it('fits the circle of a facetted rim and of an arc', async () => {
+    const { circleFromEdgePoints } = await import('../src/geometry/measure3d');
+    const ring = Array.from({ length: 48 }, (_, k) => [5 + 12 * Math.cos((k / 48) * 2 * Math.PI), -3 + 12 * Math.sin((k / 48) * 2 * Math.PI), 7] as [number, number, number]);
+    const c = circleFromEdgePoints(ring);
+    expect(c.r).toBeCloseTo(12, 3);
+    expect(c.c[0]).toBeCloseTo(5, 3);
+    expect(c.c[1]).toBeCloseTo(-3, 3);
+    expect(Math.abs(c.n[2])).toBeCloseTo(1, 5);
+    // a 60° arc standing in the XZ plane
+    const arc = Array.from({ length: 9 }, (_, k) => [8 * Math.cos((k / 8) * (Math.PI / 3)), 0, 8 * Math.sin((k / 8) * (Math.PI / 3))] as [number, number, number]);
+    const a = circleFromEdgePoints(arc);
+    expect(a.r).toBeCloseTo(8, 3);
+    expect(Math.abs(a.n[1])).toBeCloseTo(1, 5);
+  });
+});

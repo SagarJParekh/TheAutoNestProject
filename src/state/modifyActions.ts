@@ -89,20 +89,28 @@ export function onSharpEdgePick(info: PickInfo) {
   const viewer = viewerApi.current?.viewer;
   if (!part || !viewer) return;
   requestEdges(part.mesh);
-  const seg = viewer.snapEdge(part.id, info.faceIndex, info.point, info.clientX, info.clientY, 18);
-  if (!seg) return;
+  // the whole edge under the cursor: a circle or arc made of facets comes as one chain
+  const chain = viewer.edgeChain(part.id, info.faceIndex, info.point, info.clientX, info.clientY, 18);
+  if (!chain) return;
   const inv = new Matrix4().copy(matrixOf(part.transform)).invert();
   const toLocal = (v: Vec3): Vec3 => {
     const q = new Vector3(...v).applyMatrix4(inv);
     return [q.x, q.y, q.z];
   };
-  const a = toLocal(seg[0]), b = toLocal(seg[1]);
+  const pts = chain.pts.map(toLocal);
+  const segs: [Vec3, Vec3][] = [];
+  for (let k = 0; k + 1 < pts.length; k++) segs.push([pts[k], pts[k + 1]]);
+  if (chain.closed) segs.push([pts[pts.length - 1], pts[0]]);
   const s = getState();
   // only one part at a time; picks on an old mesh are dropped
   const keep = s.blendEdges.filter((e) => e.partId === part.id && e.mesh === part.mesh);
   const near = (p: Vec3, q: Vec3) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
-  const i = keep.findIndex((e) => (near(e.a, a) && near(e.b, b)) || (near(e.a, b) && near(e.b, a)));
-  const next: BlendEdgePick[] = i >= 0 ? keep.filter((_, j) => j !== i) : [...keep, { partId: part.id, mesh: part.mesh, a, b }];
+  const same = (e: BlendEdgePick, [a, b]: [Vec3, Vec3]) => (near(e.a, a) && near(e.b, b)) || (near(e.a, b) && near(e.b, a));
+  // clicking a picked edge again drops its whole chain
+  const picked = keep.some((e) => segs.some((g) => same(e, g)));
+  const next: BlendEdgePick[] = picked
+    ? keep.filter((e) => !segs.some((g) => same(e, g)))
+    : [...keep, ...segs.map(([a, b]) => ({ partId: part.id, mesh: part.mesh, a, b }))];
   setState({ blendEdges: next, selection: [part.id], preview: null });
 }
 

@@ -2,6 +2,7 @@ import { MeshData, Vec3, computeBounds, flipMesh, mergeMeshes, ProgressFn, noPro
 import { Vector3 } from 'three';
 import { makeBVH, signedDistanceGrid } from './sdf';
 import { marchingTetrahedra } from './marching';
+import { dualContour } from './dualcontour';
 import { meshVolume } from './measure';
 import { holeCutter } from './perforate';
 import { planeBasis } from './triangulate';
@@ -22,6 +23,8 @@ export interface HollowResult {
   mesh: MeshData;
   inner: MeshData;
   voxelSize: number;
+  /** how the inner wall was made: dual contouring (sharp edges) or the marching-tetrahedra fallback */
+  method: 'dual' | 'tetra';
 }
 
 export function chooseVoxelSize(mesh: MeshData, thickness: number, maxVoxels = 6e6, perWall = 3): number {
@@ -57,16 +60,33 @@ export function hollowMesh(mesh: MeshData, opts: HollowOptions, onProgress: Prog
   // the tiny extra offset keeps grid nodes off the iso-surface (avoids degenerate triangles)
   const iso = t + h * 1.234e-3;
   for (let i = 0; i < d.length; i++) d[i] = d[i] - iso;
-  let inner = marchingTetrahedra(grid, (f, m) => onProgress(0.85 + f * 0.13, m));
+  // dual contouring with the exact offset planes: flat walls flat, edges and corners sharp
+  const bvh = makeBVH(mesh);
+  const q = new Vector3();
+  const target = { point: new Vector3(), distance: 0, faceIndex: 0 };
+  // the offset plane of the closest surface point: normal from it towards the crossing, `t` in from it
+  const planeAt = (x: number, y: number, z: number): [number, number, number, number] | null => {
+    q.set(x, y, z);
+    const r = bvh.closestPointToPoint(q, target as never);
+    if (!r || r.distance < 1e-9) return null;
+    const c = r.point, nx = (x - c.x) / r.distance, ny = (y - c.y) / r.distance, nz = (z - c.z) / r.distance;
+    return [nx, ny, nz, nx * c.x + ny * c.y + nz * c.z + t];
+  };
+  let inner = dualContour(grid, planeAt, (f, m) => onProgress(0.85 + f * 0.13, m));
   if (inner.indices.length === 0) {
     throw new Error(`Wall thickness ${t} mm leaves no interior cavity; use a smaller value.`);
   }
+  let method: HollowResult['method'] = 'dual';
+  if (!closedManifold(inner)) {
+    method = 'tetra';
+    // thin or tangled places can give the dual surface stray edges: fall back on marching tetrahedra
+    onProgress(0.9, 'Placing the inner wall');
+    inner = snapToOffset(marchingTetrahedra(grid), mesh, t);
+  }
   // inner wall must face into the cavity (negative signed volume)
   if (meshVolume(inner) > 0) inner = flipMesh(inner);
-  onProgress(0.98, 'Placing the inner wall exactly');
-  inner = snapToOffset(inner, mesh, t);
   onProgress(1);
-  return { mesh: mergeMeshes([mesh, inner]), inner, voxelSize: h };
+  return { mesh: mergeMeshes([mesh, inner]), inner, voxelSize: h, method };
 }
 
 /**
@@ -226,6 +246,25 @@ export function snapToOffset(offset: MeshData, surface: MeshData, distance: numb
     }
   }
   return { positions: out, indices: idx };
+}
+
+/** Every edge shared by exactly two triangles, once each way round. */
+function closedManifold(m: MeshData): boolean {
+  const idx = m.indices;
+  const seen = new Map<number, number>();
+  for (let t = 0; t < idx.length; t += 3)
+    for (let e = 0; e < 3; e++) {
+      const a = idx[t + e], b = idx[t + ((e + 1) % 3)];
+      if (a === b) return false;
+      const k = a * 4294967296 + b;
+      if (seen.has(k)) return false;
+      seen.set(k, 1);
+    }
+  for (const k of seen.keys()) {
+    const a = Math.floor(k / 4294967296), b = k - a * 4294967296;
+    if (!seen.has(b * 4294967296 + a)) return false;
+  }
+  return true;
 }
 
 export interface DrainHole {

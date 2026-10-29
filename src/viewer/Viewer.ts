@@ -1417,6 +1417,80 @@ export class Viewer {
     return best;
   }
 
+  /** Feature-edge adjacency per edges array: end point key -> segment indices. */
+  private chainCache = new WeakMap<Float32Array, Map<string, number[]>>();
+
+  /**
+   * The whole run of feature edges through the edge under the cursor: from
+   * the snapped segment it follows the edges on, through every point where
+   * exactly two edges meet and the run turns by less than 40° (a circle,
+   * an arc or a straight run made of several facets), stopping at corners.
+   * World-space points in order; `closed` when it comes back to its start.
+   */
+  edgeChain(partId: string, tri: number, point: Vec3, clientX: number, clientY: number, px = 14): { pts: Vec3[]; closed: boolean } | null {
+    const o = this.objects.get(partId);
+    if (!o) return null;
+    const seg = this.snapEdge(partId, tri, point, clientX, clientY, px);
+    if (!seg) return null;
+    const edges = meshEntry(o.part.mesh).edges;
+    if (!edges || !edges.length) return { pts: [seg[0], seg[1]], closed: false };
+    const key = (x: number, y: number, z: number) => `${Math.round(x * 1e4)},${Math.round(y * 1e4)},${Math.round(z * 1e4)}`;
+    let adj = this.chainCache.get(edges);
+    if (!adj) {
+      adj = new Map();
+      for (let i = 0; i < edges.length; i += 6)
+        for (const k of [key(edges[i], edges[i + 1], edges[i + 2]), key(edges[i + 3], edges[i + 4], edges[i + 5])]) {
+          const l = adj.get(k);
+          if (l) l.push(i);
+          else adj.set(k, [i]);
+        }
+      this.chainCache.set(edges, adj);
+    }
+    // the snapped segment, in local space
+    const inv = new Matrix4().copy(o.group.matrixWorld).invert();
+    const la = new Vector3(...seg[0]).applyMatrix4(inv), lb = new Vector3(...seg[1]).applyMatrix4(inv);
+    let start = -1, bd = Infinity;
+    for (const i of [...(adj.get(key(la.x, la.y, la.z)) ?? []), ...(adj.get(key(lb.x, lb.y, lb.z)) ?? [])]) {
+      const d =
+        Math.min(Math.hypot(edges[i] - la.x, edges[i + 1] - la.y, edges[i + 2] - la.z), Math.hypot(edges[i + 3] - la.x, edges[i + 4] - la.y, edges[i + 5] - la.z)) +
+        Math.min(Math.hypot(edges[i] - lb.x, edges[i + 1] - lb.y, edges[i + 2] - lb.z), Math.hypot(edges[i + 3] - lb.x, edges[i + 4] - lb.y, edges[i + 5] - lb.z));
+      if (d < bd) (bd = d), (start = i);
+    }
+    if (start < 0) return { pts: [seg[0], seg[1]], closed: false };
+    const P = (i: number, end: 0 | 1): Vector3 => new Vector3(edges[i + end * 3], edges[i + end * 3 + 1], edges[i + end * 3 + 2]);
+    const used = new Set<number>([start]);
+    const cosLimit = Math.cos((40 * Math.PI) / 180);
+    // walk on from one end of a segment, away from it
+    const walk = (seg0: number, end: 0 | 1): Vector3[] => {
+      const out: Vector3[] = [];
+      let cur = seg0, at = P(cur, end), prev = P(cur, end === 0 ? 1 : 0);
+      for (let guard = 0; guard < 200000; guard++) {
+        const next = (adj!.get(key(at.x, at.y, at.z)) ?? []).filter((i) => i !== cur);
+        if (next.length !== 1 || used.has(next[0])) break;
+        const n = next[0];
+        const nEnd: 0 | 1 = key(edges[n], edges[n + 1], edges[n + 2]) === key(at.x, at.y, at.z) ? 1 : 0;
+        const far = P(n, nEnd);
+        const d0 = at.clone().sub(prev).normalize(), d1 = far.clone().sub(at).normalize();
+        if (d0.dot(d1) < cosLimit) break;
+        used.add(n);
+        out.push(far);
+        prev = at;
+        at = far;
+        cur = n;
+      }
+      return out;
+    };
+    const fwd = walk(start, 1);
+    const back = walk(start, 0);
+    const local = [...back.reverse(), P(start, 0), P(start, 1), ...fwd];
+    // closed when the two ends meet
+    const first = local[0], last = local[local.length - 1];
+    const closed = local.length > 3 && first.distanceTo(last) < 1e-4;
+    if (closed) local.pop();
+    const m = o.group.matrixWorld;
+    return { pts: local.map((q) => { const w = q.clone().applyMatrix4(m); return [w.x, w.y, w.z] as Vec3; }), closed };
+  }
+
   /** Local index of the part vertex closest to the cursor on screen, within `px` pixels (or -1). */
   nearestVertexScreen(partId: string, clientX: number, clientY: number, px = 16): number {
     const o = this.objects.get(partId);

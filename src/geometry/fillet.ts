@@ -125,7 +125,7 @@ export function findSharpEdge(mesh: MeshData, a: Vec3, b: Vec3): SharpEdge {
  * Solid that rounds (fillet) or bevels (chamfer) an edge: remove it from
  * the part for a convex edge, add it for a concave one.
  */
-export async function edgeBlendSolid(edge: SharpEdge, kind: 'fillet' | 'chamfer', size: number): Promise<MeshData> {
+export async function edgeBlendSolid(edge: SharpEdge, kind: 'fillet' | 'chamfer', size: number, extend: [number, number] = [0, 0]): Promise<MeshData> {
   if (!(size > 0)) throw new Error('The size must be positive');
   const wasm = await getManifold();
   const e = norm(sub(edge.p1, edge.p0));
@@ -178,12 +178,13 @@ export async function edgeBlendSolid(edge: SharpEdge, kind: 'fillet' | 'chamfer'
     cs = merged;
   }
   const margin = Math.max(1e-3, len * 1e-4);
-  const solid = cs.extrude(len + 2 * margin);
+  // a piece of a curved run is stretched past its ends so the pieces meet without gaps
+  const solid = cs.extrude(len + 2 * margin + extend[0] + extend[1]);
   cs.delete();
   const local = fromManifold(solid);
   solid.delete();
-  // local (x, y, z) -> world p0 - e*margin + x X + y Y + z e
-  const o = add(edge.p0, e, -margin);
+  // local (x, y, z) -> world p0 - e*(margin + extend0) + x X + y Y + z e
+  const o = add(edge.p0, e, -(margin + extend[0]));
   const m = [X[0], X[1], X[2], 0, Y[0], Y[1], Y[2], 0, e[0], e[1], e[2], 0, o[0], o[1], o[2], 1];
   const pos = local.positions;
   const out = new Float32Array(pos.length);
@@ -200,7 +201,25 @@ export async function edgeBlendSolid(edge: SharpEdge, kind: 'fillet' | 'chamfer'
 export async function blendEdges(mesh: MeshData, edges: SharpEdge[], kind: 'fillet' | 'chamfer', size: number): Promise<MeshData> {
   if (!edges.length) return mesh;
   const cut: MeshData[] = [], fill: MeshData[] = [];
-  for (const e of edges) (e.convex ? cut : fill).push(await edgeBlendSolid(e, kind, size));
+  // edges of a curved run (a circle made of facets) meet at slight turns: each piece reaches past
+  // its ends by the gap the turn opens, so the pieces join up (sharp corners above 60° are left as they are)
+  const near = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-5;
+  const dirOf = (e: SharpEdge) => norm(sub(e.p1, e.p0));
+  const reach = (e: SharpEdge) => {
+    const phi = Math.acos(Math.max(-1, Math.min(1, dot(e.t1, e.t2))));
+    return (kind === 'fillet' ? size / Math.tan(Math.max(phi, 1e-3) / 2) : size) + Math.max(0.01, Math.min(0.2, size * 0.05));
+  };
+  const extendAt = (e: SharpEdge, at: Vec3): number => {
+    let best = 0;
+    for (const f of edges) {
+      if (f === e || !(near(f.p0, at) || near(f.p1, at))) continue;
+      const turn = Math.acos(Math.min(1, Math.abs(dot(dirOf(e), dirOf(f)))));
+      if (turn > (60 * Math.PI) / 180) continue;
+      best = Math.max(best, reach(e) * Math.tan(turn / 2) * 1.5 + 1e-3);
+    }
+    return best;
+  };
+  for (const e of edges) (e.convex ? cut : fill).push(await edgeBlendSolid(e, kind, size, [extendAt(e, e.p0), extendAt(e, e.p1)]));
   let out = mesh;
   if (cut.length) out = await booleanMeshes('subtract', out, cut);
   if (fill.length) out = await booleanMeshes('union', out, fill);

@@ -3,7 +3,7 @@
  * surfaces, circles, spheres) and entities into measurements.
  */
 import { Matrix3, Vector3 } from 'three';
-import { angle3, angleBetween, circleFrom3Points, measureDistance, vec } from '../geometry/measure3d';
+import { angle3, angleBetween, circleFrom3Points, circleFromEdgePoints, measureDistance, vec } from '../geometry/measure3d';
 import type { MEntity, Vec3 } from '../geometry';
 import { getState, notify, partById, setState, useStore } from './store';
 import type { Measurement, MeasureDraw } from './types';
@@ -83,6 +83,23 @@ async function fitAt(info: PickInfo, kind: 'cylinder' | 'sphere'): Promise<MEnti
   return { kind: 'circle', c: [c.x, c.y, c.z], n: [ax.x, ax.y, ax.z], r: r.r * scale };
 }
 
+/** A circle for an edge run that curves (a circle or an arc of at least 30°), else null. */
+function curvedChain(pts: Vec3[]): MEntity | null {
+  if (pts.length < 4) return null;
+  let turn = 0;
+  for (let i = 1; i + 1 < pts.length; i++) {
+    const a = new Vector3(...pts[i]).sub(new Vector3(...pts[i - 1])).normalize();
+    const b = new Vector3(...pts[i + 1]).sub(new Vector3(...pts[i])).normalize();
+    turn += Math.acos(Math.max(-1, Math.min(1, a.dot(b))));
+  }
+  if (turn < (30 * Math.PI) / 180) return null;
+  try {
+    return circleFromEdgePoints(pts);
+  } catch {
+    return null;
+  }
+}
+
 /** Handle a viewport click while the Measure tool is active. */
 export async function onMeasurePick(info: PickInfo) {
   const viewer = viewerApi.current?.viewer;
@@ -137,16 +154,20 @@ export async function onMeasurePick(info: PickInfo) {
       entity = { kind: 'point', p: snapped() };
       break;
     case 'edge': {
-      const e = viewer.snapEdge(info.partId, info.faceIndex, info.point, info.clientX, info.clientY);
-      if (e) entity = { kind: 'line', a: e[0], b: e[1] };
+      // the whole edge: a straight run as one line, a circle or arc (made of facets) as a circle
+      const chain = viewer.edgeChain(info.partId, info.faceIndex, info.point, info.clientX, info.clientY);
+      if (chain) entity = curvedChain(chain.pts) ?? { kind: 'line', a: chain.pts[0], b: chain.pts[chain.pts.length - 1] };
       break;
     }
     case 'surface':
       entity = { kind: 'plane', p: info.point, n: info.normal };
       break;
-    case 'circle':
-      entity = await fitAt(info, 'cylinder');
+    case 'circle': {
+      // a click right on a circular edge takes that edge; elsewhere the round surface is fitted
+      const chain = viewer.edgeChain(info.partId, info.faceIndex, info.point, info.clientX, info.clientY, 10);
+      entity = (chain && curvedChain(chain.pts)) ?? (await fitAt(info, 'cylinder'));
       break;
+    }
     case 'sphere':
       entity = await fitAt(info, 'sphere');
       break;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { boxMesh, hollowMesh, computeBounds, meshVolume, snapToOffset } from '../src/geometry';
 
 describe('hollow keeps the wall exact', () => {
-  it('the inner wall of a 40 mm cube lies exactly 2 mm in, even on a coarse grid', () => {
+  it('the inner wall of a 40 mm cube lies exactly 2 mm in, even on a coarse grid (sharp edges and corners)', () => {
     const cube = boxMesh([0, 0, 0], [40, 40, 40]);
     // a deliberately coarse voxel (0.9 mm): before snapping the cavity was off by up to a voxel
     const r = hollowMesh(cube, { thickness: 2, voxelSize: 0.9 });
@@ -11,8 +11,8 @@ describe('hollow keeps the wall exact', () => {
       expect(b.min[k]).toBeCloseTo(2, 2);
       expect(b.max[k]).toBeCloseTo(38, 2);
     }
-    // cavity close to 36³ (its edges are slightly chamfered by the grid)
-    expect(Math.abs(meshVolume(r.inner)) / 36 ** 3).toBeGreaterThan(0.985);
+    // the cavity is the exact 36 mm cube: corners and edges sharp
+    expect(Math.abs(meshVolume(r.inner))).toBeCloseTo(36 ** 3, 0);
   });
 
   it('the cavity of a cylinder keeps sharp rims (no bevel or waviness at its ends), without folded triangles', async () => {
@@ -47,8 +47,9 @@ describe('hollow keeps the wall exact', () => {
         else if (tn[k / 3][0] * tn[o][0] + tn[k / 3][1] * tn[o][1] + tn[k / 3][2] * tn[o][2] < -0.5) folds++;
       }
     expect(folds).toBe(0);
-    // with only the grid's bevel at the rims 2112 edges cut the corner; sharpening takes most of them onto the edge
-    expect(off).toBeLessThan(1000);
+    // dual contouring puts the rims exactly on the edge: no triangle edge cuts the corner (only facet error is left)
+    expect(r.method).toBe('dual');
+    expect(off).toBe(0);
   });
 
   it('snapping moves vertices onto the exact offset', () => {

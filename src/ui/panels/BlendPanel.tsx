@@ -3,6 +3,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { clearBlendEdges, previewBlend, startSharpEdgePick } from '../../state/modifyActions';
 import type { Part } from '../../state/types';
 import { live } from '../../state/livePreview';
+import { cancelPreview } from '../../state/actions';
 
 /** Fillet & chamfer: round or bevel picked sharp edges. */
 export function BlendPanel({ parts }: { parts: Part[] }) {
@@ -31,19 +32,25 @@ export function BlendPanel({ parts }: { parts: Part[] }) {
         {pickMode === 'sharpEdge' ? 'Done picking edges' : 'Pick edges…'}
       </button>
       <div className="pick-row">
-        <span className="muted small">{edges.length ? `${edges.length} edge${edges.length > 1 ? 's' : ''} picked` : 'No edges picked'}</span>
-        {edges.length > 0 && (
-          <button className="mini" onClick={clearBlendEdges}>
-            Clear
-          </button>
-        )}
+        <span className="muted small">{edges.length ? `${edges.length} edge segment${edges.length > 1 ? 's' : ''} picked` : 'No edges picked'}</span>
       </div>
+      <button
+        className="btn wide"
+        disabled={!edges.length}
+        onClick={() => {
+          cancelPreview();
+          clearBlendEdges();
+          if (getState().pickMode === 'sharpEdge') setState({ pickMode: null });
+        }}
+      >
+        Clear selection
+      </button>
       <button className="btn primary wide" disabled={!edges.length || !!preview} onClick={() => live(previewBlend)}>
         Preview {bl.kind}
       </button>
       <Hint>
-        Click near sharp, straight edges between flat faces (click again to remove one). Outside edges are rounded or bevelled by cutting material away;
-        inside edges get material added. The part must be watertight.
+        Click near a sharp edge: the whole edge is picked, a straight run or a circle / arc made of facets (click it again to remove it). Outside
+        edges are rounded or bevelled by cutting material away; inside edges get material added. The part must be watertight.
       </Hint>
     </Section>
   );

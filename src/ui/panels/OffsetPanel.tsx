@@ -2,6 +2,8 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { previewOffset } from '../../state/modifyActions';
 import { PickButton } from './RepairTabs';
+import { clearPick } from '../../state/repairActions';
+import { cancelPreview } from '../../state/actions';
 import type { Part } from '../../state/types';
 import { live } from '../../state/livePreview';
 
@@ -9,6 +11,7 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
   const st = useStore((s) => s.settings.offset);
   const preview = useStore((s) => s.preview);
   const target = parts.find((p) => !p.locked);
+  const picked = useStore((s) => !!s.facePicks.offset);
   const setO = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, offset: { ...getState().settings.offset, ...patch } }, preview: null });
   return (
     <>
@@ -51,6 +54,17 @@ export function OffsetPanel({ parts }: { parts: Part[] }) {
               </Row>
             )}
             <PickButton slot="offset" label="Pick faces to offset" multi />
+            <button
+              className="btn wide"
+              disabled={!picked}
+              onClick={() => {
+                cancelPreview();
+                clearPick('offset');
+                if (getState().pickMode === 'face') setState({ pickMode: null });
+              }}
+            >
+              Clear selection
+            </button>
             <button className="btn primary wide" disabled={!!preview || !st.distance} onClick={() => live(previewOffset)}>
               Preview face offset
             </button>

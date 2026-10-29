@@ -161,6 +161,37 @@ export function circleFrom3Points(p1: Vec3, p2: Vec3, p3: Vec3): Extract<MEntity
 
 // ------------------------------------------------------------------ fitting
 
+/**
+ * Circle through points along a curved edge (a circle or an arc made of
+ * facets): the plane they lie in, then the least-squares circle in it.
+ */
+export function circleFromEdgePoints(pts: Vec3[]): Extract<MEntity, { kind: 'circle' }> {
+  if (pts.length < 3) throw new Error('Too few points for a circle');
+  if (pts.length === 3) return circleFrom3Points(pts[0], pts[1], pts[2]);
+  const c0 = mul(pts.reduce((s, p) => add(s, p), [0, 0, 0] as Vec3), 1 / pts.length);
+  // plane normal: the largest cross product of spokes from the centroid (robust for arcs too)
+  let n: Vec3 = [0, 0, 0];
+  for (let i = 0; i < pts.length; i++) {
+    const a = sub(pts[i], c0), b = sub(pts[(i + Math.max(1, Math.floor(pts.length / 3))) % pts.length], c0);
+    const x = cross(a, b);
+    n = dot(x, n) < 0 ? sub(n, x) : add(n, x);
+  }
+  if (dot(n, n) < 1e-18) throw new Error('The edge is straight');
+  n = unit(n);
+  const u = unit(Math.abs(n[0]) < 0.9 ? cross(n, [1, 0, 0]) : cross(n, [0, 1, 0])), v = cross(n, u);
+  // Kåsa fit: x² + y² + D x + E y + F = 0
+  let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, sxz = 0, syz = 0, sz = 0;
+  for (const p of pts) {
+    const d = sub(p, c0), x = dot(d, u), y = dot(d, v), z = x * x + y * y;
+    sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; sxz += x * z; syz += y * z; sz += z;
+  }
+  const k = pts.length;
+  const [D, E, F] = solve([[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, k]], [-sxz, -syz, -sz]);
+  const cx = -D / 2, cy = -E / 2;
+  const r = Math.sqrt(Math.max(0, cx * cx + cy * cy - F));
+  return { kind: 'circle', c: add(c0, add(mul(u, cx), mul(v, cy))), n, r };
+}
+
 /** Solve a small dense linear system (Gaussian elimination with pivoting). */
 function solve(A: number[][], b: number[]): number[] {
   const n = b.length;
