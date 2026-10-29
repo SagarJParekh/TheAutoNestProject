@@ -5,7 +5,7 @@
  */
 import type { Manifold } from 'manifold-3d';
 import { MeshData } from './mesh';
-import { fromManifold, getManifold } from './manifold';
+import { fromManifold, getManifold, subtractMeshes } from './manifold';
 
 export type ShapeKind =
   | 'box' | 'cylinder' | 'cone' | 'sphere' | 'hemisphere' | 'torus' | 'tube' | 'pyramid' | 'prism' | 'wedge' | 'capsule' | 'ellipsoid';
@@ -26,9 +26,13 @@ export interface ShapeParams {
   sides: number;
   /** smoothness: segments round a full circle */
   segments: number;
+  /** make it a closed hollow shell */
+  hollow?: boolean;
+  /** wall thickness of the hollow shell, mm */
+  wall?: number;
 }
 
-export const DEFAULT_SHAPE: ShapeParams = { kind: 'box', x: 20, y: 20, z: 20, d: 20, d2: 10, h: 20, sides: 6, segments: 64 };
+export const DEFAULT_SHAPE: ShapeParams = { kind: 'box', x: 20, y: 20, z: 20, d: 20, d2: 10, h: 20, sides: 6, segments: 64, hollow: false, wall: 2 };
 
 export const SHAPES: { value: ShapeKind; label: string }[] = [
   { value: 'box', label: 'Cube / box' },
@@ -75,7 +79,42 @@ const pos = (v: number, what: string) => {
   return v;
 };
 
+/**
+ * The shape, solid or as a hollow shell with walls `wall` thick. A box,
+ * cylinder, sphere or torus is hollowed exactly (the same shape shrunk by the
+ * wall is cut out of it); the others are hollowed like the Hollow tool.
+ */
 export async function makeShape(p: ShapeParams): Promise<MeshData> {
+  const outer = await buildShape(p);
+  if (!p.hollow || p.kind === 'tube') return outer;
+  const t = p.wall ?? 2;
+  if (!(t > 0)) throw new Error('The wall thickness must be positive');
+  const shrunk: Partial<Record<ShapeKind, Partial<ShapeParams>>> = {
+    box: { x: p.x - 2 * t, y: p.y - 2 * t, z: p.z - 2 * t },
+    cylinder: { d: p.d - 2 * t, h: p.h - 2 * t },
+    sphere: { d: p.d - 2 * t },
+    torus: { d2: p.d2 - 2 * t },
+  };
+  const exact = shrunk[p.kind];
+  if (exact) {
+    if (Object.values(exact).some((v) => !((v as number) > 0))) throw new Error('The walls are too thick for this shape: nothing would be left inside');
+    const inner = await buildShape({ ...p, ...exact });
+    // centre the cavity in the shape
+    const box = (m: MeshData) => {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < m.positions.length; i++) (lo[i % 3] = Math.min(lo[i % 3], m.positions[i])), (hi[i % 3] = Math.max(hi[i % 3], m.positions[i]));
+      return lo.map((l, k) => (l + hi[k]) / 2);
+    };
+    const co = box(outer), ci = box(inner);
+    const moved = { positions: inner.positions.map((v, i) => v + co[i % 3] - ci[i % 3]), indices: inner.indices };
+    return subtractMeshes(outer, [moved]);
+  }
+  const { hollowMesh } = await import('./hollow');
+  const span = Math.max(p.x, p.y, p.z, p.d, p.h);
+  return hollowMesh(outer, { thickness: t, voxelSize: Math.min(t / 4, span / 150) }).mesh;
+}
+
+async function buildShape(p: ShapeParams): Promise<MeshData> {
   const w = await getManifold();
   const M = w.Manifold, C = w.CrossSection;
   const seg = Math.max(8, Math.min(512, Math.round(p.segments) || 64));

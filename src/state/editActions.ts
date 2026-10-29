@@ -698,3 +698,71 @@ export function createBridge() {
     notify('warning', (e as Error).message);
   }
 }
+
+// ---------------------------------------------------------------- Delete key
+
+/**
+ * Delete what is selected inside the current function, if anything: marked
+ * triangles, selected shells, a picked surface, or the function's own picks
+ * (points, edges, contours, a measurement in progress). Returns false when
+ * nothing like that is selected, so the Delete key can remove the part instead.
+ */
+export function deleteToolSelection(): boolean {
+  const s = getState();
+  // marked triangles (Repair → Edit)
+  const te = s.triEdit;
+  const tePart = te && partById(te.partId);
+  if (te && tePart && tePart.mesh === te.mesh && te.tris.length) {
+    deleteSelectedTriangles();
+    return true;
+  }
+  // selected shells (shell viewer)
+  const sv = s.shellView;
+  const svPart = sv && partById(sv.partId);
+  if (sv && svPart && svPart.mesh === sv.mesh && sv.selected.length) {
+    if (svPart.locked) return notify('warning', `${svPart.name} is locked`), true;
+    const sel = new Set(sv.selected);
+    const tris: number[] = [];
+    for (let t = 0; t < sv.shellOfTri.length; t++) if (sel.has(sv.shellOfTri[t])) tris.push(t);
+    if (tris.length * 3 >= svPart.mesh.indices.length) return notify('warning', 'That would delete every shell: delete the part instead'), true;
+    afterLocalChange(`Delete ${sel.size} shell${sel.size > 1 ? 's' : ''}`, svPart, deleteTriangles(svPart.mesh, tris));
+    setState({ shellView: null });
+    return true;
+  }
+  // a picked surface (face pick in Extrude, Offset, …)
+  const fs = s.faceSelection;
+  const fsPart = fs && partById(fs.partId);
+  if (fs && fsPart && (!fs.mesh || fs.mesh === fsPart.mesh) && fs.tris.length) {
+    if (fsPart.locked) return notify('warning', `${fsPart.name} is locked`), true;
+    if (fs.tris.length * 3 >= fsPart.mesh.indices.length) return notify('warning', 'That would delete the whole surface: delete the part instead'), true;
+    afterLocalChange(`Delete surface (${fs.tris.length} triangles)`, fsPart, deleteTriangles(fsPart.mesh, Array.from(fs.tris)));
+    setState({ faceSelection: null });
+    return true;
+  }
+  // the function's own picks
+  if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length)) {
+    setState({ measurePending: { entities: [], points: [] } });
+    return true;
+  }
+  if (s.tool === 'cut' && s.settings.joint.picks.length) {
+    setState({ settings: { ...s.settings, joint: { ...s.settings.joint, picks: [] } }, preview: null });
+    return true;
+  }
+  if (s.blendEdges.length && (s.tool === 'blend' || s.pickMode === 'sharpEdge')) {
+    setState({ blendEdges: [], preview: null });
+    return true;
+  }
+  if (s.tool === 'perforate' && s.perfPoints.length) {
+    setState({ perfPoints: s.perfPoints.slice(0, -1), preview: null });
+    return true;
+  }
+  if (s.tool === 'hollow' && s.settings.hollow.drainHoles.length) {
+    setState({ settings: { ...s.settings, hollow: { ...s.settings.hollow, drainHoles: s.settings.hollow.drainHoles.slice(0, -1) } }, preview: null });
+    return true;
+  }
+  if (te && (te.bridgeA?.length || te.bridgeB?.length)) {
+    clearBridge();
+    return true;
+  }
+  return false;
+}

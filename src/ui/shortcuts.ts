@@ -5,6 +5,7 @@ import {
 } from '../state/actions';
 import { viewerApi } from '../viewer/api';
 import { selectAllBuildParts } from '../state/buildActions';
+import { deleteToolSelection } from '../state/editActions';
 import type { DisplayMode, ToolId } from '../state/types';
 
 const TOOL_KEYS: Record<string, ToolId> = {
@@ -61,7 +62,8 @@ export function useShortcuts(openFile: () => void) {
           break;
         case e.key === 'Delete' || e.key === 'Backspace':
           if (s.polyMode) viewerApi.current?.viewer?.undoPolyPoint();
-          else deleteParts();
+          // inside a function, the marked triangles / surface / picks go first; only then the part
+          else if (s.workspace === 'build' || !deleteToolSelection()) deleteParts();
           break;
         case e.key === '/':
           setState({ showSearch: true });

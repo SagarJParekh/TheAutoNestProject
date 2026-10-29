@@ -29,6 +29,10 @@ export interface LabelParams {
   letterSpacing?: number;
   /** distance from one line's baseline to the next, as a multiple of the text size (default 1.25) */
   lineSpacing?: number;
+  /** lay the text along an arc of this radius (mm, at the middle of the text); 0 = straight */
+  arcRadius?: number;
+  /** arc bending down (text along the inside, like a smile) instead of up */
+  arcDown?: boolean;
   /** curve flattening segments per Bézier */
   curveSegments?: number;
   /** bend the letters to follow the surface instead of a flat plane */
@@ -56,7 +60,15 @@ type Poly = [number, number][];
  * Closed outline polygons for the text (y up, mm), centred on the origin.
  * Multiple lines are separated by "\n".
  */
-export function textOutlines(fontData: ArrayBuffer, text: string, size: number, letterSpacing = 0, segments = 6, lineSpacing = 1.25): { polys: Poly[]; width: number; height: number } {
+export function textOutlines(
+  fontData: ArrayBuffer,
+  text: string,
+  size: number,
+  letterSpacing = 0,
+  segments = 6,
+  lineSpacing = 1.25,
+  arc: { radius: number; down?: boolean } = { radius: 0 },
+): { polys: Poly[]; width: number; height: number } {
   const font = loadFont(fontData);
   const lines = text.split('\n');
   const lineHeight = size * Math.max(0.5, lineSpacing);
@@ -129,6 +141,7 @@ export function textOutlines(fontData: ArrayBuffer, text: string, size: number, 
     close();
   });
   if (!polys.length) throw new Error('The text has no printable characters in this font');
+  if (arc.radius > 0) bendAlongArc(polys, arc.radius, !!arc.down, size / 12);
   // centre vertically too
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p of polys) for (const [x, y] of p) {
@@ -143,6 +156,36 @@ export function textOutlines(fontData: ArrayBuffer, text: string, size: number, 
   return { polys, width: maxX - minX, height: maxY - minY };
 }
 
+/**
+ * Bend laid-out text around a circle: x becomes the distance along the arc, y
+ * the distance out from it (the radius counts at the text's middle height).
+ * Bending up puts the circle's centre below the text, down above it. Long
+ * edges are split first so the letters bend smoothly.
+ */
+export function bendAlongArc(polys: Poly[], radius: number, down: boolean, maxSeg: number) {
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of polys) for (const [, y] of p) (minY = Math.min(minY, y)), (maxY = Math.max(maxY, y));
+  const mid = (minY + maxY) / 2;
+  for (let k = 0; k < polys.length; k++) {
+    const p = polys[k];
+    const dense: Poly = [];
+    for (let i = 0; i < p.length; i++) {
+      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length];
+      const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / maxSeg));
+      for (let j = 0; j < n; j++) dense.push([x0 + ((x1 - x0) * j) / n, y0 + ((y1 - y0) * j) / n]);
+    }
+    polys[k] = dense.map(([x, y]) => {
+      const th = x / radius;
+      if (down) {
+        const r = radius - (y - mid);
+        return [r * Math.sin(th), radius - r * Math.cos(th) + mid];
+      }
+      const r = radius + (y - mid);
+      return [r * Math.sin(th), r * Math.cos(th) - radius + mid];
+    });
+  }
+}
+
 /** The text as a closed solid placed on the surface (not yet combined with the part). */
 export async function labelSolid(
   fontData: ArrayBuffer,
@@ -154,7 +197,7 @@ export async function labelSolid(
 ): Promise<MeshData> {
   if (!params.text.trim()) throw new Error('Enter some text');
   if (!(params.size > 0) || !(params.depth > 0)) throw new Error('Size and depth must be positive');
-  const { polys } = textOutlines(fontData, params.text, params.size, params.letterSpacing ?? 0, params.curveSegments ?? 6, params.lineSpacing ?? 1.25);
+  const { polys } = textOutlines(fontData, params.text, params.size, params.letterSpacing ?? 0, params.curveSegments ?? 6, params.lineSpacing ?? 1.25, { radius: params.arcRadius ?? 0, down: params.arcDown });
   const wasm = await getManifold();
   const cs = new wasm.CrossSection(polys, 'NonZero');
   const z0 = params.mode === 'emboss' ? -Math.max(0, params.sink) : -params.depth;

@@ -23,7 +23,7 @@ import type { Part, Transform, ViewName } from '../state/types';
 import { meshEntry, onMeshEntryChange } from '../state/meshCache';
 import { createPartMaterial, orientationUniforms } from './materials';
 import { sectionSegments } from './section';
-import { AxisGizmo } from './axisGizmo';
+import { ViewCube } from './viewCube';
 import { planeFromSettings, planesFromSettings, quaternionOf, eulerDegFromQuaternion, worldBounds } from '../state/math';
 
 Mesh.prototype.raycast = acceleratedRaycast;
@@ -156,7 +156,7 @@ export class Viewer {
   private capsGroup = new Group();
   private objects = new Map<string, PartObject>();
   private geometries = new WeakMap<MeshData, GeometryRecord>();
-  private axis = new AxisGizmo();
+  private viewCube = new ViewCube();
   private raycaster = new Raycaster();
   private state: AppState | null = null;
   private renderPending = false;
@@ -329,7 +329,7 @@ export class Viewer {
     r.setViewport(0, 0, w, h);
     r.clear(true, true, true);
     r.render(this.scene, this.camera);
-    this.axis.render(r, this.camera);
+    this.viewCube.render(r, this.camera);
     this.layoutLabels(w, h);
   }
 
@@ -875,7 +875,7 @@ export class Viewer {
       );
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
       const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
-      const blend = s.tool === 'offset' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
+      const blend = s.tool === 'blend' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
       const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}|${thk ? `${this.refId(thk.result)}:${thkSet.view}:${thkSet.limit}:${thkSet.scaleMin}:${thkSet.scaleMax}` : ''}`;
       // hidden shells (Shells and Edit tabs): draw only the other triangles (draw groups need a material array;
       // picking skips triangles outside the groups)
@@ -1241,6 +1241,15 @@ export class Viewer {
     this.frame(sphere, dirs[v].normalize());
   }
 
+  /** Look at the visible parts from a direction (from the view cube). */
+  viewFrom(dir: Vector3) {
+    const d = dir.clone().normalize();
+    // straight down / up: a hair off the axis so "up" stays defined
+    if (Math.abs(d.z) > 0.999) d.set(0, d.z > 0 ? -0.0001 : 0.0001, Math.sign(d.z)).normalize();
+    const sphere = this.visibleBounds(false).getBoundingSphere(new Sphere());
+    this.frame(sphere, d);
+  }
+
   private frame(sphere: Sphere, dir: Vector3, keepUp = false) {
     const r = Math.max(sphere.radius, 1);
     const dist = (r / Math.sin((this.perspective.fov * D2R) / 2)) * 1.08;
@@ -1273,6 +1282,13 @@ export class Viewer {
     if (!d || e.button !== 0) return;
     if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
     if (this.draggingGizmo || (this.gizmo as unknown as { axis: string | null }).axis) return;
+    // a click on the view cube looks from that face, edge or corner
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (this.viewCube.contains(e.clientX, e.clientY, rect)) {
+      const dir = this.viewCube.directionAt(e.clientX, e.clientY, rect);
+      if (dir) this.viewFrom(dir);
+      return;
+    }
     const info = this.pick(e.clientX, e.clientY);
     const mods = { shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, clientX: e.clientX, clientY: e.clientY };
     this.cb.onPick(info ? { ...info, ...mods } : null, mods);

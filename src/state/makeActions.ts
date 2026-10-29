@@ -53,7 +53,11 @@ export async function previewShape() {
     label: `New ${name.toLowerCase()}`,
     replaces: [],
     meshes: [{ name, mesh, color }],
-    summary: [`${label}`, `Triangles: ${tris(mesh)}`, 'Placed on the platform beside the other parts; move it with Transform.'],
+    summary: [
+      params.hollow && params.kind !== 'tube' ? `${label}, hollow: walls ${params.wall ?? 2} mm` : `${label}`,
+      `Triangles: ${tris(mesh)}`,
+      'Placed on the platform beside the other parts; move it with Transform.',
+    ],
     apply: () => addWorldParts(`Add ${name.toLowerCase()}`, [{ name, mesh, color }]),
   });
 }

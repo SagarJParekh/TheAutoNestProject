@@ -140,7 +140,7 @@ export async function previewBlend() {
   const convex = r.edges.filter((e) => e.convex).length;
   const label = `${st.kind === 'fillet' ? 'Fillet R' : 'Chamfer '}${st.size} mm on ${r.edges.length} edge${r.edges.length > 1 ? 's' : ''}`;
   setPreview({
-    tool: 'offset',
+    tool: 'blend',
     label,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: r.mesh, color: part.color }],

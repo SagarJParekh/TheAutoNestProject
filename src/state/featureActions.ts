@@ -197,12 +197,12 @@ export function removePerfPoint(i: number) {
 let ghostSeq = 0;
 export async function refreshLabelGhost() {
   const s = getState();
-  const { font, text, size, letterSpacing, lineSpacing } = s.settings.label;
+  const { font, text, size, letterSpacing, lineSpacing, arcRadius, arcDown } = s.settings.label;
   const fontArg = font === 'custom' ? s.customFont?.data : font;
   if (!fontArg || !text.trim()) return setState({ labelGhost: null });
   const seq = ++ghostSeq;
   try {
-    const seg = await pool.run('labelOutline', { font: fontArg instanceof ArrayBuffer ? fontArg.slice(0) : fontArg, text, size, letterSpacing: letterSpacing ?? 0, lineSpacing: lineSpacing ?? 1.25 }).promise;
+    const seg = await pool.run('labelOutline', { font: fontArg instanceof ArrayBuffer ? fontArg.slice(0) : fontArg, text, size, letterSpacing: letterSpacing ?? 0, lineSpacing: lineSpacing ?? 1.25, arcRadius: arcRadius ?? 0, arcDown: !!arcDown }).promise;
     if (seq === ghostSeq) setState({ labelGhost: seg });
   } catch {
     if (seq === ghostSeq) setState({ labelGhost: null });

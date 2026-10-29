@@ -88,6 +88,18 @@ export function ShapesPanel() {
           <NumberField value={shape.segments} min={8} max={512} step={8} precision={0} title="Segments round a full circle" onChange={(segments) => setShape({ segments: Math.round(segments) })} />
         </Row>
       )}
+      {shape.kind !== 'tube' && (
+        <>
+          <Check checked={!!shape.hollow} onChange={(hollow) => setShape({ hollow })}>
+            Hollow (closed shell)
+          </Check>
+          {shape.hollow && (
+            <Row label="Wall thickness">
+              <NumberField value={shape.wall ?? 2} min={0.1} step={0.5} suffix="mm" title="Thickness of the walls all round; the inside is an empty closed cavity" onChange={(wall) => setShape({ wall: Math.max(0.1, wall) })} />
+            </Row>
+          )}
+        </>
+      )}
       <div className="btn-row">
         <button className="btn primary grow" disabled={!!preview} onClick={() => live(previewShape)}>
           Preview shape

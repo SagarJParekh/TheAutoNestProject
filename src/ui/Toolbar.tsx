@@ -10,7 +10,7 @@ import { viewerApi } from '../viewer/api';
 import { importableExtensions } from '../loaders/registry';
 import type { DisplayMode, ToolId } from '../state/types';
 
-const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
+const TOOLS: { id: ToolId; label: string; short?: string; icon: ReactNode; key: string }[] = [
   { id: 'transform', label: 'Transform', icon: Icon.transform, key: 'T' },
   { id: 'shapes', label: 'Shapes', icon: Icon.shapes, key: 'palette: shape' },
   { id: 'clip', label: 'Clip & Cut', icon: Icon.cut, key: 'C / X' },
@@ -25,6 +25,7 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode; key: string }[] = [
   { id: 'align', label: 'Align', icon: Icon.align, key: 'A' },
   { id: 'props', label: 'Props', icon: Icon.props, key: 'S' },
   { id: 'offset', label: 'Offset', icon: Icon.offset, key: 'U' },
+  { id: 'blend', label: 'Fillet & Chamfer', short: 'Fillet', icon: Icon.fillet, key: 'palette: fillet' },
   { id: 'wrap', label: 'Shrinkwrap', icon: Icon.wrap, key: 'palette: wrap' },
   { id: 'vc', label: 'VC Module', icon: Icon.mould, key: 'palette: vc' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
@@ -179,15 +180,6 @@ export function Toolbar() {
         <button className={`tb icon ${zooming ? 'active' : ''}`} title="Zoom to area: drag a rectangle (Z)" onClick={() => setState({ zoomWindow: !zooming })}>
           {Icon.zoomArea}
         </button>
-        <select className="tb-select" value="" onChange={(e) => e.target.value && viewerApi.current?.setView(e.target.value as never)} title="Standard views (1-4)">
-          <option value="">View…</option>
-          <option value="top">Top (1)</option>
-          <option value="front">Front (2)</option>
-          <option value="side">Right (3)</option>
-          <option value="iso">Iso (4)</option>
-          <option value="back">Back</option>
-          <option value="bottom">Bottom</option>
-        </select>
         <button className={`tb ${ortho ? 'active' : ''}`} title="Toggle orthographic (O)" onClick={() => setState({ orthographic: !ortho })}>
           <span>{ortho ? 'Ortho' : 'Persp'}</span>
         </button>
@@ -221,7 +213,7 @@ export function Toolbar() {
             onClick={() => setTool((tool === t.id || (t.id === 'clip' && tool === 'cut')) && t.id !== 'transform' ? 'transform' : t.id)}
           >
             {t.icon}
-            <span>{t.label}</span>
+            <span>{t.short ?? t.label}</span>
           </button>
         ))}
       </div>

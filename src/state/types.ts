@@ -37,7 +37,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc';
+  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {

@@ -95,3 +95,25 @@ describe('shrinkwrap', () => {
     expect(b.max[2]).toBeCloseTo(21, 0);
   });
 });
+
+describe('hollow shapes', () => {
+  it('a hollow box, cylinder and sphere have exact walls', async () => {
+    const { makeShape, DEFAULT_SHAPE, meshVolume, isWatertight } = await import('../src/geometry');
+    const box = await makeShape({ ...DEFAULT_SHAPE, kind: 'box', x: 20, y: 30, z: 40, hollow: true, wall: 2 });
+    expect(isWatertight(box)).toBe(true);
+    expect(meshVolume(box)).toBeCloseTo(20 * 30 * 40 - 16 * 26 * 36, 0);
+    const cyl = await makeShape({ ...DEFAULT_SHAPE, kind: 'cylinder', d: 20, h: 30, hollow: true, wall: 2, segments: 256 });
+    expect(meshVolume(cyl) / (Math.PI * (100 * 30 - 64 * 26))).toBeCloseTo(1, 2);
+    const sph = await makeShape({ ...DEFAULT_SHAPE, kind: 'sphere', d: 30, hollow: true, wall: 3, segments: 128 });
+    expect(meshVolume(sph) / ((4 / 3) * Math.PI * (15 ** 3 - 12 ** 3))).toBeCloseTo(1, 1);
+  });
+
+  it('other shapes are hollowed like the Hollow tool; walls too thick are reported', async () => {
+    const { makeShape, DEFAULT_SHAPE, meshVolume } = await import('../src/geometry');
+    const solid = await makeShape({ ...DEFAULT_SHAPE, kind: 'cone', d: 30, d2: 10, h: 30 });
+    const shell = await makeShape({ ...DEFAULT_SHAPE, kind: 'cone', d: 30, d2: 10, h: 30, hollow: true, wall: 2 });
+    expect(meshVolume(shell)).toBeLessThan(meshVolume(solid) * 0.6);
+    expect(meshVolume(shell)).toBeGreaterThan(0);
+    await expect(makeShape({ ...DEFAULT_SHAPE, kind: 'box', x: 3, y: 20, z: 20, hollow: true, wall: 2 })).rejects.toThrow(/too thick/);
+  });
+});

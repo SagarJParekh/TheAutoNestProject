@@ -71,7 +71,7 @@ h2, h3, h4 { margin: 0; font-weight: 600; }
 /* two rows: file / edit / view controls on top, every tool below; rows wrap instead of scrolling */
 .tb-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 42px; padding: 3px 0; }
 .tb-row.tools-row { border-top: 1px solid var(--line); gap: 2px; min-height: 40px; }
-.tb.tool { padding: 4px 9px; }
+.tb.tool { padding: 4px 6px; }
 .brand { display: flex; align-items: center; gap: 6px; font-weight: 700; margin-right: 6px; color: var(--accent); white-space: nowrap; }
 .tb-group { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-right: 1px solid var(--line); }
 .tb-group:last-child { border-right: 0; }
@@ -470,7 +470,7 @@ table.report tr:last-child td { border-bottom: none; }
 .shape-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 10px; }
 .tb-select.wide { width: 100%; max-width: none; margin: 0; }
 /* keep all tools on one row: tighter buttons, then icons only */
-@media (max-width: 1800px) { .tb.tool { padding: 4px 6px; gap: 4px; font-size: 12px; } }
+@media (max-width: 1900px) { .tb.tool { padding: 4px 6px; gap: 4px; font-size: 12px; } }
 @media (max-width: 1540px) and (min-width: 1181px) { .tb.tool svg { display: none; } }
 .preview-actions .xray-toggle { margin-right: auto; font-size: 12px; }
 /* X / Y / Z cut and clip rows (axis icon, ‹ slider ›, position) */
@@ -509,8 +509,8 @@ table.report tr:last-child td { border-bottom: none; }
 .vc-rule td { padding: 3px 6px; border-bottom: 1px solid var(--line); }
 .vc-rule td:last-child { text-align: right; font-weight: 600; color: var(--accent); }
 /* with the VC module the tool row needs ~1630 px with icons, ~1215 px with names only */
-@media (max-width: 1800px) { .tb.tool { padding: 4px 5px; gap: 3px; } .tools-row { gap: 1px; } }
-@media (max-width: 1590px) and (min-width: 1240px) { .tb.tool svg { display: none; } }
+@media (max-width: 1900px) { .tb.tool { padding: 4px 5px; gap: 3px; } .tools-row { gap: 1px; } }
+@media (max-width: 1760px) and (min-width: 1240px) { .tb.tool svg { display: none; } }
 @media (max-width: 1239px) { .tb.tool span { display: none; } .tb.tool svg { display: inline-block; } }
 .parts-opacity { align-items: center; gap: 4px; }
 .parts-opacity .muted { font-size: 11px; margin-right: 2px; }

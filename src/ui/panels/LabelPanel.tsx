@@ -19,7 +19,7 @@ export function LabelPanel() {
     if (!armed) return;
     const t = setTimeout(() => void refreshLabelGhost(), 150);
     return () => clearTimeout(t);
-  }, [armed, st.text, st.size, st.font, st.letterSpacing, st.lineSpacing, custom]);
+  }, [armed, st.text, st.size, st.font, st.letterSpacing, st.lineSpacing, st.arcRadius, st.arcDown, custom]);
   return (
     <Section title="Label">
       <label className="textarea-field">
@@ -61,6 +61,40 @@ export function LabelPanel() {
           ]}
         />
       </Row>
+      <Row label="Layout">
+        <Segmented
+          value={(st.arcRadius ?? 0) > 0 ? 'arc' : 'straight'}
+          onChange={(v) => set({ arcRadius: v === 'arc' ? Math.max(st.size * 3, 20) : 0 })}
+          options={[
+            { value: 'straight', label: 'Straight', title: 'The text on a straight line' },
+            { value: 'arc', label: 'Arc', title: 'The text along a circular arc' },
+          ]}
+        />
+      </Row>
+      {(st.arcRadius ?? 0) > 0 && (
+        <>
+          <Row label="Arc radius">
+            <NumberField
+              value={st.arcRadius ?? 0}
+              min={1}
+              step={5}
+              suffix="mm"
+              title="Radius of the arc the text follows, measured at the middle of the letters"
+              onChange={(arcRadius) => set({ arcRadius: Math.max(1, arcRadius) })}
+            />
+          </Row>
+          <Row label="Arc bends">
+            <Segmented
+              value={st.arcDown ? 'down' : 'up'}
+              onChange={(v) => set({ arcDown: v === 'down' })}
+              options={[
+                { value: 'up', label: 'Up ⌒', title: 'The text along the top of the circle' },
+                { value: 'down', label: 'Down ◡', title: 'The text along the bottom of the circle' },
+              ]}
+            />
+          </Row>
+        </>
+      )}
       <Row label="Mode">
         <Segmented
           value={st.mode}

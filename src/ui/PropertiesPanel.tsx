@@ -16,6 +16,7 @@ import { LatticePanel, ShapesPanel, VcPanel, WrapPanel } from './panels/MakePane
 import { DimensionsPanel } from './panels/DimensionsPanel';
 import { ReportPanel } from './panels/ReportPanel';
 import { OffsetPanel } from './panels/OffsetPanel';
+import { BlendPanel } from './panels/BlendPanel';
 
 const TITLES = {
   transform: 'Transform',
@@ -32,7 +33,8 @@ const TITLES = {
   props: 'Props',
   dimensions: 'Dimensions',
   report: 'Report',
-  offset: 'Offset & fillet',
+  offset: 'Offset',
+  blend: 'Fillet & chamfer',
   build: 'Build',
   boolean: 'Boolean operations',
   lattice: 'Lattice',
@@ -74,6 +76,7 @@ export function PropertiesPanel() {
         {tool === 'dimensions' && <DimensionsPanel parts={parts} />}
         {tool === 'report' && <ReportPanel />}
         {tool === 'offset' && <OffsetPanel parts={parts} />}
+        {tool === 'blend' && <BlendPanel parts={parts} />}
         {tool === 'boolean' && <BooleanPanel parts={parts} />}
         {tool === 'lattice' && <LatticePanel parts={parts} />}
         {tool === 'shapes' && <ShapesPanel />}

@@ -346,9 +346,9 @@ export const ops = {
   },
 
   /** The label's outline as 2D line segments (x0, y0, x1, y1, …), for the outline that follows the cursor. */
-  async labelOutline(args: { font: string | ArrayBuffer; text: string; size: number; letterSpacing: number; lineSpacing: number }): Promise<Result<Float32Array>> {
+  async labelOutline(args: { font: string | ArrayBuffer; text: string; size: number; letterSpacing: number; lineSpacing: number; arcRadius: number; arcDown: boolean }): Promise<Result<Float32Array>> {
     const font = typeof args.font === 'string' ? await builtinFont(args.font) : args.font;
-    const { polys } = G.textOutlines(font, args.text, args.size, args.letterSpacing, 4, args.lineSpacing);
+    const { polys } = G.textOutlines(font, args.text, args.size, args.letterSpacing, 4, args.lineSpacing, { radius: args.arcRadius, down: args.arcDown });
     const out: number[] = [];
     for (const p of polys) for (let i = 0; i < p.length; i++) out.push(p[i][0], p[i][1], p[(i + 1) % p.length][0], p[(i + 1) % p.length][1]);
     const seg = Float32Array.from(out);

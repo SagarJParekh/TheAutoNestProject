@@ -1089,7 +1089,7 @@ export function cancelTool() {
     zoomWindow: false,
     faceSelection: tool === 'extrude' || tool === 'perforate' ? null : s.faceSelection,
     facePicks: tool === 'repair' || tool === 'texture' || tool === 'align' || tool === 'props' || tool === 'offset' ? {} : s.facePicks,
-    blendEdges: tool === 'offset' ? s.blendEdges : [],
+    blendEdges: tool === 'blend' ? s.blendEdges : [],
     pointPicks: tool === 'props' || tool === 'label' ? {} : s.pointPicks,
     lassoMode: false,
     polyMode: false,
