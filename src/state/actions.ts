@@ -508,6 +508,13 @@ export function startContourPick() {
   if (s.pickMode === 'contour') return setState({ pickMode: null });
   endLive();
   setState({ pickMode: 'contour', preview: null });
+  // show the contours at the plane, so the points can be put on them
+  const part = editable()[0];
+  if (part)
+    pool
+      .run('sectionContours', { mesh: worldMesh(part), plane: planeFromSettings(s.cutPlane) })
+      .promise.then((contourLines) => setState({ contourLines }))
+      .catch(() => setState({ contourLines: null }));
 }
 
 export function onContourPick(point: Vec3) {
@@ -907,7 +914,9 @@ export async function applyPerforation() {
 
 // ---------------------------------------------------------------- hollow
 
-const VOXELS = { draft: 2e6, normal: 6e6, fine: 16e6 };
+// voxel budget and voxels across the wall per quality (fine needs about 0.7 GB in the worker)
+const VOXELS = { draft: 3e6, normal: 12e6, fine: 40e6 };
+const PER_WALL = { draft: 2.5, normal: 3, fine: 4 };
 
 export async function previewHollow() {
   const s = getState();
@@ -918,6 +927,7 @@ export async function previewHollow() {
     mesh: worldMesh(part),
     thickness: h.thickness,
     maxVoxels: VOXELS[h.quality],
+    perWall: PER_WALL[h.quality],
     drainHoles: h.drainHoles,
     drainDiameter: h.drainDiameter,
     drainExit: h.drainExit,

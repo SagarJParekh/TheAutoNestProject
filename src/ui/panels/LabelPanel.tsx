@@ -1,7 +1,7 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
-import { clearPointPick, loadCustomFont, previewLabel, startPointPick, worldPoint } from '../../state/featureActions';
+import { clearPointPick, loadCustomFont, previewLabel, refreshLabelGhost, startPointPick, worldPoint } from '../../state/featureActions';
 import { live } from '../../state/livePreview';
 
 export function LabelPanel() {
@@ -14,6 +14,12 @@ export function LabelPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, label: { ...getState().settings.label, ...patch } }, preview: null });
   const w = worldPoint(pick);
+  // while placing, the label's outline follows the cursor over the part
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => void refreshLabelGhost(), 150);
+    return () => clearTimeout(t);
+  }, [armed, st.text, st.size, st.font, st.letterSpacing, st.lineSpacing, custom]);
   return (
     <Section title="Label">
       <label className="textarea-field">
@@ -77,6 +83,20 @@ export function LabelPanel() {
       <Row label="Letter spacing">
         <NumberField value={st.letterSpacing ?? 0} step={0.02} precision={3} suffix="em" onChange={(letterSpacing) => set({ letterSpacing })} />
       </Row>
+      {st.text.includes('\n') && (
+        <Row label="Line spacing">
+          <NumberField
+            value={st.lineSpacing ?? 1.25}
+            min={0.5}
+            max={5}
+            step={0.05}
+            precision={2}
+            suffix="× size"
+            title="Distance from one line to the next, as a multiple of the text size (1.25 = normal; 1 = lines touching)"
+            onChange={(lineSpacing) => set({ lineSpacing: Math.max(0.5, Math.min(5, lineSpacing)) })}
+          />
+        </Row>
+      )}
       {st.mode === 'emboss' && (
         <Row label="Sink">
           <NumberField value={st.sink} min={0} step={0.2} suffix="mm" title="How far letters reach into the surface; increase on curved faces" onChange={(sink) => set({ sink })} />

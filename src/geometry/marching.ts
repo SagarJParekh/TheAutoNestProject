@@ -20,7 +20,10 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
   const sxy = nx * ny;
   const pos = new FloatBuffer(1 << 16);
   const out = new IndexBuffer(1 << 16);
-  const edgeMap = new Map<number, number>();
+  // vertices on grid edges, keyed by the edge; an edge's lower node lies in the cube slab's bottom or top
+  // layer, so only those two layers are kept (one Map for everything overflows on big surfaces)
+  let lowLayer = new Map<number, number>(), highLayer = new Map<number, number>();
+  let slab = 0;
   // values that are exactly zero would put vertices on grid nodes and create
   // zero-area triangles; nudge them to the negative side instead
   const tiny = h * 1e-6;
@@ -28,8 +31,9 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
     const v = data[n];
     return v > -tiny && v <= 0 ? -tiny : v > 0 && v < tiny ? tiny : v;
   };
-  // float64 shadow copy of vertex positions for robust orientation tests
-  const exact: number[] = [];
+  // float64 shadow copy of vertex positions (grid units) for robust orientation tests
+  let exact = new Float64Array(1 << 16);
+  let nExact = 0;
   const cornerNode = new Int32Array(8);
   const cv = new Float64Array(8);
 
@@ -37,13 +41,21 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
     const lo = na < nb ? na : nb;
     const hi = na < nb ? nb : na;
     const key = lo * 8 + nodeDir(hi - lo);
+    const edgeMap = ((lo / sxy) | 0) === slab ? lowLayer : highLayer;
     let id = edgeMap.get(key);
     if (id !== undefined) return id;
     const t = va / (va - vb);
     const ax = na % nx, ay = ((na / nx) | 0) % ny, az = (na / sxy) | 0;
     const bx = nb % nx, by = ((nb / nx) | 0) % ny, bz = (nb / sxy) | 0;
     const gx = ax + (bx - ax) * t, gy = ay + (by - ay) * t, gz = az + (bz - az) * t;
-    exact.push(gx, gy, gz);
+    if (nExact + 3 > exact.length) {
+      const grown = new Float64Array(exact.length * 2);
+      grown.set(exact);
+      exact = grown;
+    }
+    exact[nExact++] = gx;
+    exact[nExact++] = gy;
+    exact[nExact++] = gz;
     id = pos.push3(origin[0] + gx * h, origin[1] + gy * h, origin[2] + gz * h);
     edgeMap.set(key, id);
     return id;
@@ -69,6 +81,11 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
   const cornerPos = (c: number): [number, number, number] => [c & 1, (c >> 1) & 1, (c >> 2) & 1];
 
   for (let k = 0; k < nz - 1; k++) {
+    if (k > 0) {
+      lowLayer = highLayer;
+      highLayer = new Map();
+    }
+    slab = k;
     for (let j = 0; j < ny - 1; j++) {
       for (let i = 0; i < nx - 1; i++) {
         const n0 = i + j * nx + k * sxy;

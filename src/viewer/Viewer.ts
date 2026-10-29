@@ -13,6 +13,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { highlightColors } from '../state/contrast';
 import { thicknessColor } from '../geometry/thickness';
+import { labelFrame } from '../geometry/labelFrame';
 import { viewportBackground } from '../state/theme';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 import type { MeshData, Vec3 } from '../geometry';
@@ -505,6 +506,7 @@ export class Viewer {
     this.syncAnnotations(s);
     this.syncDimensions(s);
     this.syncMarkers(s);
+    this.syncContourPick(s);
     this.updateGridSize(s);
     this.requestRender();
   }
@@ -1530,6 +1532,22 @@ export class Viewer {
     );
     marker.renderOrder = 1004;
     this.hoverGroup.add(marker);
+    const st = this.state;
+    if (st?.pickMode === 'point' && st.pointSlot === 'label' && st.labelGhost?.length) {
+      // the label's outline, laid on the surface where it would go
+      const m = labelFrame(snap.point, hit.normal, st.settings.label.rotation);
+      const g = st.labelGhost, lift = 0.05;
+      const pos = new Float32Array((g.length / 2) * 3);
+      for (let i = 0, o = 0; i < g.length; i += 2, o += 3) {
+        const x = g[i], y = g[i + 1];
+        pos[o] = m[0] * x + m[4] * y + m[8] * lift + m[12];
+        pos[o + 1] = m[1] * x + m[5] * y + m[9] * lift + m[13];
+        pos[o + 2] = m[2] * x + m[6] * y + m[10] * lift + m[14];
+      }
+      const ghost = new LineSegments(new BufferGeometry().setAttribute('position', new BufferAttribute(pos, 3)), new LineBasicMaterial({ color: 0xffd23f, depthTest: false, transparent: true }));
+      ghost.renderOrder = 1003;
+      this.hoverGroup.add(ghost);
+    }
     if (snap.kind === 'ortho' && snap.anchor) {
       // guide: long faint axis line through the anchor plus the snapped segment
       const a = snap.anchor, b = snap.point, ax = snap.axis!;
@@ -2262,6 +2280,51 @@ export class Viewer {
   private markerGroup = new Group();
 
   /** Red markers (e.g. where parts collide), always on top. */
+  private contourGroup = new Group();
+  private contourKey: unknown[] = [];
+
+  /** While indicating joint contours: the section's contours, and the points picked so far. */
+  private syncContourPick(s: AppState) {
+    const on = s.pickMode === 'contour' && s.tool === 'cut';
+    const key = [on, s.contourLines, s.settings.joint.picks];
+    if (key.every((k, i) => k === this.contourKey[i])) return;
+    this.contourKey = key;
+    if (!this.contourGroup.parent) this.scene.add(this.contourGroup);
+    disposeChildren(this.contourGroup);
+    this.contourGroup.clear();
+    if (on && s.contourLines?.length) {
+      const l = this.fatLines(s.contourLines, '#3fa7ff', 3);
+      (l.material as Material).depthTest = false;
+      l.renderOrder = 1005;
+      l.raycast = () => {};
+      this.contourGroup.add(l);
+    }
+    const picks = s.settings.joint.picks;
+    if (on && picks.length) {
+      // each point where it lands on the contour (the clicks are on the surface, off the plane)
+      const L = s.contourLines;
+      const snapped = picks.map((q) => {
+        if (!L?.length) return q;
+        let best = q, bd = Infinity;
+        for (let i = 0; i < L.length; i += 6) {
+          const ax = L[i], ay = L[i + 1], az = L[i + 2], dx = L[i + 3] - ax, dy = L[i + 4] - ay, dz = L[i + 5] - az;
+          const l2 = dx * dx + dy * dy + dz * dz;
+          const t = l2 > 0 ? Math.max(0, Math.min(1, ((q[0] - ax) * dx + (q[1] - ay) * dy + (q[2] - az) * dz) / l2)) : 0;
+          const p: Vec3 = [ax + dx * t, ay + dy * t, az + dz * t];
+          const d = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2 + (p[2] - q[2]) ** 2;
+          if (d < bd) (bd = d), (best = p);
+        }
+        return best;
+      });
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(snapped.flat()), 3));
+      const dots = new Points(g, new PointsMaterial({ color: 0x4ade80, size: 12, sizeAttenuation: false, depthTest: false }));
+      dots.renderOrder = 1006;
+      dots.raycast = () => {};
+      this.contourGroup.add(dots);
+    }
+    this.requestRender();
+  }
+
   private syncMarkers(s: AppState) {
     const m = s.markers ?? null;
     if (m === this.markerKey) return;

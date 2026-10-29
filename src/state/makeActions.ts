@@ -78,6 +78,7 @@ export async function previewLattice() {
       `${type}: cell ${mm(params.cell)}, walls ${mm(params.thickness)}, skin ${mm(params.skin)}`,
       `Volume: ${(r.before / 1000).toFixed(2)} → ${(r.after / 1000).toFixed(2)} cm³ (${saved.toFixed(0)}% lighter)`,
       `Voxel size: ${mm(r.voxelSize)}`,
+      ...(r.coarse ? ['⚠ The part is large for this cell size: the voxels are coarser than the walls, so they may come out lumpy or broken. Use larger cells, thicker walls or a smaller part.'] : []),
       `Triangles: ${tris(r.mesh)}`,
       ...(params.skin > 0 ? ['The lattice is closed inside the skin: add drain holes (Hollow / Perforate) to get powder or resin out.'] : []),
     ],

@@ -75,6 +75,10 @@ export interface AppState {
   intersections: Record<string, IntersectionEntry>;
   pointSlot: PointSlot;
   pointPicks: Partial<Record<Exclude<PointSlot, 'perfPoint'>, PointPick>>;
+  /** the label's outline (2D segments, mm) shown under the cursor while placing it */
+  labelGhost: Float32Array | null;
+  /** the section's contours (world segments), shown while indicating contours for a joint */
+  contourLines: Float32Array | null;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -163,6 +167,8 @@ export const useStore = create<AppState>(() => ({
   intersections: {},
   pointSlot: 'label',
   pointPicks: {},
+  labelGhost: null,
+  contourLines: null,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },
@@ -201,7 +207,7 @@ export const useStore = create<AppState>(() => ({
     vc: { scope: 'all', split: false, keepOriginal: true, spread: true },
     align: { mode: 'mate', offset: 0, center: true },
     props: { diameter: 2, spacing: 8, margin: 2, maxLength: 10000, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },
-    label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, font: 'sans-bold', conform: true },
+    label: { text: 'LABEL', size: 8, depth: 1, mode: 'emboss', rotation: 0, sink: 0.5, letterSpacing: 0, lineSpacing: 1.25, font: 'sans-bold', conform: true },
     texture: {
       pattern: 'knurl', period: 2, depth: 0.4, angle: 0, projection: 'planar', invert: false, resolution: 0,
       scope: 'face', smooth: false, angleTolerance: 2, imageFit: 'fit',

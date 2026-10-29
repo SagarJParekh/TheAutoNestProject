@@ -74,7 +74,7 @@ class WorkerPool {
     return this.workers.reduce((a, b) => (b.busy < a.busy ? b : a));
   }
 
-  private onMessage(msg: { id: number; type: string; fraction?: number; message?: string; result?: unknown }) {
+  private onMessage(msg: { id: number; type: string; fraction?: number; message?: string; result?: unknown; fatal?: boolean }) {
     const p = this.pending.get(msg.id);
     if (!p) return;
     if (msg.type === 'progress') {
@@ -85,6 +85,15 @@ class WorkerPool {
     p.worker.busy--;
     if (msg.type === 'done') p.resolve(msg.result);
     else p.reject(new Error(msg.message));
+    if (msg.fatal) {
+      // the worker's geometry engine is broken: its other jobs fail too, and it is replaced
+      for (const [oid, o] of this.pending)
+        if (o.worker === p.worker) {
+          this.pending.delete(oid);
+          o.reject(new Error(msg.message));
+        }
+      this.replace(p.worker);
+    }
   }
 
   run<K extends OpName>(op: K, args: OpArgs<K>, onProgress?: (f: number, m?: string) => void, transfer: Transferable[] = []): JobHandle<OpResult<K>> {

@@ -138,11 +138,11 @@ export const ops = {
   },
 
   async hollow(
-    args: { mesh: MeshData; thickness: number; maxVoxels: number; drainHoles: G.DrainHole[]; drainDiameter: number; drainExit?: number; keepPlugs?: boolean },
+    args: { mesh: MeshData; thickness: number; maxVoxels: number; perWall?: number; drainHoles: G.DrainHole[]; drainDiameter: number; drainExit?: number; keepPlugs?: boolean },
     progress: Progress,
   ): Promise<Result<{ mesh: MeshData; voxelSize: number; drained: number; plugs?: MeshData }>> {
     if (!G.isWatertight(args.mesh)) throw new Error('Hollowing needs a watertight part. Run Repair first.');
-    const r = G.hollowMesh(args.mesh, { thickness: args.thickness, maxVoxels: args.maxVoxels }, (f, m) => progress(f * 0.85, m));
+    const r = G.hollowMesh(args.mesh, { thickness: args.thickness, maxVoxels: args.maxVoxels, perWall: args.perWall }, (f, m) => progress(f * 0.85, m));
     let mesh = r.mesh;
     let plugs: MeshData | undefined;
     if (args.drainHoles.length) {
@@ -345,6 +345,16 @@ export const ops = {
     return { result: r, transfer: [...meshBuffers(r.mesh), ...meshBuffers(r.label)] };
   },
 
+  /** The label's outline as 2D line segments (x0, y0, x1, y1, …), for the outline that follows the cursor. */
+  async labelOutline(args: { font: string | ArrayBuffer; text: string; size: number; letterSpacing: number; lineSpacing: number }): Promise<Result<Float32Array>> {
+    const font = typeof args.font === 'string' ? await builtinFont(args.font) : args.font;
+    const { polys } = G.textOutlines(font, args.text, args.size, args.letterSpacing, 4, args.lineSpacing);
+    const out: number[] = [];
+    for (const p of polys) for (let i = 0; i < p.length; i++) out.push(p[i][0], p[i][1], p[(i + 1) % p.length][0], p[(i + 1) % p.length][1]);
+    const seg = Float32Array.from(out);
+    return { result: seg, transfer: [seg.buffer] };
+  },
+
   async texture(args: { mesh: MeshData; tris: Uint32Array | null; params: G.TextureParams }, progress: Progress): Promise<Result<MeshData>> {
     const m = G.textureMesh(args.mesh, args.tris, args.params, progress);
     return { result: m, transfer: meshBuffers(m) };
@@ -398,6 +408,11 @@ export const ops = {
     progress(0.2, 'Cutting along the line');
     const r = await G.polyCutSplit(args);
     return { result: r, transfer: [...meshBuffers(r.inside), ...meshBuffers(r.outside)] };
+  },
+
+  async sectionContours(args: { mesh: MeshData; plane: Plane }): Promise<Result<Float32Array>> {
+    const r = await G.sectionContourSegments(args.mesh, args.plane);
+    return { result: r, transfer: [r.buffer] };
   },
 
   async jointCut(args: { mesh: MeshData; plane: Plane; params: G.JointParams }, progress: Progress): Promise<Result<G.JointResult>> {

@@ -1013,6 +1013,26 @@ async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
   }
 }
 
+/** The contours where the plane cuts the part, as world-space line segments (shown while indicating contours). */
+export async function sectionContourSegments(mesh: MeshData, plane: Plane): Promise<Float32Array> {
+  const n = plane.normal, c = plane.constant;
+  const { u, v } = planeBasis(n);
+  const toLocal = [u[0], v[0], n[0], 0, u[1], v[1], n[1], 0, u[2], v[2], n[2], 0, 0, 0, -c, 1];
+  const toWorld = [u[0], u[1], u[2], 0, v[0], v[1], v[2], 0, n[0], n[1], n[2], 0, n[0] * c, n[1] * c, n[2] * c, 1];
+  const turned = applyMatrix(mesh, toLocal);
+  const part = await toManifold(meshVolume(turned) < 0 ? flipMesh(turned) : turned);
+  if (!part) throw new NotManifoldError('Part');
+  try {
+    const section = part.slice(0);
+    const seg: number[] = [];
+    loopSegments(polys(section), seg);
+    section.delete();
+    return applyMatrix({ positions: Float32Array.from(seg), indices: new Uint32Array(0) }, toWorld).positions as Float32Array;
+  } finally {
+    part.delete();
+  }
+}
+
 // ---------------------------------------------------------------- split
 
 export interface JointResult {

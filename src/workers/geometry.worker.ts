@@ -31,7 +31,11 @@ self.onmessage = async (ev: MessageEvent<{ id: number; op: OpName; args: Record<
     const { result, transfer } = await handler(args, progress);
     self.postMessage({ id, type: 'done', result }, dedupe(transfer ?? []));
   } catch (e) {
-    self.postMessage({ id, type: 'error', message: e instanceof Error ? e.message : String(e) });
+    const raw = e instanceof Error ? e.message : String(e);
+    // a crash inside the geometry engine (usually out of memory) leaves it unusable: the pool replaces this worker
+    const fatal = (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) || /emval|out of memory|memory access|unreachable|abort|parameter \d+|unexpected error|allocation/i.test(raw);
+    const message = fatal ? `The geometry engine ran out of memory on this job (${raw}). Try a coarser setting: lower quality, larger cells or a smaller part.` : raw;
+    self.postMessage({ id, type: 'error', message, fatal });
   }
 };
 

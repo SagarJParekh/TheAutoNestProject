@@ -22,9 +22,9 @@ export function HollowPanel({ parts }: { parts: Part[] }) {
           value={h.quality}
           onChange={(quality) => set({ quality })}
           options={[
-            { value: 'draft', label: 'Draft', title: '~2M voxels' },
-            { value: 'normal', label: 'Normal', title: '~6M voxels' },
-            { value: 'fine', label: 'Fine', title: '~16M voxels (slow)' },
+            { value: 'draft', label: 'Draft', title: 'Up to 3M voxels, 2.5 across the wall' },
+            { value: 'normal', label: 'Normal', title: 'Up to 12M voxels, 3 across the wall' },
+            { value: 'fine', label: 'Fine', title: 'Up to 40M voxels, 4 across the wall (slow, needs memory)' },
           ]}
         />
       </Row>

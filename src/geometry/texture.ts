@@ -155,7 +155,7 @@ export function refineRegion(
   mesh: MeshData,
   region: Uint8Array,
   maxEdge: number,
-  maxTriangles = 12_000_000,
+  maxTriangles = 50_000_000,
   onProgress: ProgressFn = noProgress,
 ): { mesh: MeshData; region: Uint8Array } {
   let cur = mesh;
@@ -266,7 +266,7 @@ export function textureMesh(mesh: MeshData, regionTris: ArrayLike<number> | null
     const extent = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]);
     res = extent / Math.min(300, Math.max(params.heightmap.width, params.heightmap.height));
   }
-  const { mesh: m, region } = refineRegion(mesh, region0, res, params.maxTriangles ?? 12_000_000, onProgress);
+  const { mesh: m, region } = refineRegion(mesh, region0, res, params.maxTriangles ?? 50_000_000, onProgress);
   onProgress(0.92, 'Displacing');
   const p = m.positions.slice(), idx = m.indices;
   const nv = p.length / 3, nt = idx.length / 3;

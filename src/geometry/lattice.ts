@@ -9,7 +9,7 @@
 import { MeshData, computeBounds, flipMesh, ProgressFn, noProgress } from './mesh';
 import { signedDistanceGrid } from './sdf';
 import { marchingTetrahedra } from './marching';
-import { meshVolume } from './measure';
+import { meshArea, meshVolume } from './measure';
 import { subtractMeshes } from './manifold';
 
 export type LatticeType = 'gyroid' | 'diamond' | 'schwarzP' | 'cubic' | 'honeycomb';
@@ -38,14 +38,41 @@ export interface LatticeParams {
 export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickness: 1.2, skin: 1.5, quality: 'normal', axis: 'z' };
 
 const BUDGET = { draft: 2e6, normal: 6e6, fine: 16e6 };
+/**
+ * Triangles the lattice surface may have: the boolean that cuts it out of the
+ * part runs out of memory (WebAssembly is limited to 4 GB) on much more.
+ */
+const TRIANGLES = { draft: 2.5e6, normal: 5e6, fine: 8e6 };
 
-/** Voxel size: fine enough for the walls, within the voxel budget of the quality setting. */
+/** Lattice wall area per mm³ of filled volume, roughly (both faces of the walls). */
+function areaDensity(p: Pick<LatticeParams, 'type' | 'cell' | 'thickness'>): number {
+  const L = p.cell;
+  switch (p.type) {
+    case 'gyroid':
+      return (2 * 3.1) / L;
+    case 'diamond':
+      return (2 * 3.84) / L;
+    case 'schwarzP':
+      return (2 * 2.35) / L;
+    case 'cubic':
+      return (3 * Math.PI * p.thickness) / (L * L);
+    case 'honeycomb':
+      return 4 / L;
+  }
+}
+
+/**
+ * Voxel size: fine enough for the walls, within the voxel budget of the quality
+ * setting and coarse enough that the surface stays within its triangle budget.
+ */
 export function latticeVoxel(mesh: MeshData, p: LatticeParams): number {
   const b = computeBounds(mesh.positions);
   const sx = b.max[0] - b.min[0], sy = b.max[1] - b.min[1], sz = b.max[2] - b.min[2];
   let h = Math.min(p.thickness / 2.5, p.cell / 10, p.skin > 0 ? p.skin / 2 : Infinity);
   for (let i = 0; i < 80 && (sx / h + 6) * (sy / h + 6) * (sz / h + 6) > BUDGET[p.quality]; i++) h *= 1.08;
-  return h;
+  // marching tetrahedra makes about 7 triangles per voxel face of surface (measured on gyroids)
+  const area = areaDensity(p) * Math.abs(meshVolume(mesh)) + meshArea(mesh);
+  return Math.max(h, Math.sqrt((7 * area) / TRIANGLES[p.quality]));
 }
 
 /**
@@ -106,6 +133,8 @@ export interface LatticeResult {
   /** volume before and after, mm³ */
   before: number;
   after: number;
+  /** the voxels had to be coarser than the walls need (the walls come out lumpy or may break up) */
+  coarse: boolean;
 }
 
 /** Closed mesh of the empty space between the lattice walls, inside the skin. */
@@ -146,5 +175,5 @@ export async function latticeMesh(input: MeshData, p: LatticeParams, onProgress:
   onProgress(0.82, 'Cutting the lattice out of the part');
   const out = await subtractMeshes(mesh, [voids]);
   onProgress(1);
-  return { mesh: out, voxelSize, before: Math.abs(meshVolume(mesh)), after: Math.abs(meshVolume(out)) };
+  return { mesh: out, voxelSize, before: Math.abs(meshVolume(mesh)), after: Math.abs(meshVolume(out)), coarse: voxelSize > p.thickness / 1.5 };
 }

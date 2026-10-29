@@ -4,7 +4,7 @@ import { ImportError, LoaderContext } from './types';
 import './index';
 
 /** Soft limit: larger models still load, with a warning. */
-export const MAX_TRIANGLES = 12_000_000;
+export const MAX_TRIANGLES = 50_000_000;
 
 export interface PreparedBody {
   name: string;
