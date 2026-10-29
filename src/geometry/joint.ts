@@ -5,8 +5,9 @@
  * Two families, both laid on the cut plane (n = along the plane normal):
  * - lap joints (U, square, multiple, step, toothed, dovetail) follow the part's
  *   outline at the cut: the profile is drawn against s = the distance inwards
- *   from the surface (on a hollow part from both sides of its wall) and swept all the way round the cross-section (like
- *   a lap joint along a housing's wall). The step is the classic lap joint: one
+ *   from the indicated contours (by default each region's outer boundary, so on
+ *   a tube the notch runs out to the bore) and swept all the way round the
+ *   cross-section (like a lap joint along a housing's wall). The step is the classic lap joint: one
  *   piece gets a plateau inset by the offset b, the other a skirt over it.
  *   Clearances follow the usual convention: d at the notch sides, c on the
  *   ledge (front), e on top of the notch (back);
@@ -68,11 +69,24 @@ export interface JointParams {
   negative: boolean;
   /** give the second piece its own colour */
   recolor: boolean;
+  /**
+   * lap joints, which outline the offset counts from: 'contours' = indicated section contours
+   * (a whole cross-section region, measured from its outer boundary only), 'subcontours' = the
+   * indicated loops themselves (an outer boundary or a hole)
+   */
+  basis: 'contours' | 'subcontours';
+  /** lap joints: points clicked next to the contours to joint (world space); none = every region, from its outer boundary */
+  picks: Vec3[];
+  /** lap joints: notch walls straight along the plane normal; off = the notch follows the slope of the part's surface */
+  straight: boolean;
+  /** lap joints: show the preview as soon as a contour is indicated (panel only) */
+  showPreview: boolean;
 }
 
 export const DEFAULT_JOINT: JointParams = {
-  kind: 'step', depth: 10, offset: 2, width: 3, spacing: 3, count: 2, angle: 15, rotate: 0,
-  notchClearance: 0.05, frontClearance: 0.01, backClearance: 0.05, clearance: 0.2, negative: false, recolor: true,
+  kind: 'step', depth: 3, offset: 0.5, width: 3, spacing: 3, count: 2, angle: 15, rotate: 0,
+  notchClearance: 0.1, frontClearance: 0.1, backClearance: 0.1, clearance: 0.2, negative: false, recolor: false,
+  basis: 'contours', picks: [], straight: true, showPreview: true,
 };
 
 // ---------------------------------------------------------------- profiles
@@ -322,12 +336,147 @@ function mergeIntervals(list: [number, number][]): [number, number][] {
 }
 
 /**
+ * Contours of a cross-section and the outline a lap joint's offset counts from.
+ * Each pick (2D, in the plane's frame) indicates its nearest loop: with
+ * 'contours' that loop's whole region gets the joint, measured from the
+ * region's outer boundary; with 'subcontours' the loop itself is the
+ * reference (an outer boundary or a hole). Without picks every region gets
+ * the joint from its outer boundary. Regions left out are cut flat.
+ */
+interface Loop {
+  pts: [number, number][];
+  hole: boolean;
+  region: number;
+}
+
+interface LapRefs {
+  /** the jointed regions, grown a little so the cutter never runs flush with the part's other walls */
+  clip: CrossSection;
+  /** the jointed regions as they are */
+  regions: CrossSection;
+  refs: { fill: CrossSection; hole: boolean; pts: [number, number][] }[];
+  loops: number;
+  cache: Map<number, CrossSection>;
+  own: CrossSection[];
+}
+
+function loopArea(pts: [number, number][]): number {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length];
+    a += x0 * y1 - x1 * y0;
+  }
+  return a / 2;
+}
+
+function distToLoop(pts: [number, number][], q: [number, number]): number {
+  let best = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
+    const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((q[0] - ax) * dx + (q[1] - ay) * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(ax + dx * t - q[0], ay + dy * t - q[1]));
+  }
+  return best;
+}
+
+function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, number][], basis: JointParams['basis']): LapRefs | null {
+  const parts = section.decompose();
+  const own: CrossSection[] = [];
+  try {
+    const loops: Loop[] = [];
+    parts.forEach((r, region) => {
+      for (const poly of r.toPolygons()) {
+        const pts = poly.map((v) => [v[0], v[1]] as [number, number]);
+        if (pts.length >= 3) loops.push({ pts, hole: loopArea(pts) < 0, region });
+      }
+    });
+    let used: Loop[];
+    if (!picks.length) used = loops.filter((l) => !l.hole);
+    else {
+      const hit = new Set<Loop>();
+      for (const q of picks) {
+        let best: Loop | null = null, bd = Infinity;
+        for (const l of loops) {
+          const d = distToLoop(l.pts, q);
+          if (d < bd) (bd = d), (best = l);
+        }
+        if (best) hit.add(best);
+      }
+      used = basis === 'subcontours' ? [...hit] : loops.filter((l) => !l.hole && [...hit].some((h) => h.region === l.region));
+    }
+    if (!used.length) return null;
+    const keepRegions = [...new Set(used.map((l) => l.region))].map((i) => parts[i]);
+    const regions = wasm.CrossSection.compose(keepRegions);
+    own.push(regions);
+    const clip = regions.offset(0.5, 'Miter', 2);
+    own.push(clip);
+    const refs = used.map((l) => {
+      const fill = new wasm.CrossSection([l.pts], 'NonZero');
+      own.push(fill);
+      return { fill, hole: l.hole, pts: l.pts };
+    });
+    return { clip, regions, refs, loops: loops.length, cache: new Map(), own };
+  } catch (e) {
+    own.forEach((c) => c.delete());
+    throw e;
+  } finally {
+    parts.forEach((c) => c.delete());
+  }
+}
+
+function freeRefs(r: LapRefs | null) {
+  if (!r) return;
+  r.cache.forEach((c) => c.delete());
+  r.own.forEach((c) => c.delete());
+}
+
+/** Material farther than s from the reference contours (`from` = the clip region or the plain regions). */
+function lapInset(r: LapRefs, s: number, from: CrossSection = r.clip): CrossSection {
+  if (s <= 0) return from;
+  const temp: CrossSection[] = [];
+  try {
+    // band within s of each reference on the material side, reaching past the clip's growth on the other
+    const bands = r.refs.map(({ fill, hole }) => {
+      const a = fill.offset(hole ? s : Math.max(s, 2), 'Round', 2, 48), b = fill.offset(hole ? -Math.max(s, 2) : -s, 'Round', 2, 48);
+      temp.push(a, b);
+      const band = a.subtract(b);
+      temp.push(band);
+      return band;
+    });
+    const all = unionAll(bands, temp);
+    return from.subtract(all);
+  } finally {
+    temp.forEach((c) => c.delete());
+  }
+}
+
+function unionAll(list: CrossSection[], temp: CrossSection[]): CrossSection {
+  let acc = list[0];
+  for (let i = 1; i < list.length; i++) {
+    acc = acc.add(list[i]);
+    temp.push(acc);
+  }
+  return acc;
+}
+
+function cachedInset(r: LapRefs, s: number): CrossSection {
+  const k = Math.round(s * 1e4) / 1e4;
+  if (k <= 0) return r.clip;
+  let c = r.cache.get(k);
+  if (!c) r.cache.set(k, (c = lapInset(r, k)));
+  return c;
+}
+
+/**
  * Cutter for a lap joint in the plane's local frame (z = height above the
  * plane): everything below z = base, plus, layer by layer, the parts of the
- * cross-section whose distance from the outline lies under the profile.
- * `grow` adds the clearances (sides d, top e); `base` = 0 or the front clearance c.
+ * jointed regions whose distance from the reference contours lies under the
+ * profile. `grow` adds the clearances (sides d, top e); `base` = 0 or the
+ * front clearance c. `refsAt(h)` gives the contours to use for the layer at
+ * height h (the plane's own for a straight cut).
  */
-function lapCutter(wasm: ManifoldToplevel, section: CrossSection, prof: [number, number][], box: { min: Vec3; max: Vec3 }, base: number, side: number, top: number): Manifold {
+function lapCutter(wasm: ManifoldToplevel, refsAt: (h: number) => LapRefs | null, prof: [number, number][], box: { min: Vec3; max: Vec3 }, base: number, side: number, top: number, extra: number[]): Manifold {
   const big = 1e5;
   const first = prof[0], last = prof[prof.length - 1];
   const poly: [number, number][] = [[-big, first[1]], ...prof, [big, last[1]], [big, -big], [-big, -big]];
@@ -335,7 +484,7 @@ function lapCutter(wasm: ManifoldToplevel, section: CrossSection, prof: [number,
   const peak = Math.max(...ns);
   // layer boundaries: every height of the profile (shifted up by the top clearance for the grown cutter);
   // slanted edges are cut into thin layers
-  const hs = new Set<number>([0]);
+  const hs = new Set<number>([0, ...extra.filter((h) => h > 0 && h < peak + top)]);
   const fine = Math.max(peak / 48, 0.08);
   for (let i = 0; i + 1 < prof.length; i++) {
     const [s0, n0] = prof[i], [s1, n1] = prof[i + 1];
@@ -346,13 +495,6 @@ function lapCutter(wasm: ManifoldToplevel, section: CrossSection, prof: [number,
     }
   }
   const heights = [...hs].sort((x, y) => x - y).filter((h, i, arr) => i === 0 || h - arr[i - 1] > 1e-6);
-  const ins = new Map<number, CrossSection>();
-  const inset = (s: number): CrossSection => {
-    const k = Math.round(s * 1e4) / 1e4;
-    let c = ins.get(k);
-    if (!c) ins.set(k, (c = k <= 0 ? section.offset(1, 'Miter', 2) : section.offset(-k, 'Round', 2, 48)));
-    return c;
-  };
   const parts: Manifold[] = [];
   const temp: CrossSection[] = [];
   const eps = 1e-4;
@@ -362,23 +504,25 @@ function lapCutter(wasm: ManifoldToplevel, section: CrossSection, prof: [number,
     for (let i = 0; i + 1 < heights.length; i++) {
       const h0 = heights[i], h1 = heights[i + 1], hm = (h0 + h1) / 2;
       if (h1 <= base) continue;
+      const r = refsAt(hm);
+      if (!r) continue;
       // with a top clearance the grown cutter also covers what the profile holds up to `top` lower
       const samples = top > 0 ? [hm, hm - top / 2, hm - top] : [hm];
       const ivs = mergeIntervals(samples.filter((h) => h > 0).flatMap((h) => intervalsAt(poly, h)).map(([lo, hi]) => [lo - side, hi + side] as [number, number]));
       if (!ivs.length) continue;
       let region: CrossSection | null = null;
       for (const [lo, hi] of ivs) {
-        let r = inset(lo);
+        let c = cachedInset(r, lo);
         if (hi < big / 2) {
-          r = r.subtract(inset(hi));
-          temp.push(r);
+          c = c.subtract(cachedInset(r, hi));
+          temp.push(c);
         }
-        if (r.isEmpty()) continue;
+        if (c.isEmpty()) continue;
         if (region) {
-          const u: CrossSection = region.add(r);
+          const u: CrossSection = region.add(c);
           temp.push(u);
           region = u;
-        } else region = r;
+        } else region = c;
       }
       if (!region || region.isEmpty()) continue;
       const z0 = Math.max(h0, base) - eps;
@@ -388,18 +532,27 @@ function lapCutter(wasm: ManifoldToplevel, section: CrossSection, prof: [number,
   } finally {
     parts.forEach((m) => m.delete());
     temp.forEach((c) => c.delete());
-    ins.forEach((c) => c.delete());
   }
 }
 
+/** Closed 2D loops as line segments at z = 0 (local frame). */
+function loopSegments(loops: [number, number][][], out: number[]) {
+  for (const l of loops)
+    for (let i = 0; i < l.length; i++) {
+      const [x0, y0] = l[i], [x1, y1] = l[(i + 1) % l.length];
+      out.push(x0, y0, 0, x1, y1, 0);
+    }
+}
+
 /** Lap joint split in the plane's frame: the negative side gets the notch. */
-async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{ above: MeshData; below: MeshData; notes: string[]; tooDeep: boolean }> {
+async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{ above: MeshData; below: MeshData; lines: Float32Array; contours: [number, number]; tooDeep: boolean }> {
   const wasm = await getManifold();
   const n = plane.normal, c = plane.constant;
   const { u, v } = planeBasis(n);
   // to local: x = u, y = v, z = height above the plane (u × v = n keeps it right-handed)
   const toLocal = [u[0], v[0], n[0], 0, u[1], v[1], n[1], 0, u[2], v[2], n[2], 0, 0, 0, -c, 1];
   const toWorld = [u[0], u[1], u[2], 0, v[0], v[1], v[2], 0, n[0], n[1], n[2], 0, n[0] * c, n[1] * c, n[2] * c, 1];
+  const picks = (p.picks ?? []).map((q) => [dot(q, u), dot(q, v)] as [number, number]);
   // an inside-out part (all triangles facing in) would slice to nothing: turn it right way out
   const turned = applyMatrix(mesh, toLocal);
   const local = meshVolume(turned) < 0 ? flipMesh(turned) : turned;
@@ -407,33 +560,76 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
   if (box.min[2] >= 0 || box.max[2] <= 0) throw new Error('The cut plane does not cross the part');
   const part = await toManifold(local);
   if (!part) throw new NotManifoldError('Part');
-  const section = part.slice(0);
   const prof = lapProfile(p);
   const made: Manifold[] = [];
+  const layers = new Map<number, LapRefs | null>();
+  let refs0: LapRefs | null = null;
+  const basis = p.basis ?? 'contours';
   try {
-    if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
-    // the notch must fit inside the outline: at the offset some of the section has to be left
-    // (distances count from every surface of the section, so on a hollow part from both sides of the wall)
+    const section = part.slice(0);
+    try {
+      if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
+      refs0 = lapRefs(wasm, section, picks, basis);
+    } finally {
+      section.delete();
+    }
+    if (!refs0) throw new Error('No contour to joint: indicate a section contour');
+    // the notch must fit inside the outline: at the offset some of the jointed material has to be left
     const start = Math.min(...prof.map(([s]) => s));
-    const left = section.offset(-start, 'Round', 2, 48);
+    const left = lapInset(refs0, start, refs0.regions);
     const fits = !left.isEmpty();
-    left.delete();
+    if (left !== refs0.regions) left.delete();
     if (!fits) throw new Error('The notch does not fit inside the cross-section here: reduce the offset (b) or the tongue width');
-    const keep = lapCutter(wasm, section, prof, box, 0, 0, 0);
+    // a notch that follows the surface re-reads the contours every thin layer
+    const straight = p.straight !== false;
+    const a = Math.max(...prof.map(([, h]) => h));
+    const step = Math.max(a / 24, 0.1);
+    const extra: number[] = [];
+    if (!straight) for (let h = step; h < a + Math.max(0, p.backClearance) + step; h += step) extra.push(h);
+    const refsAt = (h: number): LapRefs | null => {
+      if (straight) return refs0;
+      const k = Math.round(h * 1e4) / 1e4;
+      if (!layers.has(k)) {
+        const sec = part.slice(k);
+        try {
+          layers.set(k, sec.isEmpty() ? null : lapRefs(wasm, sec, picks, basis));
+        } finally {
+          sec.delete();
+        }
+      }
+      return layers.get(k)!;
+    };
+    const keep = lapCutter(wasm, refsAt, prof, box, 0, 0, 0, extra);
     made.push(keep);
-    const g = lapCutter(wasm, section, prof, box, Math.max(0, p.frontClearance), Math.max(0, p.notchClearance), Math.max(0, p.backClearance));
+    const g = lapCutter(wasm, refsAt, prof, box, Math.max(0, p.frontClearance), Math.max(0, p.notchClearance), Math.max(0, p.backClearance), extra);
     made.push(g);
-    const lo = part.intersect(keep), hi = part.subtract(g);
+    let lo = part.intersect(keep), hi = part.subtract(g);
     made.push(lo, hi);
+    if (!straight) {
+      // the thin layers leave many flat seams on walls that do not slope: merge them
+      lo = lo.simplify(0.005);
+      hi = hi.simplify(0.005);
+      made.push(lo, hi);
+    }
     const below = applyMatrix(fromManifold(lo), toWorld), above = applyMatrix(fromManifold(hi), toWorld);
     if (!below.indices.length || !above.indices.length) throw new Error('The joint does not cross the part');
-    const a = Math.max(...prof.map(([, h]) => h));
     const tooDeep = a + Math.max(0, p.backClearance) >= box.max[2];
-    return { above, below, notes: [], tooDeep };
+    // preview lines: the reference contours and the offset (b) line inside them
+    const seg: number[] = [];
+    loopSegments(refs0.refs.map((r) => r.pts), seg);
+    if (start > 0)
+      for (const r of refs0.refs) {
+        const o = r.fill.offset(r.hole ? start : -start, 'Round', 2, 48);
+        loopSegments(o.toPolygons().map((poly) => poly.map((q) => [q[0], q[1]] as [number, number])), seg);
+        o.delete();
+      }
+    const lines = applyMatrix({ positions: Float32Array.from(seg), indices: new Uint32Array(0) }, toWorld).positions as Float32Array;
+    return { above, below, lines, contours: [refs0.refs.length, refs0.loops], tooDeep };
   } finally {
-    section.delete();
     part.delete();
     made.forEach((m) => m.delete());
+    freeRefs(refs0);
+    layers.forEach((r) => r !== refs0 && freeRefs(r));
   }
 }
 
@@ -448,6 +644,10 @@ export interface JointResult {
   sizes?: JointSizes;
   /** the notch / overlap reaches past the end of the part on one side: a piece may fall apart */
   tooDeep: boolean;
+  /** lap joints: the reference contours and the offset line (world-space segments, for the preview) */
+  lines?: Float32Array;
+  /** lap joints: contours the offset counts from, of all the section's contours */
+  contours?: [number, number];
 }
 
 /**
@@ -460,7 +660,7 @@ export async function jointSplit(mesh: MeshData, plane: Plane, p: JointParams): 
   const swap = (r: { above: MeshData; below: MeshData }) => (flip ? { above: r.below, below: r.above } : { above: r.above, below: r.below });
   if (!isTongueJoint(p.kind)) {
     const r = await lapSplit(mesh, pl, p);
-    return { ...swap(r), tooDeep: r.tooDeep };
+    return { ...swap(r), tooDeep: r.tooDeep, lines: r.lines, contours: r.contours };
   }
   const a = await toManifold(mesh);
   if (!a) throw new NotManifoldError('Part');

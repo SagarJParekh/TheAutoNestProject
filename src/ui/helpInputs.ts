@@ -127,7 +127,11 @@ export const INPUT_HELP: Record<string, string> = {
   // ---------------------------------------------------------------- joint cut / cut
   'cut:gap': 'Moves the pieces apart after cutting, in mm, so you can see the cut (it does not remove material).',
   'cut:notch height (a)': 'How far the lap-joint notch stands up from the cut plane, in mm.',
-  'cut:offset (b)': 'Distance of the notch in from the part’s outer surface, in mm (on hollow parts from both sides of the wall).',
+  'cut:offset (b)': 'Distance of the notch in from the indicated contour, in mm: the thickness of the skirt. By default it counts from the outer boundary only, so on a tube the notch runs out to the bore.',
+  'cut:show preview': 'Shows the joint (see-through, with the indicated contour and the offset line) as soon as a contour is indicated, and keeps it updated while you change the values.',
+  'cut:invert notch direction': 'Puts the notch on the other piece, pointing the other way along the plane normal.',
+  'cut:straight cut': 'On: the notch walls run straight along the plane normal. Off: they follow the slope of the part’s surface (useful on tapered or curved walls).',
+  'cut:autocolor result parts': 'Gives the second piece its own colour after cutting.',
   'cut:tongue width': 'Width of each tongue or tooth at its root, in mm.',
   'cut:spacing': 'Gap between neighbouring tongues, in mm.',
   'cut:tongues': 'Number of tongues side by side.',

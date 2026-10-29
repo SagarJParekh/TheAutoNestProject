@@ -164,7 +164,7 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge' | 'contour';
 
 /** How a click / drag marks triangles in Repair → Edit. */
 export type MarkTool = 'triangle' | 'plane' | 'surface' | 'shell' | 'brush' | 'window';

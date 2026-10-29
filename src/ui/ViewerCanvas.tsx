@@ -5,7 +5,7 @@ import { getState, setState, setTransform, updateParts, useStore, type AppState 
 import { buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
-import { layFlat, pickFace, requestEdges, select } from '../state/actions';
+import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
 import { onMeasurePick, setMeasureLabel } from '../state/measureActions';
@@ -174,6 +174,10 @@ export function ViewerCanvas() {
           if (info) onMeasurePick(info);
           return;
         }
+        if (s.pickMode === 'contour') {
+          if (info) onContourPick(info.point);
+          return;
+        }
         if (s.pickMode === 'drain') {
           if (info) {
             const h = s.settings.hollow;
@@ -283,6 +287,7 @@ export function ViewerCanvas() {
           {pickMode === 'layflat' && 'Click a face to lay it flat on the bed'}
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
+          {pickMode === 'contour' && 'Click on the part next to the section contour to joint'}
           {pickMode === 'point' && <PointBanner />}
           {pickMode === 'triangle' && 'Click to mark triangles · click a marked one (or Ctrl-click) to unmark'}
           {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · right-drag to rotate the view'}

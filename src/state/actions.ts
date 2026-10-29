@@ -18,7 +18,7 @@ import {
   centeredPlane, eulerDegFromQuaternion, IDENTITY_TRANSFORM, matrixOf, planeFromSettings, planeNames, planesFromSettings, quaternionOf, recenter, worldBounds, worldMesh,
 } from './math';
 import { viewerApi } from '../viewer/api';
-import { endLive } from './livePreview';
+import { endLive, live } from './livePreview';
 import { pickExportFolder, pickSaveTarget, writeIntoFolder, writeSaveTarget } from './save';
 import { SUFFIX, cutName, savedName, withSuffix } from './naming';
 
@@ -502,6 +502,26 @@ export async function executeCut() {
 }
 
 /** Split along a lap / tongue joint profile laid on the cut plane, so the pieces key together. */
+/** Lap joint: click next to a section contour to indicate it (the preview steps aside while picking). */
+export function startContourPick() {
+  const s = getState();
+  if (s.pickMode === 'contour') return setState({ pickMode: null });
+  endLive();
+  setState({ pickMode: 'contour', preview: null });
+}
+
+export function onContourPick(point: Vec3) {
+  const s = getState();
+  const j = s.settings.joint;
+  setState({ settings: { ...s.settings, joint: { ...j, picks: [...j.picks, point] } }, pickMode: null, preview: null });
+  if (j.showPreview && editable()[0]) void live(previewJointCut);
+}
+
+export function clearContourPicks() {
+  const s = getState();
+  setState({ settings: { ...s.settings, joint: { ...s.settings.joint, picks: [] } }, pickMode: s.pickMode === 'contour' ? null : s.pickMode, preview: null });
+}
+
 export async function previewJointCut() {
   const s = getState();
   const part = editable()[0];
@@ -545,13 +565,19 @@ export async function previewJointCut() {
         ...(params.kind === 'multiple' ? [`Spacing: ${mm(params.spacing)}`] : []),
         ...(counted ? [`Count: ${Math.max(1, Math.round(params.count))}`] : []),
         `Clearance: notch (d) ${mm(params.notchClearance)} · front (c) ${mm(params.frontClearance)} · back (e) ${mm(params.backClearance)}`,
-        `Notch on: ${part.name} ${params.negative ? 'A' : 'B'}`,
+        ...(r.contours
+          ? [`${params.basis === 'subcontours' ? 'Subcontours' : 'Section contours'}: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} outer (none indicated)`} of ${r.contours[1]}`]
+          : []),
+        ...(params.straight === false ? ['Notch follows the surface slope'] : []),
+        `Notch on: ${cutName(part.name, params.negative ? 1 : 2)}`,
       ];
   setPreview({
     tool: 'cut',
     label: title,
     replaces: [part.id],
-    meshes: pieces,
+    // lap joints: the notched piece is tinted in the preview (as in Magics) unless it gets its own colour anyway
+    meshes: tongue || params.recolor ? pieces : pieces.map((p, i) => (i === (params.negative ? 0 : 1) ? { ...p, color: '#d0507a' } : p)),
+    ...(tongue ? {} : { xray: true, lines: r.lines }),
     summary: [
       ...lines,
       ...(r.tooDeep ? [`⚠ The ${tongue ? 'overlap' : 'notch'} reaches past the end of the part: a piece may fall apart. Use a smaller ${tongue ? 'overlap length' : 'notch height'} or move the plane.`] : []),

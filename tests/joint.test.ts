@@ -51,6 +51,52 @@ describe('lap joints follow the outline of the cross-section', () => {
     expect(meshVolume(r.above) + meshVolume(r.below)).toBeCloseTo(wall * 40, 0);
   });
 
+  // 40 × 40 tube with 4 mm walls, cut half way up (as in the Magics lap joint video)
+  const squareTube = async () => {
+    const { unionMeshes } = await import('../src/geometry');
+    return unionMeshes([mergeMeshes([boxMesh([0, 0, 0], [40, 4, 40]), boxMesh([0, 36, 0], [40, 40, 40]), boxMesh([0, 4, 0], [4, 36, 40]), boxMesh([36, 4, 0], [40, 36, 40])])]);
+  };
+  const zero = { notchClearance: 0, frontClearance: 0, backClearance: 0 };
+
+  it('step on a tube: the offset counts from the outside only, so the lip runs out to the bore', async () => {
+    const r = await jointSplit(await squareTube(), mid, { ...DEFAULT_JOINT, kind: 'step', depth: 3, offset: 1, ...zero });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    // the lip: 1 mm in from the outside (rounded outer corners stay inside 38 × 38) to the 32 × 32 bore
+    expect(meshVolume(r.below) - (40 * 40 - 32 * 32) * 20).toBeCloseTo((38 * 38 - 32 * 32) * 3, -1);
+    expect(r.contours).toEqual([1, 2]);
+    expect(r.lines!.length).toBeGreaterThan(0);
+  });
+
+  it('indicated subcontour: picking the bore puts the skirt on the inside', async () => {
+    const r = await jointSplit(await squareTube(), mid, { ...DEFAULT_JOINT, kind: 'step', depth: 3, offset: 1, ...zero, basis: 'subcontours', picks: [[20, 4.2, 21]] });
+    // the lip now runs from the outside to 1 mm off the bore (34 × 34)
+    expect(meshVolume(r.below) - (40 * 40 - 32 * 32) * 20).toBeCloseTo((40 * 40 - 34 * 34) * 3, -1);
+  });
+
+  it('indicated section contour: only the picked region gets the joint, the others are cut flat', async () => {
+    const two = mergeMeshes([boxMesh([0, 0, 0], [20, 20, 40]), boxMesh([40, 0, 0], [60, 20, 40])]);
+    const r = await jointSplit(two, mid, { ...DEFAULT_JOINT, kind: 'step', depth: 5, offset: 2, ...zero, picks: [[60.5, 10, 20]] });
+    expect(meshVolume(r.below)).toBeCloseTo(2 * 20 * 20 * 20 + 16 * 16 * 5, 0);
+    expect(r.contours).toEqual([1, 2]);
+  });
+
+  it('without straight cut the notch follows the slope of the surface', async () => {
+    const { getManifold, fromManifold } = await import('../src/geometry');
+    const wasm = await getManifold();
+    // cone frustum: radius 20 at z = 0 narrowing to 10 at z = 40
+    const m = wasm.Manifold.cylinder(40, 20, 10, 128);
+    const cone = fromManifold(m);
+    m.delete();
+    const p = { ...DEFAULT_JOINT, kind: 'step' as JointKind, depth: 8, offset: 2, ...zero };
+    const straight = await jointSplit(cone, mid, p);
+    const slope = await jointSplit(cone, mid, { ...p, straight: false });
+    expect(isWatertight(slope.above) && isWatertight(slope.below)).toBe(true);
+    // straight: a cylinder of radius 13 (15 − 2); following the surface: a frustum 2 mm inside it, 13 → 11
+    const frustum = (Math.PI * 8 * (13 * 13 + 13 * 11 + 11 * 11)) / 3;
+    const base = meshVolume(straight.below) - Math.PI * 13 * 13 * 8;
+    expect(meshVolume(slope.below) - base).toBeCloseTo(frustum, -1);
+  });
+
   for (const kind of LAP_JOINTS.map((j) => j.value)) {
     it(`${kind}: two watertight pieces`, async () => {
       const r = await jointSplit(cube, mid, { ...DEFAULT_JOINT, kind, depth: 6, offset: 3, width: 4, count: 2, spacing: 3 });

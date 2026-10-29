@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Hint, NumberField, Row, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
-import { previewJointCut } from '../../state/actions';
-import { live } from '../../state/livePreview';
+import { cancelPreview, clearContourPicks, previewJointCut, startContourPick } from '../../state/actions';
+import { live, liveActive } from '../../state/livePreview';
 import { PlaneControls } from './PlaneControls';
 import { DEFAULT_JOINT, LAP_JOINTS, TONGUE_JOINTS, isTongueJoint, jointProfile, lapProfile, type JointKind, type JointParams } from '../../geometry/joint';
 import type { Part } from '../../state/types';
@@ -59,7 +59,13 @@ export function JointCut({ target }: { target?: Part }) {
   const gap = useStore((s) => s.settings.cut.gap);
   const j = useStore((s) => s.settings.joint);
   const preview = useStore((s) => s.preview);
+  const picking = useStore((s) => s.pickMode === 'contour');
   const [advanced, setAdvanced] = useState(false);
+  // indicated contours belong to one part: a different part starts again
+  const targetId = target?.id;
+  useEffect(() => {
+    if (getState().settings.joint.picks.length) clearContourPicks();
+  }, [targetId]);
   const tongue = isTongueJoint(j.kind);
   const list = tongue ? TONGUE_JOINTS : LAP_JOINTS;
   const counted = j.kind === 'multiple' || j.kind === 'toothed' || j.kind === 'finger';
@@ -115,10 +121,37 @@ export function JointCut({ target }: { target?: Part }) {
         </>
       ) : (
         <>
+          <div className="sub-title">Cut based on</div>
+          <div className="contour-basis">
+            {(
+              [
+                ['contours', 'Indicated section contour(s)', 'Click next to a cross-section: that whole region gets the joint, with the offset measured from its outer boundary (on a tube the notch runs out to the bore)'],
+                ['subcontours', 'Indicated subcontour(s)', 'Click next to single loops of the section (an outer boundary or a hole): the offset is measured from those loops only, e.g. pick the bore to put the skirt on the inside'],
+              ] as const
+            ).map(([value, label, title]) => (
+              <label key={value} className="radio-row" title={title}>
+                <input type="radio" checked={(j.basis ?? 'contours') === value} onChange={() => setJoint({ basis: value })} />
+                {label}
+              </label>
+            ))}
+            <div className="contour-pick">
+              <span className={j.picks.length ? 'pick-ok' : 'pick-none'} title={j.picks.length ? 'Contours indicated' : 'Nothing indicated: every region gets the joint from its outer boundary'}>
+                {j.picks.length ? `✓ ${j.picks.length} indicated` : 'All outer contours'}
+              </span>
+              {j.picks.length > 0 && (
+                <button className="mini" onClick={clearContourPicks} title="Forget the indicated contours">
+                  ✕
+                </button>
+              )}
+              <button className={`mini ${picking ? 'on' : ''}`} disabled={!target} onClick={startContourPick} title="Click on the part next to the section contour to joint (press again to add more)">
+                {picking ? 'Click the part…' : 'Indicate'}
+              </button>
+            </div>
+          </div>
           <LapDiagram />
-          <div className="sub-title">Parameters</div>
-          {mmField('Notch height (a)', 'depth', 'How far the notch stands up from the cut plane')}
-          {mmField('Offset (b)', 'offset', 'Distance of the notch from the part’s surface (measured inwards across the cut)')}
+          <div className="sub-title">Lap joint parameters</div>
+          {mmField('Notch height (a)', 'depth', 'How far the notch stands up from the cut plane', 0.5)}
+          {mmField('Offset (b)', 'offset', 'Distance of the notch from the indicated contour (measured inwards across the cut): the thickness of the skirt', 0.1)}
           {j.kind !== 'step' && mmField('Tongue width', 'width', j.kind === 'toothed' ? 'Width of each tooth at its root' : 'Width of each tongue at its root')}
           {j.kind === 'multiple' && mmField('Spacing', 'spacing', 'Gap between neighbouring tongues')}
           {(j.kind === 'multiple' || j.kind === 'toothed') && (
@@ -131,22 +164,44 @@ export function JointCut({ target }: { target?: Part }) {
               <NumberField value={j.angle} min={0} max={45} step={1} suffix="°" onChange={(angle) => setJoint({ angle: Math.max(0, Math.min(45, angle)) })} />
             </Row>
           )}
-          <div className="sub-title">Clearances</div>
-          {mmField('Notch clearance (d)', 'notchClearance', 'Gap at the sides of the notch', 0.01)}
-          {mmField('Front clearance (c)', 'frontClearance', 'Gap on the ledge around the notch', 0.01)}
-          {mmField('Back clearance (e)', 'backClearance', 'Gap on top of the notch', 0.01)}
+          {mmField('Notch clearance (d)', 'notchClearance', 'Gap at the sides of the notch', 0.05)}
+          {mmField('Front clearance (c)', 'frontClearance', 'Gap on the ledge around the notch', 0.05)}
+          {mmField('Back clearance (e)', 'backClearance', 'Gap on top of the notch', 0.05)}
+          <Check
+            checked={j.showPreview !== false}
+            onChange={(showPreview) => {
+              setJoint({ showPreview });
+              if (!showPreview) cancelPreview();
+              else if (target && !liveActive()) void live(previewJointCut);
+            }}
+          >
+            Show preview
+          </Check>
+          <div className="joint-options">
+            <Check checked={j.negative} onChange={(negative) => setJoint({ negative })}>
+              Invert notch direction
+            </Check>
+            <Check checked={j.straight !== false} onChange={(straight) => setJoint({ straight })}>
+              Straight cut
+            </Check>
+            <Check checked={j.recolor} onChange={(recolor) => setJoint({ recolor })}>
+              Autocolor result parts
+            </Check>
+          </div>
         </>
       )}
       <Row label="Gap">
         <NumberField value={gap} min={0} suffix="mm" onChange={(g) => setState({ settings: { ...getState().settings, cut: { gap: g } }, preview: null })} title="Move the two pieces apart after cutting, to see the joint" />
       </Row>
-      <button className="link-btn" onClick={() => setAdvanced(!advanced)}>
-        {advanced ? '▾' : '▸'} Advanced options
-      </button>
-      {advanced && (
+      {tongue && (
+        <button className="link-btn" onClick={() => setAdvanced(!advanced)}>
+          {advanced ? '▾' : '▸'} Advanced options
+        </button>
+      )}
+      {tongue && advanced && (
         <div className="joint-advanced">
           <Check checked={j.negative} onChange={(negative) => setJoint({ negative })}>
-            {tongue ? 'Swap the two sides of the joint' : 'Add notch in negative direction'}
+            Swap the two sides of the joint
           </Check>
           <Check checked={j.recolor} onChange={(recolor) => setJoint({ recolor })}>
             Colour parts after cutting
@@ -157,14 +212,14 @@ export function JointCut({ target }: { target?: Part }) {
         <button className="btn primary grow" disabled={!target || !!preview} onClick={() => live(previewJointCut)}>
           Preview joint
         </button>
-        <button className="btn" onClick={() => setJoint({ ...DEFAULT_JOINT, kind: j.kind, depth: tongue ? 0 : DEFAULT_JOINT.depth })} title="Back to the default parameters">
+        <button className="btn" onClick={() => setJoint({ ...DEFAULT_JOINT, kind: j.kind, depth: tongue ? 0 : DEFAULT_JOINT.depth, picks: j.picks })} title="Back to the default parameters">
           Reset
         </button>
       </div>
       <Hint>
         {tongue
           ? 'Tongue joints run straight across the cross-section at the plane: a half lap halves the thickness, a scarf runs a slope through it and finger joints interlock across the width.'
-          : 'Lap joints follow the outline of the part where it is cut: one piece gets the notch (a plateau, tongues or teeth set in by the offset b), the other a matching skirt over it, with the clearances in between. On a hollow part the offset counts from both sides of the wall. A dovetail cannot be pushed together along a closed outline.'}{' '}
+          : 'Lap joints follow the outline of the part where it is cut: one piece gets the notch (a plateau, tongues or teeth set in by the offset b from the indicated contour), the other a matching skirt over it, with the clearances in between. Regions not indicated are cut flat. Straight cut keeps the notch walls square to the plane; off, they follow the slope of the surface. A dovetail cannot be pushed together along a closed outline.'}{' '}
         Changes update the preview while it is open. Needs a watertight part.
       </Hint>
     </>

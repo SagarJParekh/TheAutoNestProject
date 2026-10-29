@@ -451,6 +451,13 @@ table.report tr:last-child td { border-bottom: none; }
 .measure-labels circle { fill: #ffd23f; }
 .measure-label { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: grab; user-select: none; white-space: nowrap; padding: 3px 9px; border-radius: 6px; border: 1.5px solid #ffd23f; background: rgba(20, 22, 27, 0.88); color: #ffd23f; font: 600 13px Inter, system-ui, sans-serif; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
 .measure-label:active { cursor: grabbing; }
+.contour-basis { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+.radio-row { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.contour-pick { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.contour-pick .pick-ok { color: #3ecf6e; font-size: 12px; margin-right: auto; }
+.contour-pick .pick-none { color: var(--muted); font-size: 12px; margin-right: auto; }
+.mini.on { background: var(--accent); border-color: var(--accent); color: #111; }
+.joint-options { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .joint-diagram { display: block; width: 100%; max-width: 240px; margin: 6px auto 2px; }
 .joint-diagram .lower { fill: var(--accent-2); opacity: 0.45; stroke: var(--accent-2); }
 .joint-diagram .upper { fill: var(--panel-2); stroke: var(--muted); }
