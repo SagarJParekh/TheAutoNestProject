@@ -513,8 +513,11 @@ export function startContourPick() {
 export function onContourPick(point: Vec3) {
   const s = getState();
   const j = s.settings.joint;
-  setState({ settings: { ...s.settings, joint: { ...j, picks: [...j.picks, point] } }, pickMode: null, preview: null });
-  if (j.showPreview && editable()[0]) void live(previewJointCut);
+  const picks = [...j.picks, point];
+  // a subcontour takes two clicks: its start, then its end
+  const waiting = j.basis === 'subcontours' && picks.length % 2 === 1;
+  setState({ settings: { ...s.settings, joint: { ...j, picks } }, pickMode: waiting ? 'contour' : null, preview: null });
+  if (!waiting && j.showPreview && editable()[0]) void live(previewJointCut);
 }
 
 export function clearContourPicks() {
@@ -559,7 +562,9 @@ export async function previewJointCut() {
         `Pins: ${r.pins} · radius (r) ${mm(params.pinRadius)} · height (h) ${mm(params.pinHeight)} · every ${mm(params.pinSpacing)}`,
         `Row ${mm(r.inset ?? 0)} in from the contour${params.pinInset > 0 ? '' : ' (automatic)'}`,
         `Clearance: top (b) ${mm(clr.top)} · side (c) ${mm(clr.side)} · face (d) ${mm(clr.face)}`,
-        ...(r.contours ? [`Section contours: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} outer (none indicated)`} of ${r.contours[1]}`] : []),
+        ...(r.contours
+          ? [params.basis === 'subcontours' && params.picks.length ? `Subcontours: ${r.contours[0]} (pins only along them)` : `Section contours: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} outer (none indicated)`} of ${r.contours[1]}`]
+          : []),
         ...(params.pinType === 'holes' ? (r.loose ? [`Loose pins: ${part.name}_pins`] : []) : [`Pins on: ${cutName(part.name, params.negative ? 1 : 2)}`]),
       ]
     : tongue
@@ -571,7 +576,7 @@ export async function previewJointCut() {
         `Fit clearance: ${mm(params.clearance)}`,
       ]
     : [
-        params.kind === 'tongue' ? `Tongue joint: ${name}` : `Lap joint: ${name}`,
+        params.kind === 'tongue' ? `Tongue joint: ${name}` : 'Lap joint (Magics style: lip and skirt along the outline)',
         `${params.kind === 'tongue' ? 'Tongue height' : 'Notch height'} (a): ${mm(params.depth)} · offset (b): ${mm(params.offset)}`,
         ...(params.kind === 'step'
           ? []
@@ -580,10 +585,16 @@ export async function previewJointCut() {
             : [`Tongue width: ${mm(params.width)}`]),
         `Clearance: notch (d) ${mm(params.notchClearance)} · front (c) ${mm(params.frontClearance)} · back (e) ${mm(params.backClearance)}`,
         ...(r.contours
-          ? [`${params.basis === 'subcontours' ? 'Subcontours' : 'Section contours'}: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} ${params.kind === 'tongue' && !(params.width > 0) ? 'contours' : 'outer'} (none indicated)`} of ${r.contours[1]}`]
+          ? [
+              params.basis === 'subcontours' && params.picks.length
+                ? `Subcontours: ${r.contours[0]}${params.subFlip ? ' (the other way round)' : ''}: a tab along each, the rest cut flat`
+                : `Section contours: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} ${params.kind === 'tongue' && !(params.width > 0) ? 'contours' : 'outer'} (none indicated)`} of ${r.contours[1]}`,
+            ]
           : []),
         ...(params.straight === false ? ['Notch follows the surface slope'] : []),
-        `${params.kind === 'tongue' ? 'Tongue' : 'Notch'} on: ${cutName(part.name, params.negative ? 1 : 2)}`,
+        params.basis === 'subcontours' && params.picks.length
+          ? `Tab on: ${cutName(part.name, params.negative ? 2 : 1)} · recess in ${cutName(part.name, params.negative ? 1 : 2)}`
+          : `${params.kind === 'tongue' ? 'Tongue' : 'Notch'} on: ${cutName(part.name, params.negative ? 1 : 2)}`,
       ];
   setPreview({
     tool: 'cut',

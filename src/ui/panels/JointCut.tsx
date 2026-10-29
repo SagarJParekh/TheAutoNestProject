@@ -108,23 +108,60 @@ function PinDiagram() {
   );
 }
 
-/** The "indicate contour" row: what is indicated, forget, and the pick button. */
-function ContourPick({ target, picking, none }: { target?: Part; picking: boolean; none: string }) {
-  const n = useStore((s) => s.settings.joint.picks.length);
-  return (
-    <div className="contour-pick">
-      <span className={n ? 'pick-ok' : 'pick-none'} title={n ? 'Contours indicated' : 'Nothing indicated: every cross-section region is used'}>
-        {n ? `✓ ${n} indicated` : none}
-      </span>
+/**
+ * "Cut based on": indicated section contours (click next to a cross-section:
+ * that whole region) or indicated subcontours (click a start and an end on a
+ * contour: only that stretch gets the joint; the mirror button takes the other
+ * way round the contour).
+ */
+function ContourBasis({ j, target, picking, allNone }: { j: JointParams; target?: Part; picking: boolean; allNone: string }) {
+  const sub = (j.basis ?? 'contours') === 'subcontours';
+  const n = j.picks.length;
+  const stretches = Math.floor(n / 2);
+  const status = !n ? (sub ? 'None indicated: all outer contours' : allNone) : sub ? (n % 2 ? 'Click the end point…' : `✓ ${stretches} subcontour${stretches === 1 ? '' : 's'}`) : `✓ ${n} indicated`;
+  const pick = (
+    <>
       {n > 0 && (
         <button className="mini" onClick={clearContourPicks} title="Forget the indicated contours">
           ✕
         </button>
       )}
-      <button className={`mini ${picking ? 'on' : ''}`} disabled={!target} onClick={startContourPick} title="Click on the part next to the section contour (press again to add more)">
-        {picking ? 'Click the part…' : 'Indicate'}
+      <button
+        className={`mini ${picking ? 'on' : ''}`}
+        disabled={!target}
+        onClick={startContourPick}
+        title={sub ? 'Click on the part at the start of the stretch, then at its end (press again to add another stretch)' : 'Click on the part next to the section contour (press again to add more)'}
+      >
+        {picking ? (sub && n % 2 ? 'Click the end…' : 'Click the part…') : 'Indicate'}
       </button>
-    </div>
+    </>
+  );
+  return (
+    <>
+      <div className="sub-title">Cut based on</div>
+      <div className="contour-basis">
+        {(
+          [
+            ['contours', 'Indicated section contour(s)', 'Click next to a cross-section: that whole region gets the joint, measured from its outer boundary'],
+            ['subcontours', 'Indicated subcontour(s)', 'Click a start and an end point on a contour: only that stretch gets the joint (square at its ends), the rest is cut flat'],
+          ] as const
+        ).map(([value, label, title]) => (
+          <label key={value} className="radio-row" title={title}>
+            <input type="radio" checked={(j.basis ?? 'contours') === value} onChange={() => (clearContourPicks(), setJoint({ basis: value }))} />
+            {label}
+          </label>
+        ))}
+        <div className="contour-pick">
+          <span className={n && !(sub && n % 2) ? 'pick-ok' : 'pick-none'}>{status}</span>
+          {pick}
+          {sub && (
+            <button className={`mini ${j.subFlip ? 'on' : ''}`} disabled={!target} onClick={() => setJoint({ subFlip: !j.subFlip })} title="Mirror: take the other way round the contour between the two points">
+              ⇋
+            </button>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -148,8 +185,7 @@ function PinFields({ j, target, picking }: { j: JointParams; target?: Part; pick
           ]}
         />
       </Row>
-      <div className="sub-title">Indicated section contour(s)</div>
-      <ContourPick target={target} picking={picking} none="All outer contours" />
+      <ContourBasis j={j} target={target} picking={picking} allNone="All outer contours" />
       <PinDiagram />
       <div className="sub-title">Pin/hole size and placement</div>
       {field('Radius (r)', 'pinRadius', 'Radius of the pins; the holes are wider by the side clearance', 0.1)}
@@ -271,33 +307,7 @@ export function JointCut({ target }: { target?: Part }) {
         </>
       ) : (
         <>
-          <div className="sub-title">Cut based on</div>
-          <div className="contour-basis">
-            {(
-              [
-                ['contours', 'Indicated section contour(s)', 'Click next to a cross-section: that whole region gets the joint, with the offset measured from its outer boundary (on a tube the notch runs out to the bore)'],
-                ['subcontours', 'Indicated subcontour(s)', 'Click next to single loops of the section (an outer boundary or a hole): the offset is measured from those loops only, e.g. pick the bore to put the skirt on the inside'],
-              ] as const
-            ).map(([value, label, title]) => (
-              <label key={value} className="radio-row" title={title}>
-                <input type="radio" checked={(j.basis ?? 'contours') === value} onChange={() => setJoint({ basis: value })} />
-                {label}
-              </label>
-            ))}
-            <div className="contour-pick">
-              <span className={j.picks.length ? 'pick-ok' : 'pick-none'} title={j.picks.length ? 'Contours indicated' : 'Nothing indicated: every region gets the joint from its outer boundary'}>
-                {j.picks.length ? `✓ ${j.picks.length} indicated` : tg && !(j.width > 0) ? 'All contours' : 'All outer contours'}
-              </span>
-              {j.picks.length > 0 && (
-                <button className="mini" onClick={clearContourPicks} title="Forget the indicated contours">
-                  ✕
-                </button>
-              )}
-              <button className={`mini ${picking ? 'on' : ''}`} disabled={!target} onClick={startContourPick} title="Click on the part next to the section contour to joint (press again to add more)">
-                {picking ? 'Click the part…' : 'Indicate'}
-              </button>
-            </div>
-          </div>
+          <ContourBasis j={j} target={target} picking={picking} allNone={tg && !(j.width > 0) ? 'All contours' : 'All outer contours'} />
           {tg ? <TongueDiagram /> : <LapDiagram />}
           <div className="sub-title">{tg ? 'Tongue joint parameters' : 'Lap joint parameters'}</div>
           {mmField(tg ? 'Tongue height (a)' : 'Notch height (a)', 'depth', tg ? 'How far the tongue stands up from the cut plane' : 'How far the notch stands up from the cut plane', 0.5)}

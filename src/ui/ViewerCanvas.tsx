@@ -119,6 +119,13 @@ function BuildClipSlider() {
   );
 }
 
+/** What the contour pick is waiting for: a section contour, or a subcontour's start / end. */
+function ContourBanner() {
+  const sub = useStore((s) => s.settings.joint.basis === 'subcontours');
+  const odd = useStore((s) => s.settings.joint.picks.length % 2 === 1);
+  return <>{!sub ? 'Click on the part next to the section contour to joint' : odd ? 'Click the end of the subcontour on the same contour' : 'Click the start of the subcontour on the contour'}</>;
+}
+
 export function ViewerCanvas() {
   const ref = useRef<HTMLDivElement>(null);
   const pickMode = useStore((s) => s.pickMode);
@@ -287,7 +294,7 @@ export function ViewerCanvas() {
           {pickMode === 'layflat' && 'Click a face to lay it flat on the bed'}
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
-          {pickMode === 'contour' && 'Click on the part next to the section contour to joint'}
+          {pickMode === 'contour' && <ContourBanner />}
           {pickMode === 'point' && <PointBanner />}
           {pickMode === 'triangle' && 'Click to mark triangles · click a marked one (or Ctrl-click) to unmark'}
           {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · right-drag to rotate the view'}

@@ -52,12 +52,6 @@ describe('lap joints follow the outline of the cross-section', () => {
     expect(r.lines!.length).toBeGreaterThan(0);
   });
 
-  it('indicated subcontour: picking the bore puts the skirt on the inside', async () => {
-    const r = await jointSplit(await squareTube(), mid, { ...DEFAULT_JOINT, kind: 'step', depth: 3, offset: 1, ...zero, basis: 'subcontours', picks: [[20, 4.2, 21]] });
-    // the lip now runs from the outside to 1 mm off the bore (34 × 34)
-    expect(meshVolume(r.below) - (40 * 40 - 32 * 32) * 20).toBeCloseTo((40 * 40 - 34 * 34) * 3, -1);
-  });
-
   it('indicated section contour: only the picked region gets the joint, the others are cut flat', async () => {
     const two = mergeMeshes([boxMesh([0, 0, 0], [20, 20, 40]), boxMesh([40, 0, 0], [60, 20, 40])]);
     const r = await jointSplit(two, mid, { ...DEFAULT_JOINT, kind: 'step', depth: 5, offset: 2, ...zero, picks: [[60.5, 10, 20]] });
@@ -140,6 +134,20 @@ describe('pins & holes', () => {
     expect(meshVolume(r.loose!) / (r.pins! * Math.PI * 3)).toBeCloseTo(0.98, 1);
   });
 
+  it('subcontour: pins only along the indicated stretch', async () => {
+    const r = await jointSplit(bar, flat, { ...pin, pinSpacing: 10, basis: 'subcontours', picks: [[20, 0, 6], [80, 0, 6]] });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    expect(r.pins).toBeGreaterThanOrEqual(5);
+    expect(r.pins).toBeLessThanOrEqual(7);
+    // all pins sit near the y = 0 side, between x = 20 and 80
+    const tops = [] as number[][];
+    const pp = r.below.positions;
+    for (let i = 0; i < pp.length; i += 3) if (pp[i + 2] > 6.5) tops.push([pp[i], pp[i + 1]]);
+    expect(Math.max(...tops.map((t) => t[1]))).toBeLessThan(6);
+    expect(Math.min(...tops.map((t) => t[0]))).toBeGreaterThan(18);
+    expect(Math.max(...tops.map((t) => t[0]))).toBeLessThan(82);
+  });
+
   it('separate clearances and pins on the other piece; no room is reported', async () => {
     const r = await jointSplit(bar, flat, { ...pin, uniformClearance: false, pinSide: 0.1, pinFace: 0, negative: true });
     expect(computeBounds(r.above.positions).min[2]).toBeCloseTo(3, 3);
@@ -177,5 +185,42 @@ describe('tongue joints run across the cross-section', () => {
       expect(r.tooDeep).toBe(false);
       expect(computeBounds(r.below.positions).max[2]).toBeLessThan(12);
     }
+  });
+});
+
+describe('subcontours: the joint only along a stretch of a contour', () => {
+  // 40 × 40 tube with 4 mm walls, cut half way up; the stretch runs along the outside of the y = 0 wall from x = 10 to 30
+  const tube = async () => {
+    const { unionMeshes } = await import('../src/geometry');
+    return unionMeshes([mergeMeshes([boxMesh([0, 0, 0], [40, 4, 40]), boxMesh([0, 36, 0], [40, 40, 40]), boxMesh([0, 4, 0], [4, 36, 40]), boxMesh([36, 4, 0], [40, 36, 40])])]);
+  };
+  const wall = 40 * 40 - 32 * 32;
+  const sub = { ...DEFAULT_JOINT, basis: 'subcontours' as const, picks: [[10, 0, 20], [30, 0, 20]] as [number, number, number][], notchClearance: 0, frontClearance: 0, backClearance: 0 };
+
+  it('lap: the upper piece gets a tab b thick along the stretch, the lower a matching recess; elsewhere flat', async () => {
+    const r = await jointSplit(await tube(), mid, { ...sub, kind: 'step', depth: 3, offset: 1 });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    expect(meshVolume(r.above) - wall * 20).toBeCloseTo(20 * 1 * 3, 0);
+    expect(meshVolume(r.above) + meshVolume(r.below)).toBeCloseTo(wall * 40, 0);
+    expect(computeBounds(r.above.positions).min[2]).toBeCloseTo(17, 3);
+    expect(r.contours).toEqual([1, 2]);
+  });
+
+  it('flip takes the other way round the contour', async () => {
+    const r = await jointSplit(await tube(), mid, { ...sub, kind: 'step', depth: 3, offset: 1, subFlip: true });
+    // the rest of the outside: 160 − 20 mm long (less a little at the rounded corners)
+    const tab = meshVolume(r.above) - wall * 20;
+    expect(tab).toBeGreaterThan(130 * 3 * 0.95);
+    expect(tab).toBeLessThan(140 * 3 * 1.02);
+  });
+
+  it('tongue: a tongue b in from both walls along the stretch only', async () => {
+    const r = await jointSplit(await tube(), mid, { ...sub, kind: 'tongue', depth: 3, offset: 1, width: 0 });
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    expect(meshVolume(r.above) - wall * 20).toBeCloseTo(20 * 2 * 3, 0);
+  });
+
+  it('one point only asks for the end', async () => {
+    await expect(jointSplit(await tube(), mid, { ...sub, kind: 'step', picks: [[10, 0, 20]] })).rejects.toThrow(/end of the subcontour/);
   });
 });

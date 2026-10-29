@@ -79,6 +79,8 @@ export interface JointParams {
   straight: boolean;
   /** lap joints: show the preview as soon as a contour is indicated (panel only) */
   showPreview: boolean;
+  /** subcontours: take the longer way round between the two indicated points */
+  subFlip: boolean;
   /** pins & holes: pins on one piece and holes in the other, or holes in both (for loose pins) */
   pinType: 'pins' | 'holes';
   /** pin radius (r), mm */
@@ -106,7 +108,7 @@ export interface JointParams {
 export const DEFAULT_JOINT: JointParams = {
   kind: 'step', depth: 3, offset: 0.5, width: 3, count: 2, angle: 15, rotate: 0,
   notchClearance: 0.1, frontClearance: 0.1, backClearance: 0.1, clearance: 0.2, negative: false, recolor: false,
-  basis: 'contours', picks: [], straight: true, showPreview: true,
+  basis: 'contours', picks: [], straight: true, showPreview: true, subFlip: false,
   pinType: 'pins', pinRadius: 0.5, pinHeight: 2, pinTolerance: 0.02, pinSpacing: 4, uniformClearance: true,
   pinTop: 0.2, pinSide: 0.2, pinFace: 0.2, pinInset: 0, loosePins: false,
 };
@@ -329,11 +331,10 @@ function mergeIntervals(list: [number, number][]): [number, number][] {
 
 /**
  * Contours of a cross-section and the outline a lap joint's offset counts from.
- * Each pick (2D, in the plane's frame) indicates its nearest loop: with
- * 'contours' that loop's whole region gets the joint, measured from the
- * region's outer boundary; with 'subcontours' the loop itself is the
- * reference (an outer boundary or a hole). Without picks every region gets
- * the joint from its outer boundary. Regions left out are cut flat.
+ * Each pick (2D, in the plane's frame) indicates its nearest loop, and that
+ * loop's whole region gets the joint, measured from the region's outer
+ * boundary (from every loop with `allLoops`). Without picks every region gets
+ * the joint. Regions left out are cut flat. (Subcontours: see below.)
  */
 interface Loop {
   pts: [number, number][];
@@ -372,7 +373,7 @@ function distToLoop(pts: [number, number][], q: [number, number]): number {
   return best;
 }
 
-function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, number][], basis: JointParams['basis'], allLoops = false): LapRefs | null {
+function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, number][], allLoops = false): LapRefs | null {
   const parts = section.decompose();
   const own: CrossSection[] = [];
   try {
@@ -395,7 +396,7 @@ function lapRefs(wasm: ManifoldToplevel, section: CrossSection, picks: [number, 
         }
         if (best) hit.add(best);
       }
-      used = basis === 'subcontours' ? [...hit] : loops.filter((l) => (allLoops || !l.hole) && [...hit].some((h) => h.region === l.region));
+      used = loops.filter((l) => (allLoops || !l.hole) && [...hit].some((h) => h.region === l.region));
     }
     if (!used.length) return null;
     const keepRegions = [...new Set(used.map((l) => l.region))].map((i) => parts[i]);
@@ -536,6 +537,199 @@ function loopSegments(loops: [number, number][][], out: number[]) {
     }
 }
 
+const polys = (c: CrossSection): [number, number][][] => c.toPolygons().map((poly) => poly.map((q) => [q[0], q[1]] as [number, number]));
+
+// ---------------------------------------------------------------- subcontours
+
+/** A stretch of one section loop between two indicated points, in the loop's own direction (material on its left). */
+export interface Stretch {
+  pts: [number, number][];
+  hole: boolean;
+  /** the whole loop the stretch lies on */
+  loop: [number, number][];
+}
+
+/** The loops of a cross-section (outer boundaries counter-clockwise, holes clockwise). */
+function sectionLoops(section: CrossSection): { pts: [number, number][]; hole: boolean }[] {
+  return section
+    .toPolygons()
+    .map((poly) => poly.map((q) => [q[0], q[1]] as [number, number]))
+    .filter((l) => l.length >= 3)
+    .map((pts) => ({ pts, hole: loopArea(pts) < 0 }));
+}
+
+/** Closest point on a closed loop: its arc-length position and the point. */
+function closestOnLoop(l: [number, number][], q: [number, number]): { s: number; d: number } {
+  let best = { s: 0, d: Infinity }, at = 0;
+  for (let i = 0; i < l.length; i++) {
+    const [ax, ay] = l[i], [bx, by] = l[(i + 1) % l.length];
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+    const t = len > 0 ? Math.max(0, Math.min(1, ((q[0] - ax) * dx + (q[1] - ay) * dy) / (len * len))) : 0;
+    const d = Math.hypot(ax + dx * t - q[0], ay + dy * t - q[1]);
+    if (d < best.d) best = { s: at + t * len, d };
+    at += len;
+  }
+  return best;
+}
+
+/** Points of a loop from arc position s0 forward to s1 (wrapping round). */
+function loopStretch(l: [number, number][], s0: number, s1: number): [number, number][] {
+  const n = l.length;
+  const cum: number[] = [0];
+  for (let i = 0; i < n; i++) cum.push(cum[i] + Math.hypot(l[(i + 1) % n][0] - l[i][0], l[(i + 1) % n][1] - l[i][1]));
+  const L = cum[n];
+  const mod = (x: number) => ((x % L) + L) % L;
+  const at = (s: number): [number, number] => {
+    s = mod(s);
+    let i = 0;
+    while (i < n - 1 && cum[i + 1] < s) i++;
+    const seg = cum[i + 1] - cum[i], f = seg > 0 ? (s - cum[i]) / seg : 0;
+    const [ax, ay] = l[i], [bx, by] = l[(i + 1) % n];
+    return [ax + (bx - ax) * f, ay + (by - ay) * f];
+  };
+  const len = mod(s1 - s0);
+  // the loop's own corners strictly between the ends, in order
+  const inner = l
+    .map((q, i) => ({ q, rel: mod(cum[i] - s0) }))
+    .filter((x) => x.rel > 1e-9 && x.rel < len - 1e-9)
+    .sort((x, y) => x.rel - y.rel)
+    .map((x) => x.q);
+  return [at(s0), ...inner, at(s0 + len)];
+}
+
+/**
+ * Stretches from indicated points taken in pairs (start, end): both ends go to
+ * the loop nearest the start, and the stretch runs the shorter way round
+ * between them (the longer way with `flip`).
+ */
+export function findStretches(loops: { pts: [number, number][]; hole: boolean }[], picks: [number, number][], flip: boolean): Stretch[] {
+  const out: Stretch[] = [];
+  for (let i = 0; i + 1 < picks.length; i += 2) {
+    let best = -1, bd = Infinity;
+    loops.forEach((l, k) => {
+      const d = closestOnLoop(l.pts, picks[i]).d;
+      if (d < bd) (bd = d), (best = k);
+    });
+    if (best < 0) continue;
+    const l = loops[best];
+    const L = l.pts.reduce((a, p, k) => a + Math.hypot(l.pts[(k + 1) % l.pts.length][0] - p[0], l.pts[(k + 1) % l.pts.length][1] - p[1]), 0);
+    const s0 = closestOnLoop(l.pts, picks[i]).s, s1 = closestOnLoop(l.pts, picks[i + 1]).s;
+    const fwd = (((s1 - s0) % L) + L) % L;
+    if (fwd < 1e-6 || L - fwd < 1e-6) continue;
+    const forward = fwd <= L / 2 !== flip;
+    out.push({ pts: forward ? loopStretch(l.pts, s0, s1) : loopStretch(l.pts, s1, s0), hole: l.hole, loop: l.pts });
+  }
+  return out;
+}
+
+/**
+ * The zone a stretch governs: everything from `out` outside it to `depth` in
+ * from it, square across its two ends, grown by `grow` all round.
+ */
+function stretchZone(wasm: ManifoldToplevel, list: Stretch[], depth: number, grow: number, out = 2): CrossSection {
+  const polys: [number, number][][] = [];
+  for (const st of list) {
+    const p = st.pts;
+    const nrm = p.slice(0, -1).map((a, i) => {
+      const b = p[i + 1], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l] as [number, number];
+    });
+    const at = (q: [number, number], n: [number, number], d: number): [number, number] => [q[0] + n[0] * d, q[1] + n[1] * d];
+    for (let i = 0; i + 1 < p.length; i++) {
+      const n = nrm[i];
+      polys.push([at(p[i], n, -out), at(p[i + 1], n, -out), at(p[i + 1], n, depth), at(p[i], n, depth)]);
+      if (i > 0) polys.push([at(p[i], nrm[i - 1], -out), at(p[i], nrm[i - 1], depth), at(p[i], n, depth), at(p[i], n, -out)]);
+    }
+  }
+  const parts = polys.map((q) => new wasm.CrossSection([q], 'NonZero'));
+  const all = wasm.CrossSection.union(parts);
+  parts.forEach((c) => c.delete());
+  if (!grow) return all;
+  const g = all.offset(grow, 'Miter', 2);
+  all.delete();
+  return g;
+}
+
+/** Material within s of a loop, on its material side (reaching 2 mm past it on the other). */
+function loopBand(wasm: ManifoldToplevel, loop: [number, number][], hole: boolean, s: number): CrossSection {
+  const fill = new wasm.CrossSection([loop], 'NonZero');
+  const a = fill.offset(hole ? s : Math.max(s, 2), 'Round', 2, 48), b = fill.offset(hole ? -Math.max(s, 2) : -s, 'Round', 2, 48);
+  const band = a.subtract(b);
+  [fill, a, b].forEach((c) => c.delete());
+  return band;
+}
+
+/**
+ * Lap / tongue joint along subcontours only: the part is cut flat at the plane
+ * and, along each stretch, a tab of the upper piece (the skirt of a lap joint,
+ * or the tongue) hangs down `a` into a matching recess in the lower piece,
+ * square across the stretch's ends. Clearances: d round the tab's sides and
+ * ends, c at its tip, e between the flat faces.
+ */
+function subcontourSplit(wasm: ManifoldToplevel, part: Manifold, refs: LapRefs, stretches: Stretch[], p: JointParams, box: { min: Vec3; max: Vec3 }, maxInset: number): { lo: Manifold; hi: Manifold; lines: number[] } {
+  const a = Math.max(0, p.depth), b = Math.max(0, p.offset), w = Math.max(0, p.width);
+  const d = Math.max(0, p.notchClearance), c = Math.max(0, p.frontClearance), e = Math.max(0, p.backClearance);
+  const tongue = p.kind === 'tongue';
+  const fill = tongue && !(w > 0);
+  const depth = fill ? 2 * maxInset + 1 : tongue ? b + w + 1 : b + 1;
+  const temp: CrossSection[] = [];
+  const keep = <T extends CrossSection>(x: T) => (temp.push(x), x);
+  // the tab's footprint, grown by `g` (0 for the tab itself, d for the recess it fits in)
+  const footprint = (g: number): CrossSection => {
+    const zone = keep(stretchZone(wasm, stretches, depth + g, g));
+    let area: CrossSection;
+    if (fill) {
+      // b in from every wall of the region
+      const bands = refs.refs.map((r) => keep(loopBand(wasm, r.pts, r.hole, Math.max(0, b - g))));
+      area = keep(refs.clip.subtract(keep(wasm.CrossSection.union(bands))));
+    } else {
+      const parts = stretches.map((st) => {
+        const outer = keep(loopBand(wasm, st.loop, st.hole, tongue ? b + w + g : b + g));
+        return tongue ? keep(outer.subtract(keep(loopBand(wasm, st.loop, st.hole, Math.max(0, b - g))))) : outer;
+      });
+      area = keep(wasm.CrossSection.union(parts));
+    }
+    return keep(zone.intersect(area));
+  };
+  const made: Manifold[] = [];
+  try {
+    const tab = footprint(0), recess = footprint(d);
+    if (tab.isEmpty()) throw new Error('The joint does not fit along the indicated subcontour: reduce the offset (b) or the tongue width');
+    const W = box.max[0] - box.min[0] + 20, D = box.max[1] - box.min[1] + 20;
+    const below = (z: number) => wasm.Manifold.cube([W, D, z - box.min[2] + 10]).translate([box.min[0] - 10, box.min[1] - 10, box.min[2] - 10]);
+    const above = (z: number) => wasm.Manifold.cube([W, D, box.max[2] - z + 10]).translate([box.min[0] - 10, box.min[1] - 10, z]);
+    const eps = 1e-4;
+    const lowerKeep = below(0), recessM = recess.extrude(a + c + eps).translate([0, 0, -(a + c)]);
+    const upperKeep = above(e), tabM = tab.extrude(a + e + eps).translate([0, 0, -a]);
+    made.push(lowerKeep, recessM, upperKeep, tabM);
+    const lowerCut = lowerKeep.subtract(recessM), upperCut = upperKeep.add(tabM);
+    made.push(lowerCut, upperCut);
+    const lo = part.intersect(lowerCut), hi = part.intersect(upperCut);
+    // preview lines: the stretches and the outline of the tab
+    const lines: number[] = [];
+    for (const st of stretches)
+      for (let i = 0; i + 1 < st.pts.length; i++) lines.push(st.pts[i][0], st.pts[i][1], 0, st.pts[i + 1][0], st.pts[i + 1][1], 0);
+    loopSegments(polys(tab), lines);
+    return { lo, hi, lines };
+  } finally {
+    made.forEach((m) => m.delete());
+    temp.forEach((x) => x.delete());
+  }
+}
+
+/** Largest inset of a cross-section that still leaves material (half its thickest wall). */
+function maxInsetOf(section: CrossSection, limit: number): number {
+  let lo = 0, hi = limit;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2, o = section.offset(-mid, 'Round', 2, 32);
+    const empty = o.isEmpty();
+    o.delete();
+    if (empty) hi = mid;
+    else lo = mid;
+  }
+  return lo;
+}
+
 /** Lap joint split in the plane's frame: the negative side gets the notch. */
 async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{ above: MeshData; below: MeshData; lines: Float32Array; contours: [number, number]; tooDeep: boolean }> {
   const wasm = await getManifold();
@@ -563,7 +757,23 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
     const section = part.slice(0);
     try {
       if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
-      refs0 = lapRefs(wasm, section, picks, basis, allLoops);
+      if (basis === 'subcontours' && picks.length) {
+        // only along the indicated stretches: a tab and its recess, the rest cut flat
+        if (picks.length < 2) throw new Error('Indicate the end of the subcontour too (two points on the contour)');
+        const stretches = findStretches(sectionLoops(section), picks, !!p.subFlip);
+        if (!stretches.length) throw new Error('The two points of the subcontour must be apart on one contour');
+        refs0 = lapRefs(wasm, section, picks.filter((_, i) => i % 2 === 0), allLoops);
+        if (!refs0) throw new Error('No contour to joint: indicate a subcontour');
+        const maxInset = allLoops ? maxInsetOf(refs0.regions, boundsDiagonal(box)) : 0;
+        const r = subcontourSplit(wasm, part, refs0, stretches, p, box, maxInset);
+        made.push(r.lo, r.hi);
+        const below = applyMatrix(fromManifold(r.lo), toWorld), above = applyMatrix(fromManifold(r.hi), toWorld);
+        if (!below.indices.length || !above.indices.length) throw new Error('The joint does not cross the part');
+        const lines = applyMatrix({ positions: Float32Array.from(r.lines), indices: new Uint32Array(0) }, toWorld).positions as Float32Array;
+        const a = Math.max(0, p.depth) + Math.max(0, p.frontClearance);
+        return { above, below, lines, contours: [stretches.length, sectionLoops(section).length], tooDeep: a >= -box.min[2] };
+      }
+      refs0 = lapRefs(wasm, section, picks, allLoops);
     } finally {
       section.delete();
     }
@@ -586,7 +796,7 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
       if (!layers.has(k)) {
         const sec = part.slice(k);
         try {
-          layers.set(k, sec.isEmpty() ? null : lapRefs(wasm, sec, picks, basis, allLoops));
+          layers.set(k, sec.isEmpty() ? null : lapRefs(wasm, sec, picks, allLoops));
         } finally {
           sec.delete();
         }
@@ -665,8 +875,6 @@ function alongLoop(l: [number, number][], spacing: number): [number, number][] {
   return out;
 }
 
-const polys = (c: CrossSection): [number, number][][] => c.toPolygons().map((poly) => poly.map((q) => [q[0], q[1]] as [number, number]));
-
 /**
  * Pins & holes split in the plane's frame: the part is cut flat, then pins
  * stand on the negative piece and matching holes go into the positive one (or
@@ -698,7 +906,12 @@ async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
     const section = part.slice(0);
     temp.push(section);
     if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
-    refs = lapRefs(wasm, section, picks, 'contours');
+    // subcontours: pins only along the stretches between pairs of indicated points
+    const subMode = p.basis === 'subcontours' && picks.length > 0;
+    if (subMode && picks.length < 2) throw new Error('Indicate the end of the subcontour too (two points on the contour)');
+    const stretches = subMode ? findStretches(sectionLoops(section), picks, !!p.subFlip) : [];
+    if (subMode && !stretches.length) throw new Error('The two points of the subcontour must be apart on one contour');
+    refs = lapRefs(wasm, section, subMode ? picks.filter((_, i) => i % 2 === 0) : picks);
     if (!refs) throw new Error('No contour for the pins: indicate a section contour');
     // how far in the material reaches: in a thin wall the row runs down its middle
     let lo = 0, hi = boundsDiagonal(box);
@@ -715,11 +928,35 @@ async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
     temp.push(fit);
     const fitLoops = polys(fit);
     const centres: [number, number][] = [];
-    for (const ref of refs.refs) {
-      const row = ref.fill.offset(-inset, 'Round', 2, 64);
-      temp.push(row);
-      for (const l of polys(row)) if (loopArea(l) > 0) for (const q of alongLoop(l, a)) if (insideLoops(fitLoops, q[0], q[1])) centres.push(q);
-    }
+    if (subMode) {
+      // the row runs along each stretch itself, inset towards the material
+      const zone = stretchZone(wasm, stretches, inset + r + side + 1, 0);
+      temp.push(zone);
+      const zoneLoops = polys(zone);
+      for (const st of stretches) {
+        const fill = new wasm.CrossSection([st.loop], 'NonZero');
+        const row = fill.offset(st.hole ? inset : -inset, 'Round', 2, 64);
+        temp.push(fill, row);
+        // walk the row only where it lies along the stretch
+        for (const l of polys(row)) {
+          const pts = alongLoop(l, Math.min(a, 0.5)).filter((q) => insideLoops(zoneLoops, q[0], q[1]));
+          let last: [number, number] | null = null, run = 0;
+          for (const q of pts) {
+            if (last) run += Math.hypot(q[0] - last[0], q[1] - last[1]);
+            if ((!last || run >= a) && insideLoops(fitLoops, q[0], q[1])) {
+              centres.push(q);
+              run = 0;
+            }
+            last = q;
+          }
+        }
+      }
+    } else
+      for (const ref of refs.refs) {
+        const row = ref.fill.offset(-inset, 'Round', 2, 64);
+        temp.push(row);
+        for (const l of polys(row)) if (loopArea(l) > 0) for (const q of alongLoop(l, a)) if (insideLoops(fitLoops, q[0], q[1])) centres.push(q);
+      }
     if (!centres.length) throw new Error('No room for pins inside the contour: use a smaller radius or side clearance, or another distance from the contour');
     const cyl = (radius: number, z0: number, z1: number) =>
       wasm.Manifold.union(centres.map(([x, y]) => wasm.Manifold.cylinder(z1 - z0, radius, radius, segs).translate([x, y, z0])));
@@ -752,7 +989,8 @@ async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
     if (!belowM.indices.length || !aboveM.indices.length) throw new Error('The cut does not cross the part');
     // preview lines: the contours and a circle for each pin
     const seg: number[] = [];
-    loopSegments(refs.refs.map((x) => x.pts), seg);
+    if (subMode) for (const st of stretches) for (let i = 0; i + 1 < st.pts.length; i++) seg.push(st.pts[i][0], st.pts[i][1], 0, st.pts[i + 1][0], st.pts[i + 1][1], 0);
+    else loopSegments(refs.refs.map((x) => x.pts), seg);
     const circle = Array.from({ length: 16 }, (_, i) => [Math.cos((i / 16) * 2 * Math.PI) * r, Math.sin((i / 16) * 2 * Math.PI) * r] as [number, number]);
     loopSegments(centres.map(([x, y]) => circle.map(([cx, cy]) => [x + cx, y + cy] as [number, number])), seg);
     const lines = applyMatrix({ positions: Float32Array.from(seg), indices: new Uint32Array(0) }, toWorld).positions as Float32Array;
@@ -764,7 +1002,7 @@ async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
       lines,
       pins: centres.length,
       inset,
-      contours: [refs.refs.length, refs.loops],
+      contours: subMode ? [stretches.length, refs.loops] : [refs.refs.length, refs.loops],
       tooDeep: reach + face >= box.max[2] || (p.pinType === 'holes' ? reach : 0) >= -box.min[2],
     };
   } finally {
