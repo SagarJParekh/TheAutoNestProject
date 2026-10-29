@@ -4,7 +4,7 @@ import { getState, setState, useStore } from '../../state/store';
 import { cancelPreview, clearContourPicks, previewJointCut, startContourPick } from '../../state/actions';
 import { live, liveActive } from '../../state/livePreview';
 import { PlaneControls } from './PlaneControls';
-import { DEFAULT_JOINT, LAP_JOINTS, TONGUE_JOINTS, isAcrossJoint, isTongueFamily, jointProfile, lapProfile, type JointKind, type JointParams } from '../../geometry/joint';
+import { DEFAULT_JOINT, LAP_JOINTS, TONGUE_JOINTS, isAcrossJoint, isPinJoint, isTongueFamily, jointProfile, lapProfile, type JointKind, type JointParams } from '../../geometry/joint';
 import type { Part } from '../../state/types';
 
 const setJoint = (patch: Partial<JointParams>) => {
@@ -87,6 +87,116 @@ function TongueDiagram() {
   );
 }
 
+/** A pin standing on the lower piece in the hole of the upper one, with r, h, a and the clearances b, c, d. */
+function PinDiagram() {
+  return (
+    <svg viewBox="0 0 200 120" className="joint-diagram" aria-label="Pin and hole parameters">
+      <path className="lower" d="M8,112 L8,70 L52,70 L52,34 L68,34 L68,70 L132,70 L132,34 L148,34 L148,70 L192,70 L192,112 Z" />
+      <path className="upper" d="M8,4 L192,4 L192,63 L151,63 L151,27 L129,27 L129,63 L71,63 L71,27 L49,27 L49,63 L8,63 Z" />
+      <g className="dim">
+        <line x1="60" y1="34" x2="60" y2="70" />
+        <text x="75" y="52">h</text>
+        <line x1="60" y1="92" x2="140" y2="92" />
+        <text x="96" y="88">a</text>
+        <line x1="140" y1="80" x2="148" y2="80" />
+        <text x="150" y="84">r</text>
+        <text x="56" y="23">b</text>
+        <text x="153" y="50">c</text>
+        <text x="20" y="69">d</text>
+      </g>
+    </svg>
+  );
+}
+
+/** The "indicate contour" row: what is indicated, forget, and the pick button. */
+function ContourPick({ target, picking, none }: { target?: Part; picking: boolean; none: string }) {
+  const n = useStore((s) => s.settings.joint.picks.length);
+  return (
+    <div className="contour-pick">
+      <span className={n ? 'pick-ok' : 'pick-none'} title={n ? 'Contours indicated' : 'Nothing indicated: every cross-section region is used'}>
+        {n ? `✓ ${n} indicated` : none}
+      </span>
+      {n > 0 && (
+        <button className="mini" onClick={clearContourPicks} title="Forget the indicated contours">
+          ✕
+        </button>
+      )}
+      <button className={`mini ${picking ? 'on' : ''}`} disabled={!target} onClick={startContourPick} title="Click on the part next to the section contour (press again to add more)">
+        {picking ? 'Click the part…' : 'Indicate'}
+      </button>
+    </div>
+  );
+}
+
+/** Pins & holes settings, laid out like the Magics dialog. */
+function PinFields({ j, target, picking }: { j: JointParams; target?: Part; picking: boolean }) {
+  const [advanced, setAdvanced] = useState(false);
+  const field = (label: string, key: 'pinRadius' | 'pinHeight' | 'pinTolerance' | 'pinSpacing' | 'pinTop' | 'pinSide' | 'pinFace' | 'pinInset', title: string, step: number, disabled = false) => (
+    <Row label={label}>
+      <NumberField value={disabled ? j.pinTop : j[key]} min={0} step={step} suffix="mm" title={title} disabled={disabled} onChange={(v) => setJoint({ [key]: Math.max(0, v) })} />
+    </Row>
+  );
+  return (
+    <>
+      <Row label="Connector type">
+        <Segmented
+          value={j.pinType}
+          onChange={(pinType) => setJoint({ pinType })}
+          options={[
+            { value: 'pins', label: 'Pin(s)', title: 'Pins on one piece, matching holes in the other' },
+            { value: 'holes', label: 'Hole(s)', title: 'Holes in both pieces, for loose pins (dowels, filament)' },
+          ]}
+        />
+      </Row>
+      <div className="sub-title">Indicated section contour(s)</div>
+      <ContourPick target={target} picking={picking} none="All outer contours" />
+      <PinDiagram />
+      <div className="sub-title">Pin/hole size and placement</div>
+      {field('Radius (r)', 'pinRadius', 'Radius of the pins; the holes are wider by the side clearance', 0.1)}
+      {field('Height (h)', 'pinHeight', j.pinType === 'holes' ? 'Length of the loose pin: each hole is half of it deep, plus the top clearance' : 'How far the pins stand up from the cut face', 0.5)}
+      {field('Tolerance', 'pinTolerance', 'Largest deviation of the faceted pin and hole from a true circle (smaller = more facets)', 0.01)}
+      {field('Distance between pins (a)', 'pinSpacing', 'Spacing of the pins along the row that follows the contour', 1)}
+      <div className="sub-title">Clearance</div>
+      <Check checked={j.uniformClearance} onChange={(uniformClearance) => setJoint({ uniformClearance })}>
+        Uniform clearance
+      </Check>
+      {field('Top clearance (b)', 'pinTop', 'Extra depth of the hole above the end of the pin', 0.05)}
+      {field('Side clearance (c)', 'pinSide', 'Extra radius of the hole around the pin', 0.05, j.uniformClearance)}
+      {field('Face clearance (d)', 'pinFace', 'Gap between the two cut faces (taken off the piece with the holes)', 0.05, j.uniformClearance)}
+      <button className="link-btn" onClick={() => setAdvanced(!advanced)}>
+        {advanced ? '▾' : '▸'} Advanced parameters
+      </button>
+      {advanced && (
+        <div className="joint-advanced">
+          {field('Distance from contour', 'pinInset', 'How far in from the contour the row of pins runs (0 = automatic: clear of the surface, down the middle of thin walls)', 0.5)}
+          {j.pinType === 'pins' ? (
+            <Check checked={j.negative} onChange={(negative) => setJoint({ negative })}>
+              Pins on the other piece
+            </Check>
+          ) : (
+            <Check checked={j.loosePins} onChange={(loosePins) => setJoint({ loosePins })}>
+              Also make the loose pins as a part
+            </Check>
+          )}
+        </div>
+      )}
+      <Check
+        checked={j.showPreview !== false}
+        onChange={(showPreview) => {
+          setJoint({ showPreview });
+          if (!showPreview) cancelPreview();
+          else if (target && !liveActive()) void live(previewJointCut);
+        }}
+      >
+        Show preview
+      </Check>
+      <Check checked={j.recolor} onChange={(recolor) => setJoint({ recolor })}>
+        Autocolor resulting parts
+      </Check>
+    </>
+  );
+}
+
 export function JointCut({ target }: { target?: Part }) {
   const plane = useStore((s) => s.cutPlane);
   const gap = useStore((s) => s.settings.cut.gap);
@@ -103,6 +213,7 @@ export function JointCut({ target }: { target?: Part }) {
   const tongue = isAcrossJoint(j.kind);
   const family = isTongueFamily(j.kind) ? 'tongue' : 'lap';
   const tg = j.kind === 'tongue';
+  const pin = isPinJoint(j.kind);
   const list = family === 'tongue' ? TONGUE_JOINTS : LAP_JOINTS;
   const counted = j.kind === 'multiple' || j.kind === 'toothed' || j.kind === 'finger';
   const mmField = (label: string, key: 'depth' | 'offset' | 'width' | 'spacing' | 'notchClearance' | 'frontClearance' | 'backClearance' | 'clearance', title: string, step = 0.5) => (
@@ -114,24 +225,27 @@ export function JointCut({ target }: { target?: Part }) {
     <>
       <div className="repair-tabs joint-family">
         <Segmented
-          value={family}
-          onChange={(f) => chooseKind(f === 'tongue' ? 'tongue' : 'step')}
+          value={pin ? 'pins' : family}
+          onChange={(f) => chooseKind(f === 'pins' ? 'pins' : f === 'tongue' ? 'tongue' : 'step')}
           options={[
             { value: 'lap', label: 'Lap joint', title: 'A notch that follows the outline of the cut: a lip on one piece, a skirt on the other' },
             { value: 'tongue', label: 'Tongue joint', title: 'A tongue in the middle of the wall that keys into a groove in the other piece (or a joint straight across the section)' },
+            { value: 'pins', label: 'Pins & holes', title: 'A flat cut with a row of pins on one piece and holes in the other (or holes in both, for loose pins)' },
           ]}
         />
       </div>
-      <div className="joint-grid">
+      {!pin && <div className="joint-grid">
         {list.map((o) => (
           <button key={o.value} className={`joint-btn ${j.kind === o.value ? 'on' : ''}`} onClick={() => chooseKind(o.value)} title={o.label}>
             <JointIcon kind={o.value} params={j} />
             <span>{o.label}</span>
           </button>
         ))}
-      </div>
+      </div>}
       <PlaneControls value={plane} parts={target ? [target] : []} onChange={(p) => setState({ cutPlane: { ...p, rows: plane.rows, angled: plane.angled }, preview: null })} />
-      {tongue ? (
+      {pin ? (
+        <PinFields j={j} target={target} picking={picking} />
+      ) : tongue ? (
         <>
           {mmField('Overlap length', 'depth', 'How far the two pieces overlap along the plane normal (0 = automatic, from the section size)')}
           {counted && (
@@ -266,7 +380,9 @@ export function JointCut({ target }: { target?: Part }) {
         </button>
       </div>
       <Hint>
-        {tongue
+        {pin
+          ? 'Pins & holes cut the part flat at the plane and add a row of pins inside the indicated contour (down the middle of thin walls), a apart, with matching holes in the other piece; pins that would not fit in the material are left out. Hole(s) puts holes in both pieces for loose pins.'
+          : tongue
           ? 'Tongue joints run straight across the cross-section at the plane: a half lap halves the thickness, a scarf runs a slope through it and finger joints interlock across the width.'
           : tg
             ? 'Tongue & groove follows the outline of the part where it is cut: one piece gets a tongue set in by the offset b from every wall of the indicated contour (on a tube, b from the outside and b from the bore), the other a matching groove, with the clearances in between. Regions not indicated are cut flat. Give a tongue width to set it from the outer wall only (e.g. on solid parts).'

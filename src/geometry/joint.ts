@@ -23,7 +23,8 @@ import type { CrossSection, Manifold, ManifoldToplevel } from 'manifold-3d';
 
 export type LapJoint = 'u' | 'square' | 'multiple' | 'step' | 'toothed' | 'dovetail';
 export type TongueJoint = 'tongue' | 'halfLap' | 'finger' | 'scarf';
-export type JointKind = LapJoint | TongueJoint;
+export type PinJoint = 'pins';
+export type JointKind = LapJoint | TongueJoint | PinJoint;
 
 export const LAP_JOINTS: { value: LapJoint; label: string }[] = [
   { value: 'u', label: 'U' },
@@ -40,6 +41,8 @@ export const TONGUE_JOINTS: { value: TongueJoint; label: string }[] = [
   { value: 'scarf', label: 'Scarf' },
 ];
 
+/** Pins & holes: connectors placed in a row along the indicated contour. */
+export const isPinJoint = (k: JointKind): boolean => k === 'pins';
 /** Joints that run straight across the cross-section (the rest follow its outline). */
 export const isAcrossJoint = (k: JointKind): boolean => k === 'halfLap' || k === 'finger' || k === 'scarf';
 /** Joints listed under "Tongue joint" in the panel. */
@@ -85,13 +88,43 @@ export interface JointParams {
   straight: boolean;
   /** lap joints: show the preview as soon as a contour is indicated (panel only) */
   showPreview: boolean;
+  /** pins & holes: pins on one piece and holes in the other, or holes in both (for loose pins) */
+  pinType: 'pins' | 'holes';
+  /** pin radius (r), mm */
+  pinRadius: number;
+  /** pin height (h), mm; with holes in both pieces the length of the loose pin */
+  pinHeight: number;
+  /** largest deviation of the faceted pin from a true cylinder, mm */
+  pinTolerance: number;
+  /** distance between pins (a), along the row, mm */
+  pinSpacing: number;
+  /** one clearance for top, side and face */
+  uniformClearance: boolean;
+  /** top clearance (b): extra depth of the hole above the pin's end, mm */
+  pinTop: number;
+  /** side clearance (c): extra radius of the hole, mm */
+  pinSide: number;
+  /** face clearance (d): gap between the two cut faces, mm */
+  pinFace: number;
+  /** distance of the row of pins in from the contour, mm (0 = automatic: clear of the surface, in the middle of thin walls) */
+  pinInset: number;
+  /** holes in both pieces: also make the loose pins as a part */
+  loosePins: boolean;
 }
 
 export const DEFAULT_JOINT: JointParams = {
   kind: 'step', depth: 3, offset: 0.5, width: 3, spacing: 3, count: 2, angle: 15, rotate: 0,
   notchClearance: 0.1, frontClearance: 0.1, backClearance: 0.1, clearance: 0.2, negative: false, recolor: false,
   basis: 'contours', picks: [], straight: true, showPreview: true,
+  pinType: 'pins', pinRadius: 0.5, pinHeight: 2, pinTolerance: 0.02, pinSpacing: 4, uniformClearance: true,
+  pinTop: 0.2, pinSide: 0.2, pinFace: 0.2, pinInset: 0, loosePins: false,
 };
+
+/** The clearances a pin joint actually uses (uniform: the top clearance everywhere). */
+export function pinClearances(p: Pick<JointParams, 'uniformClearance' | 'pinTop' | 'pinSide' | 'pinFace'>): { top: number; side: number; face: number } {
+  const top = Math.max(0, p.pinTop);
+  return p.uniformClearance ? { top, side: top, face: top } : { top, side: Math.max(0, p.pinSide), face: Math.max(0, p.pinFace) };
+}
 
 // ---------------------------------------------------------------- profiles
 
@@ -644,6 +677,154 @@ async function lapSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{
   }
 }
 
+
+// ---------------------------------------------------------------- pins & holes
+
+/** Point inside closed loops (even-odd). */
+function insideLoops(loops: [number, number][][], x: number, y: number): boolean {
+  let inside = false;
+  for (const l of loops)
+    for (let i = 0, j = l.length - 1; i < l.length; j = i++) {
+      const [xi, yi] = l[i], [xj, yj] = l[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  return inside;
+}
+
+/** Points every `spacing` along a closed loop, half a spacing in from its start. */
+function alongLoop(l: [number, number][], spacing: number): [number, number][] {
+  const seg: number[] = [];
+  let len = 0;
+  for (let i = 0; i < l.length; i++) {
+    const [x0, y0] = l[i], [x1, y1] = l[(i + 1) % l.length];
+    seg.push(Math.hypot(x1 - x0, y1 - y0));
+    len += seg[i];
+  }
+  if (len < 1e-9) return [];
+  const n = Math.max(1, Math.floor(len / spacing));
+  const step = len / n;
+  const out: [number, number][] = [];
+  let i = 0, at = 0;
+  for (let k = 0; k < n; k++) {
+    const d = (k + 0.5) * step;
+    while (i < l.length - 1 && at + seg[i] < d) at += seg[i++];
+    const f = seg[i] > 0 ? (d - at) / seg[i] : 0;
+    const [x0, y0] = l[i], [x1, y1] = l[(i + 1) % l.length];
+    out.push([x0 + (x1 - x0) * f, y0 + (y1 - y0) * f]);
+  }
+  return out;
+}
+
+const polys = (c: CrossSection): [number, number][][] => c.toPolygons().map((poly) => poly.map((q) => [q[0], q[1]] as [number, number]));
+
+/**
+ * Pins & holes split in the plane's frame: the part is cut flat, then pins
+ * stand on the negative piece and matching holes go into the positive one (or
+ * holes into both, for loose pins). The pins run in a row inside the indicated
+ * contours, `pinSpacing` apart; a pin is left out where it would not fit in the
+ * material with its clearance.
+ */
+async function pinSplit(mesh: MeshData, plane: Plane, p: JointParams): Promise<{ above: MeshData; below: MeshData; loose?: MeshData; lines: Float32Array; pins: number; inset: number; contours: [number, number]; tooDeep: boolean }> {
+  const wasm = await getManifold();
+  const n = plane.normal, c0 = plane.constant;
+  const { u, v } = planeBasis(n);
+  const toLocal = [u[0], v[0], n[0], 0, u[1], v[1], n[1], 0, u[2], v[2], n[2], 0, 0, 0, -c0, 1];
+  const toWorld = [u[0], u[1], u[2], 0, v[0], v[1], v[2], 0, n[0], n[1], n[2], 0, n[0] * c0, n[1] * c0, n[2] * c0, 1];
+  const picks = (p.picks ?? []).map((q) => [dot(q, u), dot(q, v)] as [number, number]);
+  const r = Math.max(0.05, p.pinRadius), h = Math.max(0.1, p.pinHeight), a = Math.max(2 * r + 0.1, p.pinSpacing);
+  const { top, side, face } = pinClearances(p);
+  const tol = Math.min(Math.max(1e-3, p.pinTolerance || 0.02), r / 2);
+  const segs = Math.max(8, Math.min(128, Math.ceil(Math.PI / Math.acos(1 - tol / (r + side)))));
+  const turned = applyMatrix(mesh, toLocal);
+  const local = meshVolume(turned) < 0 ? flipMesh(turned) : turned;
+  const box = computeBounds(local.positions);
+  if (box.min[2] >= 0 || box.max[2] <= 0) throw new Error('The cut plane does not cross the part');
+  const part = await toManifold(local);
+  if (!part) throw new NotManifoldError('Part');
+  const made: Manifold[] = [];
+  const temp: CrossSection[] = [];
+  let refs: LapRefs | null = null;
+  try {
+    const section = part.slice(0);
+    temp.push(section);
+    if (section.isEmpty()) throw new Error('The cut plane does not cross the part');
+    refs = lapRefs(wasm, section, picks, 'contours');
+    if (!refs) throw new Error('No contour for the pins: indicate a section contour');
+    // how far in the material reaches: in a thin wall the row runs down its middle
+    let lo = 0, hi = boundsDiagonal(box);
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2, o = refs.regions.offset(-mid, 'Round', 2, 32);
+      const empty = o.isEmpty();
+      o.delete();
+      if (empty) hi = mid;
+      else lo = mid;
+    }
+    const inset = p.pinInset > 0 ? p.pinInset : Math.min(r + side + Math.max(r, 1), lo * 0.98);
+    // a pin (with its hole) must sit fully in the material
+    const fit = refs.regions.offset(-(r + side) * 0.999, 'Round', 2, 32);
+    temp.push(fit);
+    const fitLoops = polys(fit);
+    const centres: [number, number][] = [];
+    for (const ref of refs.refs) {
+      const row = ref.fill.offset(-inset, 'Round', 2, 64);
+      temp.push(row);
+      for (const l of polys(row)) if (loopArea(l) > 0) for (const q of alongLoop(l, a)) if (insideLoops(fitLoops, q[0], q[1])) centres.push(q);
+    }
+    if (!centres.length) throw new Error('No room for pins inside the contour: use a smaller radius or side clearance, or another distance from the contour');
+    const cyl = (radius: number, z0: number, z1: number) =>
+      wasm.Manifold.union(centres.map(([x, y]) => wasm.Manifold.cylinder(z1 - z0, radius, radius, segs).translate([x, y, z0])));
+    const [upper, lower] = part.splitByPlane([0, 0, 1], 0);
+    made.push(upper, lower);
+    let above = face > 0 ? upper.trimByPlane([0, 0, 1], face) : upper;
+    if (above !== upper) made.push(above);
+    let below = lower;
+    let loose: Manifold | null = null;
+    const eps = 0.01;
+    if (p.pinType === 'holes') {
+      // holes half the pin deep on each side, plus the top clearance
+      const holeLo = cyl(r + side, -(h / 2 + top), eps), holeHi = cyl(r + side, face - eps, face + h / 2 + top);
+      made.push(holeLo, holeHi);
+      below = lower.subtract(holeLo);
+      above = above.subtract(holeHi);
+      made.push(below, above);
+      if (p.loosePins) {
+        loose = cyl(r, -h / 2, h / 2);
+        made.push(loose);
+      }
+    } else {
+      const pins = cyl(r, -eps, h), holes = cyl(r + side, face - eps, h + top);
+      made.push(pins, holes);
+      below = lower.add(pins);
+      above = above.subtract(holes);
+      made.push(below, above);
+    }
+    const belowM = applyMatrix(fromManifold(below), toWorld), aboveM = applyMatrix(fromManifold(above), toWorld);
+    if (!belowM.indices.length || !aboveM.indices.length) throw new Error('The cut does not cross the part');
+    // preview lines: the contours and a circle for each pin
+    const seg: number[] = [];
+    loopSegments(refs.refs.map((x) => x.pts), seg);
+    const circle = Array.from({ length: 16 }, (_, i) => [Math.cos((i / 16) * 2 * Math.PI) * r, Math.sin((i / 16) * 2 * Math.PI) * r] as [number, number]);
+    loopSegments(centres.map(([x, y]) => circle.map(([cx, cy]) => [x + cx, y + cy] as [number, number])), seg);
+    const lines = applyMatrix({ positions: Float32Array.from(seg), indices: new Uint32Array(0) }, toWorld).positions as Float32Array;
+    const reach = p.pinType === 'holes' ? h / 2 + top : h + top;
+    return {
+      above: aboveM,
+      below: belowM,
+      loose: loose ? applyMatrix(fromManifold(loose), toWorld) : undefined,
+      lines,
+      pins: centres.length,
+      inset,
+      contours: [refs.refs.length, refs.loops],
+      tooDeep: reach + face >= box.max[2] || (p.pinType === 'holes' ? reach : 0) >= -box.min[2],
+    };
+  } finally {
+    part.delete();
+    made.forEach((m) => m.delete());
+    temp.forEach((c) => c.delete());
+    freeRefs(refs);
+  }
+}
+
 // ---------------------------------------------------------------- split
 
 export interface JointResult {
@@ -659,6 +840,11 @@ export interface JointResult {
   lines?: Float32Array;
   /** lap joints: contours the offset counts from, of all the section's contours */
   contours?: [number, number];
+  /** pins & holes: number of pins placed, and the loose pins (holes in both pieces) */
+  pins?: number;
+  loose?: MeshData;
+  /** pins & holes: distance of the row in from the contour, mm */
+  inset?: number;
 }
 
 /**
@@ -669,6 +855,11 @@ export async function jointSplit(mesh: MeshData, plane: Plane, p: JointParams): 
   const flip = !!p.negative;
   const pl: Plane = flip ? { normal: [-plane.normal[0], -plane.normal[1], -plane.normal[2]], constant: -plane.constant } : plane;
   const swap = (r: { above: MeshData; below: MeshData }) => (flip ? { above: r.below, below: r.above } : { above: r.above, below: r.below });
+  if (isPinJoint(p.kind)) {
+    // pins on the other piece: the same with the plane turned round
+    const r = await pinSplit(mesh, pl, p);
+    return { ...swap(r), loose: r.loose, tooDeep: r.tooDeep, lines: r.lines, contours: r.contours, pins: r.pins, inset: r.inset };
+  }
   if (!isAcrossJoint(p.kind)) {
     const r = await lapSplit(mesh, pl, p);
     return { ...swap(r), tooDeep: r.tooDeep, lines: r.lines, contours: r.contours };

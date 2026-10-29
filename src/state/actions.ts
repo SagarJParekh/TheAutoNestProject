@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import type { MeshData, Vec3 } from '../geometry';
 import { mirrorMesh } from '../geometry/transform';
 import { regionNormal } from '../geometry/select';
-import { LAP_JOINTS, TONGUE_JOINTS, isAcrossJoint } from '../geometry/joint';
+import { LAP_JOINTS, TONGUE_JOINTS, isAcrossJoint, isPinJoint, pinClearances } from '../geometry/joint';
 import { pool, CancelledError } from '../workers/client';
 import type { OpArgs, OpName, OpResult } from '../workers/ops';
 import { getLoader, extensionOf } from '../loaders/registry';
@@ -545,12 +545,24 @@ export async function previewJointCut() {
     { name: cutName(part.name, 1), mesh: shift(r.above, gap / 2), color: part.color },
     { name: cutName(part.name, 2), mesh: shift(r.below, -gap / 2), color: params.recolor ? nextColor() : part.color },
   ];
+  if (r.loose) pieces.push({ name: `${part.name}_pins`, mesh: r.loose, color: nextColor() });
   const mm = (v: number) => `${+v.toFixed(3)} mm`;
-  const name = [...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind;
+  const pinJoint = isPinJoint(params.kind);
+  const name = pinJoint ? 'Pins & holes' : ([...LAP_JOINTS, ...TONGUE_JOINTS].find((j) => j.value === params.kind)?.label ?? params.kind);
   const title = /joint$/i.test(name) ? name : `${name} joint`;
   const tongue = isAcrossJoint(params.kind);
   const counted = params.kind === 'multiple' || params.kind === 'toothed' || params.kind === 'finger';
-  const lines = tongue
+  const clr = pinClearances(params);
+  const lines = pinJoint
+    ? [
+        `Pins & holes: ${params.pinType === 'holes' ? 'holes in both pieces' : 'pins and holes'}`,
+        `Pins: ${r.pins} · radius (r) ${mm(params.pinRadius)} · height (h) ${mm(params.pinHeight)} · every ${mm(params.pinSpacing)}`,
+        `Row ${mm(r.inset ?? 0)} in from the contour${params.pinInset > 0 ? '' : ' (automatic)'}`,
+        `Clearance: top (b) ${mm(clr.top)} · side (c) ${mm(clr.side)} · face (d) ${mm(clr.face)}`,
+        ...(r.contours ? [`Section contours: ${params.picks.length ? `${r.contours[0]} indicated` : `${r.contours[0]} outer (none indicated)`} of ${r.contours[1]}`] : []),
+        ...(params.pinType === 'holes' ? (r.loose ? [`Loose pins: ${part.name}_pins`] : []) : [`Pins on: ${cutName(part.name, params.negative ? 1 : 2)}`]),
+      ]
+    : tongue
     ? [
         `Tongue joint: ${name}`,
         `Across the section: ${mm(r.sizes!.span)}`,
@@ -584,7 +596,13 @@ export async function previewJointCut() {
     ...(tongue ? {} : { xray: true, lines: r.lines }),
     summary: [
       ...lines,
-      ...(r.tooDeep ? [`⚠ The ${tongue ? 'overlap' : 'notch'} reaches past the end of the part: a piece may fall apart. Use a smaller ${tongue ? 'overlap length' : 'notch height'} or move the plane.`] : []),
+      ...(r.tooDeep
+        ? [
+            pinJoint
+              ? '⚠ The pins or holes reach past the end of the part. Use a smaller height or move the plane.'
+              : `⚠ The ${tongue ? 'overlap' : 'notch'} reaches past the end of the part: a piece may fall apart. Use a smaller ${tongue ? 'overlap length' : 'notch height'} or move the plane.`,
+          ]
+        : []),
       ...pieces.map((p) => `${p.name}: ${(p.mesh.indices.length / 3).toLocaleString()} triangles`),
     ],
     apply: () => replaceWithWorldMeshes(title, part.id, pieces),

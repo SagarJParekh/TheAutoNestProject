@@ -436,7 +436,7 @@ table.report tr:last-child td { border-bottom: none; }
 .manual-banner span { flex: 1 1 100%; color: var(--muted); }
 /* joint cuts */
 .joint-family { margin-top: 8px; }
-.joint-family .segmented { grid-template-columns: 1fr 1fr; }
+.joint-family .segmented { grid-template-columns: 1fr 1fr 1fr; }
 .joint-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
 .joint-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font-size: 11px; line-height: 1.2; text-align: center; color: inherit; cursor: pointer; }
 .joint-btn:hover { border-color: var(--muted); }

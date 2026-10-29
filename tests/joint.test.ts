@@ -137,6 +137,39 @@ describe('lap joints follow the outline of the cross-section', () => {
   });
 });
 
+describe('pins & holes', () => {
+  // 100 × 30 × 12 bar cut across Z: a long contour for a row of pins
+  const flat = { normal: [0, 0, 1] as [number, number, number], constant: 6 };
+  const pin = { ...DEFAULT_JOINT, kind: 'pins' as JointKind, pinRadius: 1, pinHeight: 3, pinSpacing: 10, uniformClearance: true, pinTop: 0.2 };
+
+  it('pins stand on one piece and holes with the clearances go into the other', async () => {
+    const r = await jointSplit(bar, flat, pin);
+    expect(isWatertight(r.above) && isWatertight(r.below)).toBe(true);
+    expect(r.pins).toBeGreaterThan(10);
+    const cylV = (rad: number, len: number) => r.pins! * Math.PI * rad * rad * len;
+    // below: half the bar plus the pins; above: half the bar less the face clearance and the holes
+    // (faceted within the 0.02 mm tolerance: a few per cent under a true cylinder)
+    expect((meshVolume(r.below) - 100 * 30 * 6) / cylV(1, 3)).toBeCloseTo(0.98, 1);
+    expect((100 * 30 * (6 - 0.2) - meshVolume(r.above)) / cylV(1.2, 3)).toBeCloseTo(0.98, 1);
+    expect(computeBounds(r.below.positions).max[2]).toBeCloseTo(9, 3);
+    expect(computeBounds(r.above.positions).min[2]).toBeCloseTo(6.2, 3);
+  });
+
+  it('holes in both pieces, with loose pins as a part', async () => {
+    const r = await jointSplit(bar, flat, { ...pin, pinType: 'holes', loosePins: true });
+    expect(isWatertight(r.above) && isWatertight(r.below) && isWatertight(r.loose!)).toBe(true);
+    expect(computeBounds(r.below.positions).max[2]).toBeCloseTo(6, 3);
+    expect(meshVolume(r.loose!) / (r.pins! * Math.PI * 3)).toBeCloseTo(0.98, 1);
+  });
+
+  it('separate clearances and pins on the other piece; no room is reported', async () => {
+    const r = await jointSplit(bar, flat, { ...pin, uniformClearance: false, pinSide: 0.1, pinFace: 0, negative: true });
+    expect(computeBounds(r.above.positions).min[2]).toBeCloseTo(3, 3);
+    expect(computeBounds(r.below.positions).max[2]).toBeCloseTo(6, 3);
+    await expect(jointSplit(bar, flat, { ...pin, pinRadius: 20 })).rejects.toThrow(/No room/);
+  });
+});
+
 describe('tongue joints run across the cross-section', () => {
   it('half laps and scarfs run across the thickness, finger joints across the width', () => {
     expect(Math.abs(jointFrame(bar, plane, { kind: 'halfLap', rotate: 0 }).s[2])).toBeCloseTo(1);
