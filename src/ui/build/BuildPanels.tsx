@@ -837,6 +837,22 @@ export function BuildsPanel() {
               </div>
             );
           })()}
+          {g.parts.length > 0 && (
+            <div className="parts-vis">
+              {(() => {
+                const all = g.parts.every((p) => p.lockRotation);
+                return (
+                  <button
+                    className={`mini ${all ? 'on' : ''}`}
+                    onClick={() => setBuildRotationLock(g.parts.map((p) => p.id), !all)}
+                    title={all ? 'Unlock the orientation of every part' : 'Lock the orientation of every part: kept as in Mesh prep (no flat-face turn, tilt or 90° turns), only moved'}
+                  >
+                    {Icon.rotLock} {all ? 'Unlock all orientations' : 'Lock all orientations'}
+                  </button>
+                );
+              })()}
+            </div>
+          )}
           <ul className="build-parts">
             {g.parts.map((p) => {
               const st = partStatus(p, g.builds, g.unplaced);

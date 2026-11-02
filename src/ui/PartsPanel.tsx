@@ -36,6 +36,22 @@ export function PartsPanel() {
           </button>
         </div>
       )}
+      {parts.length > 0 && (
+        <div className="parts-vis">
+          {(() => {
+            const all = parts.every((p) => p.lockRotation);
+            return (
+              <button
+                className={`mini ${all ? 'on' : ''}`}
+                onClick={() => setRotationLock(parts.map((p) => p.id), !all)}
+                title={all ? 'Unlock the orientation of every part' : 'Lock the orientation of every part: they can be moved but not rotated (also kept in Build generation)'}
+              >
+                {Icon.rotLock} {all ? 'Unlock all orientations' : 'Lock all orientations'}
+              </button>
+            );
+          })()}
+        </div>
+      )}
       {selection.length > 0 && (
         <div className="parts-vis parts-opacity">
           <span className="muted">Selected:</span>
