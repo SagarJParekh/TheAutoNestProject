@@ -869,8 +869,8 @@ export function BuildsPanel() {
                       !
                     </span>
                   )}
-                  {p.supported && (
-                    <span className="badge" title={`${p.supported.count} supports (${p.supported.tech.toUpperCase()}), ${(p.supported.volume / 1000).toFixed(2)} cm³; orientation locked to them`}>
+                  {(p.supportsOn || p.supported) && (
+                    <span className="badge" title="Has supports: every copy gets its own, straight down to the platform, and they follow any turn of the copy">
                       sup
                     </span>
                   )}

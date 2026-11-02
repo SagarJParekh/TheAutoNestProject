@@ -236,6 +236,34 @@ function columnsUnder(mesh: MeshData, areas: OverhangArea[], spacing: number, of
   return out;
 }
 
+/**
+ * A lifted part has to stand on something even where nothing overhangs at the
+ * critical angle (e.g. turned 45°): the lowest down-facing triangles (within
+ * half a support spacing of the bottom) are added as an area of their own.
+ */
+function withLowest(part: MeshData, areas: OverhangArea[], lift: number, spacing: number): OverhangArea[] {
+  if (!(lift > 0)) return areas;
+  const p = part.positions, idx = part.indices, nt = triangleCount(part);
+  const used = new Set<number>();
+  for (const a of areas) for (const t of a.tris) used.add(t);
+  const band = lift + Math.max(0.3, spacing / 2);
+  const tris: number[] = [];
+  let area = 0;
+  for (let t = 0; t < nt; t++) {
+    if (used.has(t)) continue;
+    const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+    if (Math.min(p[a + 2], p[b + 2], p[c + 2]) > band) continue;
+    const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+    const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = Math.hypot(nx, ny, nz);
+    if (l < 1e-12 || nz / l > -0.05) continue;
+    tris.push(t);
+    area += l / 2;
+  }
+  return tris.length ? [...areas, { tris, area }] : areas;
+}
+
 /** Areas the user clicked off: the one under each point (given in the part's position before lifting). */
 function skippedAreas(part: MeshData, all: OverhangArea[], skip: Vec3[], dz: number): Set<number> {
   const skipped = new Set<number>();
@@ -366,7 +394,7 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
   const lift = Math.max(0, p.lift);
   const dz = lift - b.min[2];
   const part = { positions: input.positions.map((v, i) => (i % 3 === 2 ? v + dz : v)), indices: input.indices };
-  const all = overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0);
+  const all = withLowest(part, overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0), lift, p.spacing);
   const skipped = skippedAreas(part, all, skip, dz);
   const areas = all.filter((_, i) => !skipped.has(i));
   const s = await buildSupports(part, areas, p);
@@ -385,14 +413,14 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
 /** Only the analysis: the part lifted and its overhang areas (for showing before generating). */
 export function analyseOverhangs(
   input: MeshData,
-  p: Pick<SupportParams, 'criticalAngle' | 'minArea' | 'lift'>,
+  p: Pick<SupportParams, 'criticalAngle' | 'minArea' | 'lift' | 'spacing'>,
   skip: Vec3[] = [],
 ): { overhangs: MeshData; areas: number; area: number; dz: number; skipped: number } {
   const b = computeBounds(input.positions);
   const lift = Math.max(0, p.lift);
   const dz = lift - b.min[2];
   const part = { positions: input.positions.map((v, i) => (i % 3 === 2 ? v + dz : v)), indices: input.indices };
-  const all = overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0);
+  const all = withLowest(part, overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0), lift, p.spacing);
   const skipped = skippedAreas(part, all, skip, dz);
   const areas = all.filter((_, i) => !skipped.has(i));
   const om = subMesh(part, areas.flatMap((a) => a.tris));

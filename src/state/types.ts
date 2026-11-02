@@ -366,7 +366,9 @@ export interface BuildPart {
   cage?: { options: import('../geometry').CageOptions; contents: BuildPart[] };
   /** lighter copy for the view when a build would show very many triangles (never used for nesting or export) */
   display?: { for: MeshData; tris: number; mesh: MeshData };
-  /** supports generated for it (SLA / DLP / DMLS): the mesh holds part + supports; how to undo that */
+  /** supports (SLA / DLP / DMLS) under every copy, made for each copy's own orientation (they always stand straight up) */
+  supportsOn?: boolean;
+  /** older sessions: supports fused into the mesh; how to undo that */
   supported?: { original: MeshData; lockRotation: boolean; tech: string; count: number; volume: number };
 }
 

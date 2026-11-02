@@ -11,7 +11,7 @@ describe('support generation', () => {
     // on the platform: only the plate's underside ring, 40² − 10²
     expect(flat.length).toBe(1);
     expect(flat[0].area).toBeCloseTo(1600 - 100, 0);
-    const a = analyseOverhangs(t, { criticalAngle: 45, minArea: 0.1, lift: 3 });
+    const a = analyseOverhangs(t, { criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1 });
     expect(a.areas).toBe(2);
     expect(a.area).toBeCloseTo(1600, 0);
   });
@@ -42,5 +42,18 @@ describe('support generation', () => {
     expect(r.skipped).toBe(1);
     const b = computeBounds(r.supports.positions);
     expect(b.max[0] - b.min[0]).toBeLessThan(11);
+  });
+});
+
+describe('a lifted part always stands on supports', () => {
+  it('a box turned 45° (nothing flatter than the critical angle) still gets supports under its lowest edge', async () => {
+    const { boxMesh, applyMatrix, generateSupports, SUPPORT_PRESETS, computeBounds } = await import('../src/geometry');
+    const { Matrix4 } = await import('three');
+    const box = applyMatrix(boxMesh([-10, -10, -10], [10, 10, 10]), new Matrix4().makeRotationX(Math.PI / 4).elements);
+    const r = await generateSupports(box, SUPPORT_PRESETS.sla);
+    expect(r.count).toBeGreaterThan(0);
+    const b = computeBounds(r.supports.positions);
+    expect(b.min[2]).toBeCloseTo(0, 3);
+    expect(b.max[2]).toBeGreaterThan(SUPPORT_PRESETS.sla.lift);
   });
 });

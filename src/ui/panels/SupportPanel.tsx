@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { removeBuildSupports, selectedBuildPartIds, supportBuildParts } from '../../state/buildActions';
+import { supportTotals } from '../../state/buildSupports';
 import { SUPPORT_PRESETS, type SupportParams, type SupportTech } from '../../geometry/supports';
 
 const setSup = (patch: Partial<SupportParams>) => {
@@ -20,7 +21,11 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
   const selection = useStore((s) => s.selection);
   const busy = useStore((s) => s.jobs.length > 0);
   const sel = selectedBuildPartIds(selection);
-  const supported = parts.filter((p) => p.supported);
+  const supported = parts.filter((p) => p.supportsOn || p.supported);
+  const pending = useStore((s) => s.supportPending);
+  useStore((s) => s.supportTick);
+  const g = useStore((s) => s.buildGen);
+  const totals = supportTotals(g);
   // the printer decides the technology: its standard script is loaded when it changes
   useEffect(() => {
     if (getState().settings.supports.tech !== tech) setSup({ ...SUPPORT_PRESETS[tech] });
@@ -83,7 +88,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         </>
       )}
       <div className="btn-grid two">
-        <button className="btn primary" disabled={busy || !parts.length} onClick={() => void supportBuildParts(sel.length ? sel : undefined)}>
+        <button className="btn primary" disabled={busy || !parts.length} onClick={() => supportBuildParts(sel.length ? sel : undefined)}>
           {sel.length ? `Support ${sel.length} selected` : 'Support all parts'}
         </button>
         <button className="btn" onClick={() => setSup({ ...SUPPORT_PRESETS[tech] })} title={`Back to the standard ${tech.toUpperCase()} script`}>
@@ -94,6 +99,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         <div className="pick-row">
           <span className="muted small">
             {supported.length} part{supported.length > 1 ? 's' : ''} with supports
+            {pending ? ` · updating ${pending}…` : totals.copies ? ` · this build: ${totals.count} ${st.style === 'volume' ? 'walls' : 'supports'}, ${(totals.volume / 1000).toFixed(2)} cm³` : ''}
           </span>
           <button className="mini" onClick={() => removeBuildSupports(sel.length ? sel : undefined)}>
             {sel.length ? 'Remove from selected' : 'Remove all'}
@@ -101,9 +107,9 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         </div>
       )}
       <Hint>
-        Each part gets supports in the orientation it has in the builds: it is lifted by the distance from the platform and every surface facing down at less
-        than the critical angle is supported, down to the platform or onto the part below. Part and supports are then nested and exported together, with
-        the orientation locked. Generating again rebuilds them from the original part.
+        Every copy gets its own supports for the orientation it has: it is lifted by the distance from the platform and every surface facing down at less
+        than the critical angle is supported straight down (perpendicular to the platform), onto the platform or onto the part below. When a copy is
+        turned (nesting, hand edits) or a setting changes, its supports are made again automatically. They are exported with the build.
       </Hint>
     </Section>
   );

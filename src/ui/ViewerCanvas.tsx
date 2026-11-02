@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
-import { buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
+import { supportLift } from '../state/buildSupports';
+import { SUP, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
@@ -44,12 +45,13 @@ function FaceBanner() {
  * What the viewer shows: the Prep parts, or in Build Generation the parts of
  * the active build inside the printer's build volume (no editing tools).
  */
-let lastBuild: { gen: AppState['buildGen']; parts: Part[] } | null = null;
+let lastBuild: { gen: AppState['buildGen']; tick: number; parts: Part[] } | null = null;
 let lastView: { src: AppState; view: AppState } | null = null;
 function viewState(s: AppState): AppState {
   if (s.workspace !== 'build') return s;
   if (lastView && lastView.src === s) return lastView.view;
-  if (!lastBuild || lastBuild.gen !== s.buildGen) lastBuild = { gen: s.buildGen, parts: buildDisplayParts(s.buildGen, s.buildGen.active, true) };
+  if (!lastBuild || lastBuild.gen !== s.buildGen || lastBuild.tick !== s.supportTick)
+    lastBuild = { gen: s.buildGen, tick: s.supportTick, parts: buildDisplayParts(s.buildGen, s.buildGen.active, true) };
   const printer = currentPrinter(s.buildGen);
   const checks = s.buildGen.checks && s.buildGen.checks.build === s.buildGen.active ? s.buildGen.checks : null;
   // after a collision / interlock check: show only the parts involved, with markers where they collide
@@ -143,7 +145,8 @@ export function ViewerCanvas() {
         const s = getState();
         if (s.workspace === 'build') {
           // Build generation: clicks only select parts (Ctrl / Shift toggles)
-          selectBuildPart(info?.partId ?? null, mods.ctrl || mods.shift);
+          // a click on a copy's supports selects the copy
+          selectBuildPart(info?.partId?.replace(SUP, '') ?? null, mods.ctrl || mods.shift);
           return;
         }
         if (s.pickMode === 'layflat') {
@@ -205,7 +208,11 @@ export function ViewerCanvas() {
         if (getState().workspace === 'build') {
           // Build generation: hand edits go into the active build
           const q = quaternionOf(t);
-          editPlacements([{ key: id, position: t.position, quaternion: [q.x, q.y, q.z, q.w] }]);
+          // copies on supports are shown lifted onto them: the placement keeps the height without the lift
+          const g = getState().buildGen;
+          const part = g.parts.find((p) => p.id === partOfKey(id));
+          const lift = part ? supportLift(part, g) : 0;
+          editPlacements([{ key: id, position: [t.position[0], t.position[1], t.position[2] - lift], quaternion: [q.x, q.y, q.z, q.w] }]);
           return;
         }
         setTransform(id, t, 'Move / rotate');

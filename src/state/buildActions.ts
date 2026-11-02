@@ -17,6 +17,10 @@ import { nextColor } from './palette';
 import { printerById, type Printer } from './printers';
 import type { Build, BuildGenState, BuildPart, BuildPlacement, CopyLock, Part, Tilt } from './types';
 import { eulerDegFromQuaternion } from './math';
+import { supportFor, supportLift, updateSupports } from './buildSupports';
+
+/** key suffix of the supports shown under a copy */
+export const SUP = '~sup';
 
 type Quat = [number, number, number, number];
 
@@ -851,16 +855,31 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
   for (const pl of b.placements) {
     const p = byId.get(pl.partId);
     if (!p) continue;
+    // with supports the copy stands on them, lifted; the supports go straight down to the platform
+    const sup = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
+    // on supports: the supports stand on the platform and the part sits the lift above it, whatever height the copy had
+    const partZ = sup ? s.zOffset + sup.dz : pl.position[2] + supportLift(p, s);
+    const name = p.quantity > 1 ? `${p.name} (${pl.copy + 1})` : p.name;
     out.push({
       id: pl.key,
-      name: p.quantity > 1 ? `${p.name} (${pl.copy + 1})` : p.name,
+      name,
       color: p.color,
       visible: true,
       locked: false,
       mesh: forView && p.display?.for === p.mesh ? p.display.mesh : p.mesh,
-      transform: { position: pl.position, rotation: eulerDegFromQuaternion(new Quaternion(...pl.quaternion)), scale: [1, 1, 1] },
+      transform: { position: [pl.position[0], pl.position[1], partZ], rotation: eulerDegFromQuaternion(new Quaternion(...pl.quaternion)), scale: [1, 1, 1] },
       lockRotation: p.lockRotation,
     });
+    if (sup && sup.mesh.indices.length)
+      out.push({
+        id: `${pl.key}${SUP}`,
+        name: `${name} supports`,
+        color: '#3fa7ff',
+        visible: true,
+        locked: true,
+        mesh: sup.mesh,
+        transform: { position: [pl.position[0], pl.position[1], s.zOffset], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      });
   }
   return out;
 }
@@ -870,12 +889,30 @@ function placedWorldMesh(mesh: MeshData, pl: BuildPlacement): MeshData {
   return applyMatrix(mesh, m.elements);
 }
 
+/** The copies of a build in their places (lifted onto their supports where they have them), one item per placement. */
 function buildItems(s: BuildGenState, i: number) {
   const byId = new Map(s.parts.map((p) => [p.id, p]));
   return s.builds[i].placements.flatMap((pl) => {
     const p = byId.get(pl.partId);
-    return p ? [{ name: p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name, mesh: placedWorldMesh(p.mesh, pl) }] : [];
+    if (!p) return [];
+    const e = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
+    const z = e ? s.zOffset + e.dz : pl.position[2] + supportLift(p, s);
+    const at = z !== pl.position[2] ? { ...pl, position: [pl.position[0], pl.position[1], z] as Vec3 } : pl;
+    return [{ name: p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name, mesh: placedWorldMesh(p.mesh, at) }];
   });
+}
+
+/** What is exported for a build: the copies and their supports. */
+function exportItems(s: BuildGenState, i: number) {
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  const sup = s.builds[i].placements.flatMap((pl) => {
+    const p = byId.get(pl.partId);
+    const e = p ? supportFor(p, pl.quaternion, s) : undefined;
+    if (!p || !e || !e.mesh.indices.length) return [];
+    const m = new Matrix4().makeTranslation(pl.position[0], pl.position[1], s.zOffset);
+    return [{ name: `${p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name}_sup`, mesh: applyMatrix(e.mesh, m.elements) }];
+  });
+  return [...buildItems(s, i), ...sup];
 }
 
 
@@ -895,7 +932,7 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
   if (!target) return;
   const files: Record<string, Uint8Array> = {};
   for (const i of indices) {
-    const r = await runJob(`${format === 'slc' ? 'Slicing' : 'Exporting'} ${s.builds[i].name}`, 'export', { format, items: buildItems(s, i), zip: false, options: { layer: s.slcLayer ?? 0.05 } });
+    const r = await runJob(`${format === 'slc' ? 'Slicing' : 'Exporting'} ${s.builds[i].name}`, 'export', { format, items: exportItems(s, i), zip: false, options: { layer: s.slcLayer ?? 0.05 } });
     if (!r) return;
     files[fileName(i)] = r.bytes;
   }
@@ -1375,67 +1412,38 @@ export function setChecksShowOnly(showOnly: boolean) {
 // ---------------------------------------------------------------- supports (SLA / DLP / DMLS)
 
 /**
- * Generate supports for build parts, each in the orientation it has in the
- * builds (the first copy placed), with the support settings and the
- * technology of the printer. Part and supports become one build part, its
- * orientation locked to the one the supports were made for; parts that had
- * supports get new ones from their original mesh.
+ * Give build parts supports: every copy gets its own, made for the
+ * orientation it has, standing straight up from the platform; they follow
+ * any later turn of the copy automatically.
  */
-export async function supportBuildParts(ids?: string[]) {
+export function supportBuildParts(ids?: string[]) {
   const s = bg();
-  const tech = printerById(s.printerId).tech;
-  if (tech === 'powder') return notify('warning', 'Supports are for SLA, DLP and DMLS printers');
-  const targets = s.parts.filter((p) => !p.cage && (!ids || ids.includes(p.id)));
-  if (!targets.length) return notify('warning', 'No parts to support');
-  const { skip: _skip, ...settings } = getState().settings.supports;
-  void _skip;
-  const params = { ...settings, tech: tech as 'sla' | 'dlp' | 'dmls' };
-  const job = startJob(`Supports for ${targets.length} part${targets.length > 1 ? 's' : ''}`);
-  const done = new Map<string, BuildPart>();
-  let count = 0;
-  try {
-    for (let i = 0; i < targets.length; i++) {
-      const p = targets[i];
-      job.progress(i / targets.length, `Supports: ${p.name}`);
-      const original = p.supported?.original ?? p.mesh;
-      // the orientation it is printed in: as placed in the builds (locked copies count too)
-      const placed = s.builds.flatMap((b) => b.placements).find((pl) => pl.partId === p.id);
-      const q = placed && !p.supported ? placed.quaternion : [0, 0, 0, 1];
-      const oriented = applyMatrix(original, new Matrix4().makeRotationFromQuaternion(new Quaternion(...q)).elements);
-      const r = await pool.run('supports', { mesh: oriented, params, skip: [] }).promise;
-      if (!r.count) continue;
-      count += r.count;
-      done.set(p.id, {
-        ...p,
-        mesh: recenter(mergeMeshes([r.part, r.supports])).mesh,
-        orient: undefined,
-        display: undefined,
-        tilt: null,
-        lockRotation: true,
-        supported: { original: p.supported?.original ?? oriented, lockRotation: p.supported ? p.supported.lockRotation : !!p.lockRotation, tech, count: r.count, volume: r.supportVolume },
-      });
-    }
-  } catch (e) {
-    if (!(e instanceof CancelledError)) notify('error', `Supports failed: ${(e as Error).message}`);
-    return;
-  } finally {
-    job.end();
-  }
-  if (!done.size) return notify('info', 'No overhangs that need supports at this angle');
-  commitBuild(`Supports (${tech.toUpperCase()})`, { parts: bg().parts.map((p) => done.get(p.id) ?? p) });
-  notify('success', `Supports for ${done.size} part${done.size > 1 ? 's' : ''}: ${count} ${params.style === 'volume' ? 'walls' : 'supports'}`);
-  scheduleRegenerate();
+  if (printerById(s.printerId).tech === 'powder') return notify('warning', 'Supports are for SLA, DLP and DMLS printers');
+  const set = new Set((ids ?? s.parts.map((p) => p.id)).filter((id) => s.parts.some((p) => p.id === id && !p.cage)));
+  if (!set.size) return notify('warning', 'No parts to support');
+  commitBuild('Add supports', {
+    parts: s.parts.map((p) => {
+      if (!set.has(p.id)) return p;
+      // older sessions fused the supports into the mesh: back to the plain part first
+      const plain = p.supported ? { ...p, mesh: recenter(p.supported.original).mesh, lockRotation: p.supported.lockRotation, supported: undefined, orient: undefined, display: undefined } : p;
+      return { ...plain, supportsOn: true };
+    }),
+  });
+  void updateSupports();
 }
 
-/** Take the supports off build parts again (back to the original mesh and orientation lock). */
+/** Take the supports off build parts again. */
 export function removeBuildSupports(ids?: string[]) {
   const s = bg();
-  const hit = s.parts.filter((p) => p.supported && (!ids || ids.includes(p.id)));
+  const hit = s.parts.filter((p) => (p.supportsOn || p.supported) && (!ids || ids.includes(p.id)));
   if (!hit.length) return;
   commitBuild('Remove supports', {
     parts: s.parts.map((p) =>
-      hit.includes(p) ? { ...p, mesh: recenter(p.supported!.original).mesh, lockRotation: p.supported!.lockRotation, supported: undefined, orient: undefined, display: undefined } : p,
+      !hit.includes(p)
+        ? p
+        : p.supported
+          ? { ...p, mesh: recenter(p.supported.original).mesh, lockRotation: p.supported.lockRotation, supported: undefined, supportsOn: false, orient: undefined, display: undefined }
+          : { ...p, supportsOn: false },
     ),
   });
-  scheduleRegenerate();
 }

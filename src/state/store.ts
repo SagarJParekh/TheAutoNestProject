@@ -80,6 +80,9 @@ export interface AppState {
   labelGhost: Float32Array | null;
   /** the section's contours (world segments), shown while indicating contours for a joint */
   contourLines: Float32Array | null;
+  /** bumped whenever build supports were made (so the view updates); copies still waiting for theirs */
+  supportTick: number;
+  supportPending: number;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -170,6 +173,8 @@ export const useStore = create<AppState>(() => ({
   pointPicks: {},
   labelGhost: null,
   contourLines: null,
+  supportTick: 0,
+  supportPending: 0,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },
