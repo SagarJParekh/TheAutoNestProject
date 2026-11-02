@@ -1533,6 +1533,19 @@ export function supportTouchPoints(s: BuildGenState = bg()): TouchPoint[] {
   return out;
 }
 
+/** The support of a copy that a click on its supports (world point) is on: the touch point nearest it, seen from above. */
+export function touchPointAt(key: string, world: readonly number[]): TouchPoint | null {
+  const copyKey = key.replace(SUP, '');
+  let best: TouchPoint | null = null, bd = Infinity;
+  for (const t of supportTouchPoints()) {
+    if (t.key !== copyKey) continue;
+    // a rod stands under its touch point; branches lean, so height counts a little too
+    const d = Math.hypot(t.world[0] - world[0], t.world[1] - world[1]) + Math.max(0, world[2] - t.world[2]) * 0.2;
+    if (d < bd) (bd = d), (best = t);
+  }
+  return best;
+}
+
 /** A copy, its part and how to bring world points into the part's own frame. */
 function copyFrame(key: string, s: BuildGenState) {
   const copyKey = key.replace(SUP, '');

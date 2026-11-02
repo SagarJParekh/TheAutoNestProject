@@ -40,6 +40,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
   const resin = tech !== 'dmls';
   return (
     <Section title={`Supports (${tech.toUpperCase()})`}>
+      {supported.length > 0 && <SupportHandEdits />}
       <Row label="Critical angle">
         <NumberField value={st.criticalAngle} min={0} max={89} step={1} suffix="°" title="Surfaces making less than this angle with the platform get supports" onChange={(criticalAngle) => setSup({ criticalAngle: Math.max(0, Math.min(89, criticalAngle)) })} />
       </Row>
@@ -101,6 +102,22 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
       <Check checked={st.onPart} onChange={(onPart) => setSup({ onPart })}>
         Supports may stand on the part
       </Check>
+      {!st.onPart && (
+        <>
+          <Row label="Branch angle">
+            <NumberField
+              value={st.branchAngle}
+              min={20}
+              max={80}
+              step={5}
+              suffix="°"
+              title="Overhangs above the part are still supported: their support branches sideways at this angle (from horizontal) to a neighbouring support, or to a new one put up beside the part"
+              onChange={(v) => setSup({ branchAngle: Math.max(20, Math.min(80, v)) })}
+            />
+          </Row>
+          <Hint>Where a support would land on the part, it branches sideways at this angle and joins a support beside it (or a new one on the platform).</Hint>
+        </>
+      )}
       {resin && (
         <>
           <Check checked={st.raft} onChange={(raft) => setSup({ raft })}>
@@ -133,7 +150,6 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           </button>
         </div>
       )}
-      <SupportHandEdits />
       <Hint>
         Every copy gets its own supports for the orientation it has: it is lifted by the distance from the platform and every surface facing down at less
         than the critical angle is supported straight down (perpendicular to the platform), onto the platform or onto the part below. When a copy is
@@ -163,7 +179,7 @@ function SupportHandEdits() {
   const total = mode ? supportTouchPoints(g).length : 0;
   return (
     <>
-      <div className="sub-title">Edit supports by hand</div>
+      <div className="sub-title">Edit supports by hand (or click a support in the view)</div>
       <Segmented
         value={mode ?? 'off'}
         onChange={(v) => setState({ supportEdit: v === 'off' ? null : v, supportSel: [] })}

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
-import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
+import { getState, notify, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
 import { supportLift } from '../state/buildSupports';
-import { SUP, addSupportAt, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, moveSupport, partOfKey, pickingCopies, selectBuildPart, selectTouchPoints, supportTouchPoints, type TouchPoint } from '../state/buildActions';
+import { SUP, addSupportAt, touchPointAt, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, moveSupport, partOfKey, pickingCopies, selectBuildPart, selectTouchPoints, supportTouchPoints, type TouchPoint } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
@@ -136,12 +136,18 @@ function useSupportMouse(el: () => HTMLDivElement | null, on: boolean) {
       if (e.clientX - r.left < 126 && r.bottom - e.clientY < 126) return;
       e.stopPropagation();
       e.preventDefault();
-      drag = { x: e.clientX, y: e.clientY, hit: near(e.clientX, e.clientY), mods: e.ctrlKey || e.metaKey || e.shiftKey, moved: false, div: null };
+      // on a dot, or anywhere on a support's rod / tip / branch
+      let hit = near(e.clientX, e.clientY);
+      if (!hit) {
+        const info = viewerApi.current?.viewer?.pick(e.clientX, e.clientY);
+        if (info?.partId.endsWith(SUP)) hit = touchPointAt(info.partId, info.point);
+      }
+      drag = { x: e.clientX, y: e.clientY, hit, mods: e.ctrlKey || e.metaKey || e.shiftKey, moved: false, div: null };
     };
     const move = (e: PointerEvent) => {
       const v = viewerApi.current?.viewer;
       if (!drag) {
-        if (e.target instanceof HTMLCanvasElement) e.target.style.cursor = near(e.clientX, e.clientY) ? 'move' : '';
+        if (e.target instanceof HTMLCanvasElement) e.target.style.cursor = near(e.clientX, e.clientY) ? 'move' : 'pointer';
         return;
       }
       if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
@@ -261,8 +267,19 @@ export function ViewerCanvas() {
         if (s.workspace === 'build') {
           // adding / removing supports by hand
           if (s.supportEdit) {
-            if (s.supportEdit === 'add' && info && !info.partId.endsWith(SUP)) addSupportAt(info.partId, info.point);
+            if (s.supportEdit === 'add' && info) {
+              if (info.partId.endsWith(SUP)) notify('info', 'Click on the part (not on a support) where it needs a support');
+              else addSupportAt(info.partId, info.point);
+            }
             return;
+          }
+          // a click on a support picks that one support for editing (Delete removes it, dragging its dot moves it)
+          if (info?.partId.endsWith(SUP)) {
+            const t = touchPointAt(info.partId, info.point);
+            if (t) {
+              setState({ supportEdit: 'select', supportSel: [{ key: t.key, i: t.i }] });
+              return;
+            }
           }
           // Build generation: clicks only select parts (Ctrl / Shift toggles)
           // a click on a copy's supports selects the copy

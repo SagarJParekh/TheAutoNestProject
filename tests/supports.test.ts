@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Matrix4 } from 'three';
-import { boxMesh, booleanMeshes, generateSupports, analyseOverhangs, overhangAreas, SUPPORT_PRESETS, computeBounds, isWatertight, applyMatrix } from '../src/geometry';
+import { boxMesh, booleanMeshes, generateSupports, analyseOverhangs, overhangAreas, SUPPORT_PRESETS, computeBounds, isWatertight, applyMatrix, meshVolume } from '../src/geometry';
 
 // a T: a 10 × 10 pillar 20 high under a 40 × 40 × 4 plate (the plate's underside overhangs all round)
 const tShape = () => booleanMeshes('union', boxMesh([15, 15, 0], [25, 25, 21]), [boxMesh([0, 0, 20], [40, 40, 24])]);
@@ -119,4 +119,19 @@ describe('a lifted part always stands on supports', () => {
     const b = computeBounds(r.supports.positions);
     expect(b.max[0] - b.min[0]).toBeGreaterThan(2.5);
   });
+
+  it('not standing on the part: overhangs above the part branch to supports beside it', async () => {
+    // a slab, a pillar and a wide plate above the slab: everything under the plate would land on the slab
+    const shape = await booleanMeshes('union', boxMesh([0, 0, 0], [30, 30, 4]), [boxMesh([12, 12, 4], [18, 18, 20]), boxMesh([-6, -6, 20], [36, 36, 23])]);
+    const base = { ...SUPPORT_PRESETS.sla, braces: false };
+    const on = await generateSupports(shape, base);
+    const off = await generateSupports(shape, { ...base, onPart: false });
+    // nothing dropped: as many touch points as with supports on the part
+    expect(off.contacts.length).toBe(on.contacts.length);
+    expect(isWatertight(off.supports)).toBe(true);
+    // and the supports do not run through the part (only the tips' penetration)
+    const inter = await booleanMeshes('intersect', off.part, [off.supports]);
+    expect(meshVolume(inter)).toBeLessThan(off.contacts.length * 0.05);
+  }, 60000);
 });
+

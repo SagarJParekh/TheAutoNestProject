@@ -68,6 +68,8 @@ export interface SupportParams {
   /** tip / bar: zigzag braces between neighbouring supports taller than `braceHeight` */
   braces: boolean;
   braceHeight: number;
+  /** supports not allowed to stand on the part: slope of the branch to the support beside them, degrees from horizontal */
+  branchAngle: number;
 }
 
 /** Supports changed by hand, in the frame the supports are made in (the turned part, before lifting). */
@@ -83,17 +85,17 @@ export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
-    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
-    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45,
   },
   dmls: {
     tech: 'dmls', style: 'volume', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
-    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45,
   },
 };
 
@@ -474,6 +476,100 @@ function rodBetween(M: typeof Manifold, a: Vec3, b: Vec3, r: number): Manifold {
   return M.cylinder(len, r, r, 8).rotate([0, tilt, turn]).translate(a);
 }
 
+/**
+ * Supports that would have to stand on the part (not allowed): each gets its
+ * tip and a short drop straight down, then a rod sloping down at the branch
+ * angle to the nearest free-standing support it can reach without passing
+ * through the part. Where there is none, a new support is put up beside the
+ * part (on the platform, clear of the part above it) to hang it from.
+ */
+function branchSupports(
+  M: typeof Manifold,
+  bvh: MeshBVH,
+  blocked: Column[],
+  free: Column[],
+  p: SupportParams,
+  g: Grid,
+  solids: Manifold[],
+  made: Column[],
+  feet: [number, number][],
+) {
+  const pen = p.penetration;
+  const tip = p.style === 'tip';
+  const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
+  const r = tip ? rb : p.style === 'bar' ? Math.max(0.1, p.wall / 2) : Math.max(0.3, p.wall);
+  const floor = tip && p.raft ? Math.max(0, p.raftThickness) : 0;
+  const footL = tip ? Math.max(0.6, rf - rb) : 0;
+  const slope = Math.tan((Math.max(20, Math.min(80, p.branchAngle ?? 45)) * Math.PI) / 180);
+  const lowest = floor + footL + 0.5;
+  // targets: free-standing supports (the rod between its foot and its tip), and the new ones put up here
+  type Target = { x: number; y: number; lo: number; hi: number };
+  const targets: Target[] = free
+    .filter((c) => !c.onPart)
+    .map((c) => ({ x: c.x, y: c.y, lo: lowest, hi: c.top + pen - (tip ? p.tipLength : 0) - 0.3 }));
+  const ray = new Ray();
+  const clear = (a: Vec3, b: Vec3) => {
+    const d = new Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const len = d.length();
+    ray.origin.set(a[0], a[1], a[2]);
+    ray.direction.copy(d.divideScalar(len || 1));
+    const hit = bvh.raycastFirst(ray, DoubleSide);
+    return !hit || hit.distance > len - 0.05;
+  };
+  const step = Math.min(g.su, g.sv);
+  for (const c of blocked) {
+    const top = c.top + pen;
+    const room = c.top - c.bottom;
+    if (room < 0.6) continue;
+    // the tip, then straight down a little (never as far as the part below)
+    const tipL = tip ? Math.min(p.tipLength, room * 0.35) : 0;
+    const drop = Math.min(tipL + Math.max(0.5, step * 0.5), room * 0.5);
+    const zc = top - drop;
+    let to: [number, number, number] | null = null;
+    // the nearest support it can reach at the branch angle
+    const order = targets.map((t) => ({ t, d: Math.hypot(t.x - c.x, t.y - c.y) })).sort((a, b) => a.d - b.d);
+    for (const { t, d } of order.slice(0, 12)) {
+      if (d < 1e-6) continue;
+      const tz = zc - d * slope;
+      if (tz < t.lo || tz > t.hi) continue;
+      if (clear([c.x, c.y, zc], [t.x, t.y, tz])) {
+        to = [t.x, t.y, tz];
+        break;
+      }
+    }
+    if (!to) {
+      // a new support beside the part: the nearest spot around it with nothing of the part below the joint
+      search: for (let k = 1; k <= 8; k++)
+        for (let a = 0; a < 16; a++) {
+          const d = k * step;
+          const x = c.x + d * Math.cos((a * Math.PI) / 8), y = c.y + d * Math.sin((a * Math.PI) / 8);
+          const tz = zc - d * slope;
+          if (tz < lowest) break search;
+          const below = hitsAt(bvh, x, y).filter((h) => h.point.z < tz + r + 0.3);
+          if (below.length) continue;
+          if (!clear([c.x, c.y, zc], [x, y, tz])) continue;
+          to = [x, y, tz];
+          // the new support itself: foot (and raft) on the platform, rod up to the joint
+          if (tip) {
+            solids.push(M.cylinder(footL, rf, rb, 16).translate([x, y, floor]));
+            solids.push(M.cylinder(tz - floor - footL + r, rb, rb, 16).translate([x, y, floor + footL - 0.01]));
+            feet.push([x, y]);
+          } else solids.push(M.cylinder(tz + r, r, r, 12).translate([x, y, 0]));
+          targets.push({ x, y, lo: lowest, hi: tz });
+          break search;
+        }
+    }
+    if (!to) continue;
+    // tip, drop and branch
+    if (tip) solids.push(M.cylinder(tipL, rb, rt, 16).translate([c.x, c.y, top - tipL]));
+    solids.push(M.cylinder(top - tipL - zc + 0.02, r, r, 12).translate([c.x, c.y, zc - 0.01]));
+    solids.push(M.sphere(r, 12).translate([c.x, c.y, zc]));
+    solids.push(rodBetween(M, [c.x, c.y, zc], to, r));
+    solids.push(M.sphere(r, 12).translate(to));
+    made.push({ ...c, onPart: false, gi: NaN, gj: NaN });
+  }
+}
+
 /** Support solids below the areas of the lifted part (and under the points added by hand, minus the ones removed). */
 async function buildSupports(
   mesh: MeshData,
@@ -487,7 +583,7 @@ async function buildSupports(
   const g = gridOf(p);
   const bvh = makeBVH(mesh);
   const resin = p.style !== 'volume';
-  let cols = columnsUnder(mesh, bvh, areas, g, resin ? p.perimeter : 0).filter((c) => p.onPart || !c.onPart);
+  let cols = columnsUnder(mesh, bvh, areas, g, resin ? p.perimeter : 0);
   // supports removed by hand: every one whose contact point is within the radius
   if (edits.remove.length)
     // (radius 0: the one support nearest the point, within half a grid step, so it stays removed when the grid moves with a turn)
@@ -499,8 +595,12 @@ async function buildSupports(
       if (c) cols.push(c);
     }
   });
+  // supports that would stand on the part, when that is not allowed: they branch sideways to a support beside them instead
+  const blocked = p.onPart ? [] : cols.filter((c) => c.onPart && !c.noContact);
+  if (!p.onPart) cols = cols.filter((c) => !c.onPart);
   const solids: Manifold[] = [];
   const made: Column[] = [];
+  const feet: [number, number][] = [];
   try {
     const pin = (c: Column, r: number) => {
       const top = c.top + pen, base = c.onPart ? c.bottom - pen : 0;
@@ -511,7 +611,6 @@ async function buildSupports(
     if (p.style === 'tip') {
       const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
       const floor = p.raft ? Math.max(0, p.raftThickness) : 0;
-      const feet: [number, number][] = [];
       for (const c of cols) {
         const top = c.top + pen;
         const base = c.onPart ? c.bottom - pen : floor;
@@ -527,16 +626,6 @@ async function buildSupports(
         solids.push(M.cylinder(footL, c.onPart ? rt : rf, rb, 16).translate([c.x, c.y, base]));
         if (!c.onPart) feet.push([c.x, c.y]);
         made.push(c);
-      }
-      if (p.raft && feet.length && floor > 0) {
-        // raft: the outline round all feet, the foot's radius plus the margin wider
-        // (circles round the feet, so one or two feet in a row still give a plate)
-        const R = rf + Math.max(0, p.raftMargin ?? 1);
-        const ring: [number, number][] = [];
-        for (const [x, y] of feet) for (let k = 0; k < 24; k++) ring.push([x + R * Math.cos((k * Math.PI) / 12), y + R * Math.sin((k * Math.PI) / 12)]);
-        const plate = w.CrossSection.hull([ring]);
-        solids.push(plate.extrude(floor + 0.02));
-        plate.delete();
       }
     } else if (p.style === 'bar') {
       const r = Math.max(0.1, p.wall / 2);
@@ -596,6 +685,24 @@ async function buildSupports(
             made.push(...run);
           }
         }
+      }
+    }
+    // branches: supports that may not stand on the part hang from a neighbouring support (or a new one beside the part)
+    if (blocked.length) branchSupports(M, bvh, blocked, made, p, g, solids, made, feet);
+    if (p.style === 'tip') {
+      const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
+      void rt;
+      void rb;
+      const floor = p.raft ? Math.max(0, p.raftThickness) : 0;
+      if (p.raft && feet.length && floor > 0) {
+        // raft: the outline round all feet, the foot's radius plus the margin wider
+        // (circles round the feet, so one or two feet in a row still give a plate)
+        const R = rf + Math.max(0, p.raftMargin ?? 1);
+        const ring: [number, number][] = [];
+        for (const [x, y] of feet) for (let k = 0; k < 24; k++) ring.push([x + R * Math.cos((k * Math.PI) / 12), y + R * Math.sin((k * Math.PI) / 12)]);
+        const plate = w.CrossSection.hull([ring]);
+        solids.push(plate.extrude(floor + 0.02));
+        plate.delete();
       }
     }
     // braces: zigzag rods between neighbouring free-standing supports, on tall ones
