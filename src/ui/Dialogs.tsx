@@ -91,7 +91,13 @@ export function ExportDialog() {
   const parts = useStore((s) => s.parts);
   const selCount = selection.length;
   const total = parts.length;
-  const [format, setFormat] = useState<'stl' | '3mf' | 'obj' | 'slc'>('stl');
+  const [format, setFormat] = useState<'stl' | '3mf' | 'obj' | 'slc' | 'step'>('stl');
+  // parts that came from STEP files are exported as STEP by default
+  const fromStep = parts.some((p) => /\.(step|stp)$/i.test(p.source ?? ''));
+  const [formatSet, setFormatSet] = useState(false);
+  useEffect(() => {
+    if (open && !formatSet) setFormat(fromStep ? 'step' : 'stl');
+  }, [open, fromStep, formatSet]);
   const [scope, setScope] = useState<'selected' | 'all'>('selected');
   const [output, setOutput] = useState<'one' | 'separate' | 'zip'>('one');
   const [layer, setLayer] = useState(0.05);
@@ -109,7 +115,7 @@ export function ExportDialog() {
   const outTris = Math.round(tris * ratio);
   const outVerts = Math.round(verts * ratio);
   const slc = format === 'slc';
-  const text = !slc && (format !== 'stl' || stlAscii);
+  const text = !slc && format !== 'step' && (format !== 'stl' || stlAscii);
   const dec = decimals === 'full' ? undefined : Number(decimals);
   const numLen = dec === undefined ? 11 : dec + 5;
   const size =
@@ -127,8 +133,9 @@ export function ExportDialog() {
         <Row label="Format">
           <Segmented
             value={format}
-            onChange={setFormat}
+            onChange={(f) => (setFormat(f), setFormatSet(true))}
             options={[
+              { value: 'step', label: 'STEP', title: 'CAD solid (faceted): flat areas as single faces, curved areas as facets; opens in any CAD program' },
               { value: 'stl', label: 'STL' },
               { value: '3mf', label: '3MF' },
               { value: 'obj', label: 'OBJ' },

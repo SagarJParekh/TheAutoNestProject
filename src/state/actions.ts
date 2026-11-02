@@ -986,7 +986,7 @@ function uniqueNames(names: string[], ext: string): string[] {
  * Export the selected or all parts: one file, a ZIP, or every part as its own
  * file saved straight into a folder.
  */
-export async function exportParts(format: 'stl' | '3mf' | 'obj' | 'slc', scope: 'selected' | 'all', output: 'one' | 'separate' | 'zip', opts: ExportSettings = {}) {
+export async function exportParts(format: 'stl' | '3mf' | 'obj' | 'slc' | 'step', scope: 'selected' | 'all', output: 'one' | 'separate' | 'zip', opts: ExportSettings = {}) {
   const s = getState();
   const parts = scope === 'all' ? s.parts : selectedParts();
   if (!parts.length) return notify('warning', 'Nothing to export');

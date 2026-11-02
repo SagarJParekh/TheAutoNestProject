@@ -219,3 +219,26 @@ describe('CAD import quality', () => {
     console.log('cylinder triangles by quality', counts);
   });
 });
+
+describe('STEP export', () => {
+  it('writes a faceted solid that reads back with the same volume; flat areas become single faces (holes kept)', async () => {
+    const { exportSTEP, planarFaces } = await import('../src/exporters/step');
+    const { boxMesh, booleanMeshes, getManifold, fromManifold } = await import('../src/geometry');
+    const wasm = await getManifold();
+    const c = wasm.Manifold.cylinder(30, 5, 5, 48).translate([20, 20, -5]);
+    const hole = fromManifold(c);
+    c.delete();
+    // a 40 mm plate 10 thick with a Ø10 hole through it
+    const plate = await booleanMeshes('subtract', boxMesh([0, 0, 0], [40, 40, 10]), [hole]);
+    const f = planarFaces(plate.positions, plate.indices);
+    // 6 flat sides (top and bottom with the hole as an inner loop) + 48 facets of the bore
+    expect(f.faces.length).toBe(6 + 48);
+    expect(f.faces.filter((x) => x.holes.length === 1).length).toBe(2);
+    const bytes = exportSTEP([{ name: 'plate', mesh: plate }]);
+    const text = new TextDecoder().decode(bytes);
+    expect(text.startsWith('ISO-10303-21;')).toBe(true);
+    const bodies = await importFile(ab(bytes), ctx('plate.step'));
+    const vol = bodies.reduce((s, b) => s + meshVolume(b.mesh), 0);
+    expect(vol).toBeCloseTo(meshVolume(plate), 0);
+  });
+});

@@ -1,5 +1,6 @@
 import { zipSync, strToU8 } from 'fflate';
 import type { MeshData } from '../geometry';
+import { exportSTEP } from './step';
 import { exportSLC } from './slc';
 
 export { exportSLC, sliceMesh, readSLC } from './slc';
@@ -153,7 +154,7 @@ export function export3MF(items: ExportItem[], decimals?: number): Uint8Array {
   );
 }
 
-export type ExportFormat = 'stl' | '3mf' | 'obj' | 'slc';
+export type ExportFormat = 'stl' | '3mf' | 'obj' | 'slc' | 'step';
 
 export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: ExportOptions = {}): Uint8Array {
   switch (format) {
@@ -165,6 +166,8 @@ export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: Ex
       return export3MF(items, opts.decimals);
     case 'slc':
       return exportSLC(items.map((it) => it.mesh), { layer: opts.layer ?? 0.05 });
+    case 'step':
+      return exportSTEP(items);
   }
 }
 
