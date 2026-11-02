@@ -52,6 +52,7 @@ export function useShortcuts(openFile: () => void) {
           else if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length))
             setState({ measurePending: { entities: [], points: [] } });
           else if (s.pickMode) setState({ pickMode: null });
+          else if (s.supportEdit) setState({ supportEdit: null });
           else if (s.preview) cancelPreview();
           else if (s.faceSelection) setState({ faceSelection: null });
           else setState({ selection: [] });

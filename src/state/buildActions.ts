@@ -17,7 +17,7 @@ import { nextColor } from './palette';
 import { printerById, type Printer } from './printers';
 import type { Build, BuildGenState, BuildPart, BuildPlacement, CopyLock, Part, Tilt } from './types';
 import { eulerDegFromQuaternion } from './math';
-import { supportFor, supportLift, updateSupports } from './buildSupports';
+import { supportFor, supportLift, supportParams, turnPoint, updateSupports } from './buildSupports';
 
 /** key suffix of the supports shown under a copy */
 export const SUP = '~sup';
@@ -850,6 +850,12 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
 
 // ---------------------------------------------------------------- display / export
 
+/** The height a copy is shown at: on supports the supports stand on the platform and the part sits the lift above it, whatever height the copy had. */
+function shownZ(p: BuildPart, pl: BuildPlacement, s: BuildGenState): number {
+  const sup = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
+  return sup ? s.zOffset + sup.dz : pl.position[2] + supportLift(p, s);
+}
+
 /** Parts placed in a build, as regular parts (shared meshes) for the viewer and exports. */
 export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forView = false): Part[] {
   const b = s.builds[buildIndex];
@@ -861,8 +867,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
     if (!p) continue;
     // with supports the copy stands on them, lifted; the supports go straight down to the platform
     const sup = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
-    // on supports: the supports stand on the platform and the part sits the lift above it, whatever height the copy had
-    const partZ = sup ? s.zOffset + sup.dz : pl.position[2] + supportLift(p, s);
+    const partZ = shownZ(p, pl, s);
     const name = p.quantity > 1 ? `${p.name} (${pl.copy + 1})` : p.name;
     out.push({
       id: pl.key,
@@ -1498,3 +1503,94 @@ export function removeBuildSupports(ids?: string[]) {
     ),
   });
 }
+
+// ---------------------------------------------------------------- supports by hand
+
+const noEdits = () => ({ add: [] as Vec3[], remove: [] as [number, number, number, number][], skip: [] as Vec3[] });
+
+/** Where a copy's supports touch it, in the copy's turned frame (as shown, minus its place), and its height there. */
+function contactsOf(p: BuildPart, pl: BuildPlacement, s: BuildGenState): Vec3[] {
+  const e = supportFor(p, pl.quaternion, s);
+  if (!e) return [];
+  const out: Vec3[] = [];
+  for (let i = 0; i < e.contacts.length; i += 3) out.push([e.contacts[i], e.contacts[i + 1], e.contacts[i + 2] - e.dz]);
+  return out;
+}
+
+/**
+ * A click in the build while adding / removing supports by hand: `point` and
+ * `normal` in the world, `key` the copy (or its supports) clicked.
+ *  - add: a support under the clicked point (on a surface facing down),
+ *  - delete: the support nearest the click (and those within the eraser radius),
+ *  - area: the whole overhang area clicked gets no supports.
+ * Edits are kept in the part's own frame, so every copy gets them and they
+ * follow later turns.
+ */
+export function onSupportEditPick(key: string, point: Vec3, normal: Vec3) {
+  const st = getState();
+  const mode = st.supportEdit;
+  if (!mode) return;
+  const s = bg();
+  const onSupports = key.endsWith(SUP);
+  const copyKey = key.replace(SUP, '');
+  const pl = s.builds[s.active]?.placements.find((x) => x.key === copyKey);
+  const p = pl && s.parts.find((x) => x.id === pl.partId);
+  if (!pl || !p) return;
+  if (!supportParams(s)) return notify('warning', 'Supports are for SLA, DLP and DMLS printers');
+  // the click in the copy's turned frame, then in the part's own frame
+  const z = shownZ(p, pl, s);
+  const turned: Vec3 = [point[0] - pl.position[0], point[1] - pl.position[1], point[2] - z];
+  const own = (v: Vec3) => turnPoint(v, pl.quaternion, true);
+  const ed = p.supportEdits ?? noEdits();
+  const save = (label: string, edits: typeof ed, on = p.supportsOn) =>
+    commitBuild(label, { parts: s.parts.map((x) => (x === p ? { ...x, supportEdits: edits, supportsOn: on } : x)) });
+  if (mode === 'add') {
+    if (onSupports) return notify('info', 'Click on the part where it needs a support (a surface facing down)');
+    if (normal[2] > -0.02) return notify('warning', 'Supports go under surfaces facing down: turn the view to look at the part from below and click there');
+    save('Add support', { ...ed, add: [...ed.add, own(turned)] }, true);
+    return;
+  }
+  if (!p.supportsOn) return notify('info', `${p.name} has no supports`);
+  const contacts = contactsOf(p, pl, s);
+  if (!contacts.length) return notify('info', 'The supports are still being made: try again in a moment');
+  // the support nearest the click, looking from above (a click on a rod, or on the part right above it)
+  let best = -1, bd = Infinity;
+  contacts.forEach((c, i) => {
+    const d = Math.hypot(c[0] - turned[0], c[1] - turned[1]) + (onSupports ? 0 : Math.abs(c[2] - turned[2]) * 0.5);
+    if (d < bd) (bd = d), (best = i);
+  });
+  const params = supportParams(s)!;
+  if (bd > Math.max(2, params.spacing * 1.5)) return notify('info', 'No support there: click on a support or right next to where it touches the part');
+  const c = contacts[best];
+  if (mode === 'area') {
+    save('Remove support area', { ...ed, skip: [...ed.skip, own(c)] });
+    return;
+  }
+  // one added by hand is simply taken back
+  const manual = ed.add.findIndex((a) => {
+    const t = turnPoint(a, pl.quaternion);
+    return Math.hypot(t[0] - c[0], t[1] - c[1]) < 0.3 && Math.abs(t[2] - c[2]) < 2.5;
+  });
+  const r = Math.max(0, st.supportEraser);
+  if (manual >= 0 && r === 0) {
+    save('Remove support', { ...ed, add: ed.add.filter((_, i) => i !== manual) });
+    return;
+  }
+  save(r > 0 ? 'Remove supports' : 'Remove support', { ...ed, remove: [...ed.remove, [...own(c), r] as [number, number, number, number]] });
+}
+
+/** Drop every support edit made by hand on these parts (or all): back to the generated supports. */
+export function clearSupportEdits(ids?: string[]) {
+  const s = bg();
+  const hit = s.parts.filter((p) => p.supportEdits && (!ids || ids.includes(p.id)));
+  if (!hit.length) return;
+  commitBuild('Reset supports', { parts: s.parts.map((p) => (hit.includes(p) ? { ...p, supportEdits: undefined } : p)) });
+}
+
+/** How many hand edits the parts have (added, removed, areas left out). */
+export function supportEditCounts(parts: BuildPart[]) {
+  let add = 0, remove = 0, skip = 0;
+  for (const p of parts) if (p.supportEdits) (add += p.supportEdits.add.length), (remove += p.supportEdits.remove.length), (skip += p.supportEdits.skip.length);
+  return { add, remove, skip };
+}
+

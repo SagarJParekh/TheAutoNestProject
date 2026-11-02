@@ -83,6 +83,10 @@ export interface AppState {
   /** bumped whenever build supports were made (so the view updates); copies still waiting for theirs */
   supportTick: number;
   supportPending: number;
+  /** Build generation: adding / removing supports by clicking in the view */
+  supportEdit: 'add' | 'delete' | 'area' | null;
+  /** radius round a clicked support whose neighbours go too (0: just the one), mm */
+  supportEraser: number;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -175,6 +179,8 @@ export const useStore = create<AppState>(() => ({
   contourLines: null,
   supportTick: 0,
   supportPending: 0,
+  supportEdit: null,
+  supportEraser: 0,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },

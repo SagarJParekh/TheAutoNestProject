@@ -368,6 +368,12 @@ export interface BuildPart {
   display?: { for: MeshData; tris: number; mesh: MeshData };
   /** supports (SLA / DLP / DMLS) under every copy, made for each copy's own orientation (they always stand straight up) */
   supportsOn?: boolean;
+  /**
+   * supports changed by hand, in the part's own frame (so they follow every
+   * copy and every turn): points that get a support, contact points whose
+   * supports were removed (with a radius), and points on areas left without supports
+   */
+  supportEdits?: { add: Vec3[]; remove: [number, number, number, number][]; skip: Vec3[] };
   /** older sessions: supports fused into the mesh; how to undo that */
   supported?: { original: MeshData; lockRotation: boolean; tech: string; count: number; volume: number };
 }

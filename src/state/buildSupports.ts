@@ -6,8 +6,8 @@
  * settings change, the supports are made again in the background; results
  * are cached per part, orientation and settings.
  */
-import { Matrix4, Quaternion } from 'three';
-import { applyMatrix, type MeshData, type SupportParams } from '../geometry';
+import { Matrix4, Quaternion, Vector3 } from 'three';
+import { applyMatrix, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
 import { getState, setState, useStore } from './store';
 import { printerById } from './printers';
 import { pool, CancelledError } from '../workers/client';
@@ -20,6 +20,8 @@ export interface SupportEntry {
   dz: number;
   count: number;
   volume: number;
+  /** where each support touches the part (x, y, z), same frame as the mesh */
+  contacts: Float32Array;
 }
 
 const meshIds = new WeakMap<MeshData, number>();
@@ -39,11 +41,21 @@ export function supportParams(g: BuildGenState = getState().buildGen): SupportPa
   if (tech === 'powder') return null;
   const { skip: _skip, ...st } = getState().settings.supports;
   void _skip;
-  return { ...st, tech };
+  // settings from older sessions lack the newer variables: the standard values fill them in
+  return { ...SUPPORT_PRESETS[tech], ...st, tech };
 }
 
 const qKey = (q: readonly number[]) => q.map((v) => Math.round(v * 1e4)).join(',');
-const keyOf = (p: BuildPart, q: readonly number[], params: SupportParams) => `${p.id}|${meshId(p.mesh)}|${qKey(q)}|${JSON.stringify(params)}`;
+const keyOf = (p: BuildPart, q: readonly number[], params: SupportParams) =>
+  `${p.id}|${meshId(p.mesh)}|${qKey(q)}|${JSON.stringify(params)}|${p.supportEdits ? JSON.stringify(p.supportEdits) : ''}`;
+
+/** A point of the part's own frame turned into a copy's orientation (and back with `inverse`). */
+export function turnPoint(v: readonly number[], q: readonly number[], inverse = false): Vec3 {
+  const qq = new Quaternion(q[0], q[1], q[2], q[3]);
+  if (inverse) qq.invert();
+  const r = new Vector3(v[0], v[1], v[2]).applyQuaternion(qq);
+  return [r.x, r.y, r.z];
+}
 
 /** How far a copy of this part is lifted off the platform for its supports. */
 export function supportLift(p: BuildPart, g: BuildGenState = getState().buildGen): number {
@@ -104,8 +116,14 @@ export async function updateSupports() {
         if (again) break;
         const turned = applyMatrix(part.mesh, new Matrix4().makeRotationFromQuaternion(new Quaternion(...q)).elements);
         try {
-          const r = await pool.run('supports', { mesh: turned, params, skip: [] }).promise;
-          cache.set(k, { mesh: r.supports, dz: r.dz, count: r.count, volume: r.supportVolume });
+          const ed = part.supportEdits;
+          const edits = ed && {
+            add: ed.add.map((v) => turnPoint(v, q)),
+            remove: ed.remove.map(([x, y, z, r]) => [...turnPoint([x, y, z], q), r] as [number, number, number, number]),
+          };
+          const skip = (ed?.skip ?? []).map((v) => turnPoint(v, q));
+          const r = await pool.run('supports', { mesh: turned, params, skip, edits }).promise;
+          cache.set(k, { mesh: r.supports, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts });
         } catch (e) {
           if (e instanceof CancelledError) return;
           failed.add(k);

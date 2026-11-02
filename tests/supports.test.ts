@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { boxMesh, booleanMeshes, generateSupports, analyseOverhangs, overhangAreas, SUPPORT_PRESETS, computeBounds, isWatertight } from '../src/geometry';
+import { Matrix4 } from 'three';
+import { boxMesh, booleanMeshes, generateSupports, analyseOverhangs, overhangAreas, SUPPORT_PRESETS, computeBounds, isWatertight, applyMatrix } from '../src/geometry';
 
 // a T: a 10 × 10 pillar 20 high under a 40 × 40 × 4 plate (the plate's underside overhangs all round)
 const tShape = () => booleanMeshes('union', boxMesh([15, 15, 0], [25, 25, 21]), [boxMesh([0, 0, 20], [40, 40, 24])]);
@@ -56,4 +57,53 @@ describe('a lifted part always stands on supports', () => {
     expect(b.min[2]).toBeCloseTo(0, 3);
     expect(b.max[2]).toBeGreaterThan(SUPPORT_PRESETS.sla.lift);
   });
+
+  it('variables: Y spacing, grid angle, perimeter, braces, lowest', async () => {
+    const t = await tShape();
+    const base = { ...SUPPORT_PRESETS.sla, braces: false, raft: false };
+    const a = await generateSupports(t, base);
+    // twice the spacing across: about half the supports
+    const b = await generateSupports(t, { ...base, spacingY: base.spacing * 2 });
+    expect(b.count).toBeLessThan(a.count * 0.65);
+    // a turned grid still covers the plate and stays closed
+    const turned = await generateSupports(t, { ...base, gridAngle: 30 });
+    expect(Math.abs(turned.count - a.count)).toBeLessThan(a.count * 0.25);
+    expect(isWatertight(turned.supports)).toBe(true);
+    // the plate's outline gets supports of its own
+    const per = await generateSupports(t, { ...base, perimeter: 2 });
+    expect(per.count).toBeGreaterThan(a.count + 20);
+    expect(per.contacts.length / 3).toBe(per.count);
+    // braces between the tall supports add volume, not supports
+    const br = await generateSupports(t, { ...base, braces: true, braceHeight: 5 });
+    expect(br.count).toBe(a.count);
+    expect(br.supportVolume).toBeGreaterThan(a.supportVolume * 1.1);
+    expect(isWatertight(br.supports)).toBe(true);
+    // DMLS volume walls on a turned grid
+    const vol = await generateSupports(t, { ...SUPPORT_PRESETS.dmls, gridAngle: 45, spacing: 2, spacingY: 3 });
+    expect(vol.count).toBeGreaterThan(10);
+    expect(isWatertight(vol.supports)).toBe(true);
+    // a cube standing on an edge (45°) has nothing at the critical angle: only "lowest" holds it up
+    const tilted = applyMatrix(boxMesh([-5, -5, -5], [5, 5, 5]), new Matrix4().makeRotationX(Math.PI / 4).elements);
+    expect((await generateSupports(tilted, { ...base, lowest: false })).count).toBe(0);
+    expect((await generateSupports(tilted, base)).count).toBeGreaterThan(0);
+  });
+
+  it('supports added and removed by hand; hand-made only', async () => {
+    const t = await tShape();
+    const base = { ...SUPPORT_PRESETS.sla, braces: false };
+    const a = await generateSupports(t, base);
+    // remove one support at its contact point (given before lifting), then all within 5 mm of a corner
+    const c = Array.from(a.contacts.slice(0, 3));
+    const one = await generateSupports(t, base, [], { add: [], remove: [[c[0], c[1], c[2] - a.dz, 0]] });
+    expect(one.count).toBe(a.count - 1);
+    const many = await generateSupports(t, base, [], { add: [], remove: [[2, 2, 20, 5]] });
+    expect(many.count).toBeLessThan(a.count - 3);
+    // only hand-made supports: two under the plate, one point on the top (facing up) gives none
+    const manual = await generateSupports(t, { ...base, auto: false }, [], { add: [[5, 5, 20], [35, 30, 20], [5, 5, 24]], remove: [] });
+    expect(manual.count).toBe(2);
+    const b = computeBounds(manual.supports.positions);
+    expect(b.max[2]).toBeCloseTo(manual.dz + 20 + base.penetration, 2);
+    expect(isWatertight(manual.supports)).toBe(true);
+  });
 });
+

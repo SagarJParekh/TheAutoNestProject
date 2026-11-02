@@ -3,7 +3,7 @@ import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
 import { supportLift } from '../state/buildSupports';
-import { SUP, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
+import { SUP, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, onSupportEditPick, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
@@ -137,6 +137,7 @@ export function ViewerCanvas() {
   const measuring = useStore((s) => s.tool === 'measure');
   const placing = useStore((s) => s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode);
   const building = useStore((s) => s.workspace === 'build');
+  const supportEdit = useStore((s) => (s.workspace === 'build' ? s.supportEdit : null));
 
   useEffect(() => {
     const el = ref.current!;
@@ -144,6 +145,11 @@ export function ViewerCanvas() {
       onPick(info, mods) {
         const s = getState();
         if (s.workspace === 'build') {
+          // adding / removing supports by hand
+          if (s.supportEdit) {
+            if (info) onSupportEditPick(info.partId, info.point, info.normal);
+            return;
+          }
           // Build generation: clicks only select parts (Ctrl / Shift toggles)
           // a click on a copy's supports selects the copy
           selectBuildPart(info?.partId?.replace(SUP, '') ?? null, mods.ctrl || mods.shift);
@@ -274,8 +280,18 @@ export function ViewerCanvas() {
   }, []);
 
   return (
-    <div className={`viewport ${pickMode || measuring ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''} ${placing ? 'placing' : ''}`} ref={ref}>
+    <div className={`viewport ${pickMode || measuring || supportEdit ? 'picking' : ''} ${zooming ? 'zooming' : ''} ${lassoing || drawing ? 'lassoing' : ''} ${placing ? 'placing' : ''}`} ref={ref}>
       {building && <BuildClipSlider />}
+      {supportEdit && (
+        <div className="pick-banner">
+          {supportEdit === 'add'
+            ? 'Click on a surface facing down to add a support under it (turn the view to look from below)'
+            : supportEdit === 'delete'
+              ? 'Click on a support to delete it'
+              : 'Click on a support to delete every support of its overhang area'}
+          <button onClick={() => setState({ supportEdit: null })}>Done (Esc)</button>
+        </div>
+      )}
       {lassoing && (
         <div className="pick-banner">
           Drag around the area to cut out

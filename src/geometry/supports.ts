@@ -53,6 +53,29 @@ export interface SupportParams {
   /** SLA / DLP: a raft (base plate) under the supports */
   raft: boolean;
   raftThickness: number;
+  /** grid spacing across (Y direction of the grid), mm; 0 = same as `spacing` */
+  spacingY: number;
+  /** turn of the support grid about Z, degrees */
+  gridAngle: number;
+  /** tip / bar: supports along the outline of each area, this far apart (0 = none), mm */
+  perimeter: number;
+  /** supports from the overhang analysis (off: only the supports added by hand) */
+  auto: boolean;
+  /** a lifted part also stands on its lowest surfaces where nothing overhangs */
+  lowest: boolean;
+  /** raft: how far it reaches past the outermost feet, mm */
+  raftMargin: number;
+  /** tip / bar: zigzag braces between neighbouring supports taller than `braceHeight` */
+  braces: boolean;
+  braceHeight: number;
+}
+
+/** Supports changed by hand, in the frame the supports are made in (the turned part, before lifting). */
+export interface SupportEdits {
+  /** points on the part (surface facing down) that get a support */
+  add: Vec3[];
+  /** contact points whose supports are removed, with a radius (0: just that one) */
+  remove: [number, number, number, number][];
 }
 
 /** The standard support scripts. */
@@ -60,14 +83,17 @@ export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10,
   },
   dmls: {
     tech: 'dmls', style: 'volume', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10,
   },
 };
 
@@ -91,6 +117,8 @@ export interface SupportResult {
   /** bars / tips / walls made */
   count: number;
   supportVolume: number;
+  /** where each support touches the part (x, y, z in the lifted frame), for picking supports by hand */
+  contacts: Float32Array;
 }
 
 /** Overhang areas of a mesh (already in its printing position), largest first. */
@@ -181,59 +209,183 @@ interface Column {
   top: number;
   bottom: number;
   onPart: boolean;
+  /** area index; −1 for supports added by hand */
   area: number;
+  /** grid position (along the grid's two directions) and grid index, for walls and braces; NaN off the grid */
+  u: number;
+  v: number;
+  gi: number;
+  gj: number;
+  /** added by hand */
+  manual?: boolean;
+}
+
+interface Grid {
+  su: number;
+  sv: number;
+  cos: number;
+  sin: number;
+}
+
+const gridOf = (p: Pick<SupportParams, 'spacing' | 'spacingY' | 'gridAngle'>): Grid => {
+  const a = ((p.gridAngle ?? 0) * Math.PI) / 180;
+  const su = Math.max(0.2, p.spacing);
+  return { su, sv: p.spacingY > 0 ? Math.max(0.2, p.spacingY) : su, cos: Math.cos(a), sin: Math.sin(a) };
+};
+
+/** Vertical ray through (x, y): the hits sorted from the bottom up. */
+function hitsAt(bvh: MeshBVH, x: number, y: number) {
+  const ray = new Ray(new Vector3(x, y, -1e4), new Vector3(0, 0, 1));
+  return bvh.raycast(ray, DoubleSide).sort((a, b) => a.distance - b.distance);
+}
+
+/** Normal z of a triangle (unit normal). */
+function normalZ(mesh: MeshData, t: number): number {
+  const p = mesh.positions, idx = mesh.indices;
+  const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+  const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
+  const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
+  const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  return nz / (Math.hypot(nx, ny, nz) || 1);
 }
 
 /**
- * Columns under the areas on a grid: a vertical ray at each grid point; where
- * it meets an overhang triangle from below, the column runs from the surface
- * below it (or the platform) up to that triangle.
+ * Columns under the areas on a grid (turned by the grid angle, its own
+ * spacing in each direction): a vertical ray at each grid point; where it
+ * meets an overhang triangle from below, the column runs from the surface
+ * below it (or the platform) up to that triangle. With `perimeter` > 0,
+ * columns also follow the outline of each area.
  */
-function columnsUnder(mesh: MeshData, areas: OverhangArea[], spacing: number, offset: number): Column[] {
+function columnsUnder(mesh: MeshData, bvh: MeshBVH, areas: OverhangArea[], g: Grid, perimeter: number): Column[] {
   const p = mesh.positions, idx = mesh.indices;
   const areaOf = new Int32Array(triangleCount(mesh)).fill(-1);
   areas.forEach((a, i) => a.tris.forEach((t) => (areaOf[t] = i)));
-  const bvh = makeBVH(mesh);
   const out: Column[] = [];
-  const s = Math.max(0.2, spacing);
+  const toUV = (x: number, y: number): [number, number] => [x * g.cos + y * g.sin, -x * g.sin + y * g.cos];
+  const toXY = (u: number, v: number): [number, number] => [u * g.cos - v * g.sin, u * g.sin + v * g.cos];
+  const offU = g.su / 2, offV = g.sv / 2;
   areas.forEach((ar, ai) => {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    let u0 = Infinity, v0 = Infinity, u1 = -Infinity, v1 = -Infinity;
     for (const t of ar.tris)
       for (let k = 0; k < 3; k++) {
-        const v = idx[t * 3 + k] * 3;
-        x0 = Math.min(x0, p[v]);
-        x1 = Math.max(x1, p[v]);
-        y0 = Math.min(y0, p[v + 1]);
-        y1 = Math.max(y1, p[v + 1]);
+        const vi = idx[t * 3 + k] * 3;
+        const [u, v] = toUV(p[vi], p[vi + 1]);
+        u0 = Math.min(u0, u);
+        u1 = Math.max(u1, u);
+        v0 = Math.min(v0, v);
+        v1 = Math.max(v1, v);
       }
     const found: Column[] = [];
-    const tryAt = (x: number, y: number) => {
-      const ray = new Ray(new Vector3(x, y, -1e4), new Vector3(0, 0, 1));
-      const hits = bvh.raycast(ray, DoubleSide).sort((a, b) => a.distance - b.distance);
+    /** the column at (x, y) up to this area (nearest to `nearZ` when given) */
+    const tryAt = (x: number, y: number, u: number, v: number, gi: number, gj: number, nearZ?: number) => {
+      const hits = hitsAt(bvh, x, y);
+      let best = -1;
       for (let h = 0; h < hits.length; h++) {
         const f = hits[h].faceIndex ?? -1;
         if (f < 0 || areaOf[f] !== ai) continue;
-        const below = h > 0 ? hits[h - 1].point.z : null;
-        found.push({ x, y, top: hits[h].point.z, bottom: below ?? 0, onPart: below !== null, area: ai });
-        break;
+        if (nearZ === undefined) {
+          best = h;
+          break;
+        }
+        if (best < 0 || Math.abs(hits[h].point.z - nearZ) < Math.abs(hits[best].point.z - nearZ)) best = h;
       }
+      if (best < 0) return false;
+      const below = best > 0 ? hits[best - 1].point.z : null;
+      found.push({ x, y, top: hits[best].point.z, bottom: below ?? 0, onPart: below !== null, area: ai, u, v, gi, gj });
+      return true;
     };
     // grid points over the area (offset so neighbouring areas line up)
-    for (let x = Math.ceil((x0 - offset) / s) * s + offset; x <= x1; x += s) for (let y = Math.ceil((y0 - offset) / s) * s + offset; y <= y1; y += s) tryAt(x, y);
+    for (let gi = Math.ceil((u0 - offU) / g.su); gi * g.su + offU <= u1; gi++)
+      for (let gj = Math.ceil((v0 - offV) / g.sv); gj * g.sv + offV <= v1; gj++) {
+        const u = gi * g.su + offU, v = gj * g.sv + offV;
+        const [x, y] = toXY(u, v);
+        tryAt(x, y, u, v, gi, gj);
+      }
     if (!found.length) {
       // a small area between grid points: one support at its middle
       let cx = 0, cy = 0;
       for (const t of ar.tris)
         for (let k = 0; k < 3; k++) {
-          const v = idx[t * 3 + k] * 3;
-          cx += p[v];
-          cy += p[v + 1];
+          const vi = idx[t * 3 + k] * 3;
+          cx += p[vi];
+          cy += p[vi + 1];
         }
-      tryAt(cx / (ar.tris.length * 3), cy / (ar.tris.length * 3));
+      tryAt(cx / (ar.tris.length * 3), cy / (ar.tris.length * 3), NaN, NaN, NaN, NaN);
+    }
+    if (perimeter > 0) {
+      // the outline: edges between a triangle of the area and one outside it, walked as loops
+      const inArea = new Set(ar.tris);
+      const next = new Map<number, [number, number, number]>(); // start vertex → [end vertex, triangle, ]
+      for (const t of ar.tris)
+        for (let e = 0; e < 3; e++) {
+          const a = idx[t * 3 + e], b = idx[t * 3 + ((e + 1) % 3)];
+          const o = otherSide(mesh, t, e);
+          if (o >= 0 && inArea.has(o)) continue;
+          next.set(a, [b, t, 0]);
+        }
+      const step = Math.max(0.3, perimeter);
+      const inset = Math.min(0.5, step / 4);
+      const done = new Set<number>();
+      for (const start of next.keys()) {
+        if (done.has(start)) continue;
+        let carry = step / 2;
+        let a = start;
+        while (!done.has(a) && next.has(a)) {
+          done.add(a);
+          const [b, t] = next.get(a)!;
+          const ax = p[a * 3], ay = p[a * 3 + 1], az = p[a * 3 + 2], bx = p[b * 3], by = p[b * 3 + 1], bz = p[b * 3 + 2];
+          const len = Math.hypot(bx - ax, by - ay);
+          // towards the inside: the middle of the area's triangle on this edge
+          const c = idx[t * 3] * 3, d = idx[t * 3 + 1] * 3, f = idx[t * 3 + 2] * 3;
+          const mx = (p[c] + p[d] + p[f]) / 3, my = (p[c + 1] + p[d + 1] + p[f + 1]) / 3;
+          while (carry <= len) {
+            const s = len > 0 ? carry / len : 0;
+            let x = ax + (bx - ax) * s, y = ay + (by - ay) * s;
+            const z = az + (bz - az) * s;
+            const ix = mx - x, iy = my - y, il = Math.hypot(ix, iy);
+            if (il > 1e-9) {
+              const k = Math.min(inset, il * 0.9) / il;
+              x += ix * k;
+              y += iy * k;
+            }
+            const [u, v] = toUV(x, y);
+            // keep away from the grid supports
+            if (!found.some((q) => Math.hypot(q.x - x, q.y - y) < step * 0.45)) tryAt(x, y, u, v, NaN, NaN, z);
+            carry += step;
+          }
+          carry -= len;
+          a = b;
+        }
+      }
     }
     out.push(...found);
   });
   return out;
+}
+
+/** The triangle on the other side of edge e of triangle t (−1 at an open edge). */
+let topoCache: { mesh: MeshData; topo: ReturnType<typeof buildTopology> } | null = null;
+function otherSide(mesh: MeshData, t: number, e: number): number {
+  if (topoCache?.mesh !== mesh) topoCache = { mesh, topo: buildTopology(mesh) };
+  const topo = topoCache.topo;
+  const edge = topo.halfEdgeEdge[t * 3 + e];
+  const h0 = topo.edgeHE0[edge], h1 = topo.edgeHE1[edge];
+  const o = h0 === t * 3 + e ? h1 : h0;
+  return o < 0 ? -1 : (o / 3) | 0;
+}
+
+/** A support added by hand under the point q (on a surface facing down), or null when there is none there. */
+function manualColumn(mesh: MeshData, bvh: MeshBVH, q: Vec3): Column | null {
+  const hits = hitsAt(bvh, q[0], q[1]);
+  let best = -1;
+  for (let h = 0; h < hits.length; h++) {
+    const f = hits[h].faceIndex ?? -1;
+    if (f < 0 || normalZ(mesh, f) > -0.02) continue;
+    if (best < 0 || Math.abs(hits[h].point.z - q[2]) < Math.abs(hits[best].point.z - q[2])) best = h;
+  }
+  if (best < 0 || Math.abs(hits[best].point.z - q[2]) > 2) return null;
+  const below = best > 0 ? hits[best - 1].point.z : null;
+  return { x: q[0], y: q[1], top: hits[best].point.z, bottom: below ?? 0, onPart: below !== null, area: -1, u: NaN, v: NaN, gi: NaN, gj: NaN, manual: true };
 }
 
 /**
@@ -280,14 +432,46 @@ function skippedAreas(part: MeshData, all: OverhangArea[], skip: Vec3[], dz: num
   return skipped;
 }
 
-/** Support solids below the areas of the lifted part. */
-async function buildSupports(mesh: MeshData, areas: OverhangArea[], p: SupportParams): Promise<{ mesh: MeshData; count: number; volume: number }> {
+/** A rod of radius r from a to b. */
+function rodBetween(M: typeof Manifold, a: Vec3, b: Vec3, r: number): Manifold {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const len = Math.hypot(dx, dy, dz);
+  const tilt = (Math.acos(Math.max(-1, Math.min(1, dz / (len || 1)))) * 180) / Math.PI;
+  const turn = (Math.atan2(dy, dx) * 180) / Math.PI;
+  return M.cylinder(len, r, r, 8).rotate([0, tilt, turn]).translate(a);
+}
+
+/** Support solids below the areas of the lifted part (and under the points added by hand, minus the ones removed). */
+async function buildSupports(
+  mesh: MeshData,
+  areas: OverhangArea[],
+  p: SupportParams,
+  edits: { add: Vec3[]; remove: [number, number, number, number][] } = { add: [], remove: [] },
+): Promise<{ mesh: MeshData; count: number; volume: number; contacts: Float32Array }> {
   const w = await getManifold();
   const M = w.Manifold;
   const pen = p.penetration;
-  const cols = columnsUnder(mesh, areas, p.spacing, p.spacing / 2).filter((c) => p.onPart || !c.onPart);
+  const g = gridOf(p);
+  const bvh = makeBVH(mesh);
+  const resin = p.style !== 'volume';
+  let cols = columnsUnder(mesh, bvh, areas, g, resin ? p.perimeter : 0).filter((c) => p.onPart || !c.onPart);
+  // supports removed by hand: every one whose contact point is within the radius
+  if (edits.remove.length)
+    // (radius 0: the one support nearest the point, within half a grid step, so it stays removed when the grid moves with a turn)
+    cols = cols.filter((c) => !edits.remove.some(([x, y, z, r]) => Math.hypot(c.x - x, c.y - y, c.top - z) <= (r > 0 ? r : 0.45 * Math.min(g.su, g.sv))));
+  for (const q of edits.add) {
+    const c = manualColumn(mesh, bvh, q);
+    if (c) cols.push(c);
+  }
   const solids: Manifold[] = [];
+  const made: Column[] = [];
   try {
+    const pin = (c: Column, r: number) => {
+      const top = c.top + pen, base = c.onPart ? c.bottom - pen : 0;
+      if (top - base < 0.2) return;
+      solids.push(M.cylinder(top - base, r, r, 12).translate([c.x, c.y, base]));
+      made.push(c);
+    };
     if (p.style === 'tip') {
       const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
       const floor = p.raft ? Math.max(0, p.raftThickness) : 0;
@@ -306,80 +490,111 @@ async function buildSupports(mesh: MeshData, areas: OverhangArea[], p: SupportPa
         if (rodL > 1e-3) solids.push(M.cylinder(rodL + 0.02, rb, rb, 16).translate([c.x, c.y, base + footL - 0.01]));
         solids.push(M.cylinder(footL, c.onPart ? rt : rf, rb, 16).translate([c.x, c.y, base]));
         if (!c.onPart) feet.push([c.x, c.y]);
+        made.push(c);
       }
       if (p.raft && feet.length && floor > 0) {
-        // raft: the outline round all feet, a foot's width wider
-        const hull = w.CrossSection.hull([feet.map(([x, y]) => [x, y] as [number, number])]);
-        const plate = hull.offset(rf + 1, 'Round', 2, 24);
+        // raft: the outline round all feet, the foot's radius plus the margin wider
+        // (circles round the feet, so one or two feet in a row still give a plate)
+        const R = rf + Math.max(0, p.raftMargin ?? 1);
+        const ring: [number, number][] = [];
+        for (const [x, y] of feet) for (let k = 0; k < 24; k++) ring.push([x + R * Math.cos((k * Math.PI) / 12), y + R * Math.sin((k * Math.PI) / 12)]);
+        const plate = w.CrossSection.hull([ring]);
         solids.push(plate.extrude(floor + 0.02));
-        hull.delete();
         plate.delete();
       }
     } else if (p.style === 'bar') {
       const r = Math.max(0.1, p.wall / 2);
-      for (const c of cols) {
-        const top = c.top + pen, base = c.onPart ? c.bottom - pen : 0;
-        if (top - base < 0.2) continue;
-        solids.push(M.cylinder(top - base, r, r, 12).translate([c.x, c.y, base]));
-      }
+      for (const c of cols) pin(c, r);
     } else {
-      // volume: thin walls along the grid lines in X and in Y, following the surface above and below
+      // volume: thin walls along the grid lines in both directions, following the surface above and below
       const t = Math.max(0.05, p.wall);
-      const key = (v: number) => Math.round(v * 1000);
+      const grid = cols.filter((c) => !c.manual && Number.isFinite(c.gi));
+      // supports off the grid (a small area's single support, the ones added by hand) are pins
+      for (const c of cols) if (!grid.includes(c)) pin(c, Math.max(0.3, Math.min(g.su, g.sv) / 4, t));
       for (const dir of [0, 1] as const) {
-        // lines: columns grouped by their y (for X lines) or x (for Y lines), per area
+        // lines: columns with the same gj (lines along u) or gi (lines along v), per area
         const lines = new Map<string, Column[]>();
-        for (const c of cols) {
-          const k = `${c.area}:${key(dir === 0 ? c.y : c.x)}`;
+        for (const c of grid) {
+          const k = `${c.area}:${dir === 0 ? c.gj : c.gi}`;
           const l = lines.get(k);
           if (l) l.push(c);
           else lines.set(k, [c]);
         }
+        const along = (c: Column) => (dir === 0 ? c.u : c.v);
+        const index = (c: Column) => (dir === 0 ? c.gi : c.gj);
+        const s = dir === 0 ? g.su : g.sv;
         for (const line of lines.values()) {
-          line.sort((a, b) => (dir === 0 ? a.x - b.x : a.y - b.y));
+          line.sort((a, b) => index(a) - index(b));
           // runs of neighbouring columns whose tops are close (one surface)
           const runs: Column[][] = [];
           for (const c of line) {
             const r = runs[runs.length - 1];
             const last = r?.[r.length - 1];
-            const step = last ? (dir === 0 ? c.x - last.x : c.y - last.y) : Infinity;
-            if (last && step < p.spacing * 1.5 && Math.abs(c.top - last.top) < p.spacing * 3 && last.onPart === c.onPart) r.push(c);
+            if (last && index(c) - index(last) === 1 && Math.abs(c.top - last.top) < s * 3 && last.onPart === c.onPart) r.push(c);
             else runs.push([c]);
           }
           for (const run of runs) {
-            const u = (c: Column) => (dir === 0 ? c.x : c.y);
-            const half = Math.min(p.spacing / 2, 0.5);
+            const half = Math.min(s / 2, 0.5);
             // wall outline in (along, z): bottoms left to right, tops right to left
             const pts: [number, number][] = [];
             const first = run[0], last = run[run.length - 1];
-            const ends = run.length === 1 ? [{ ...first, u: u(first) - half }, { ...first, u: u(first) + half }] : run.map((c) => ({ ...c, u: u(c) }));
+            const ends = run.length === 1 ? [{ ...first, a: along(first) - half }, { ...first, a: along(first) + half }] : run.map((c) => ({ ...c, a: along(c) }));
             if (run.length > 1) {
-              ends[0] = { ...ends[0], u: u(first) - half / 2 };
-              ends[ends.length - 1] = { ...ends[ends.length - 1], u: u(last) + half / 2 };
+              ends[0] = { ...ends[0], a: along(first) - half / 2 };
+              ends[ends.length - 1] = { ...ends[ends.length - 1], a: along(last) + half / 2 };
             }
-            for (const c of ends) pts.push([c.u, c.onPart ? c.bottom - pen : 0]);
-            for (let i = ends.length - 1; i >= 0; i--) pts.push([ends[i].u, Math.max(ends[i].top + pen, pts[i][1] + 0.2)]);
+            for (const c of ends) pts.push([c.a, c.onPart ? c.bottom - pen : 0]);
+            for (let i = ends.length - 1; i >= 0; i--) pts.push([ends[i].a, Math.max(ends[i].top + pen, pts[i][1] + 0.2)]);
             const cs = new w.CrossSection([pts], 'Positive');
             if (cs.isEmpty()) {
               cs.delete();
               continue;
             }
-            // extruded along local z, then turned so local y is world Z and the thickness lies across the line
-            let s = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
-            if (dir === 0) s = s.translate([0, first.y, 0]);
-            else s = s.rotate([0, 0, 90]).translate([first.x, 0, 0]);
+            // extruded along local z, then turned so local y is world Z and the thickness lies across the line, then into the grid's direction
+            let sol = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
+            if (dir === 0) sol = sol.translate([0, first.v, 0]);
+            else sol = sol.rotate([0, 0, 90]).translate([first.u, 0, 0]);
+            if (g.sin !== 0) sol = sol.rotate([0, 0, (Math.atan2(g.sin, g.cos) * 180) / Math.PI]);
             cs.delete();
-            solids.push(s);
+            solids.push(sol);
+            made.push(...run);
           }
         }
       }
     }
-    if (!solids.length) return { mesh: { positions: new Float32Array(0), indices: new Uint32Array(0) }, count: 0, volume: 0 };
+    // braces: zigzag rods between neighbouring free-standing supports, on tall ones
+    if (resin && p.braces) {
+      const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
+      const r = p.style === 'tip' ? Math.max(0.2, rb * 0.6) : Math.max(0.15, (p.wall / 2) * 0.8);
+      const floor = p.style === 'tip' && p.raft ? Math.max(0, p.raftThickness) : 0;
+      const low = floor + (p.style === 'tip' ? Math.max(0.6, rf - rb) + 0.3 : 0.5);
+      const at = new Map<string, Column>();
+      for (const c of made) if (!c.onPart && Number.isFinite(c.gi)) at.set(`${c.area}:${c.gi}:${c.gj}`, c);
+      for (const a of at.values()) {
+        if (a.top - floor < p.braceHeight) continue;
+        for (const [di, dj] of [[1, 0], [0, 1]]) {
+          const b = at.get(`${a.area}:${a.gi + di}:${a.gj + dj}`);
+          if (!b || b.top - floor < p.braceHeight) continue;
+          const dist = Math.hypot(b.x - a.x, b.y - a.y);
+          const hi = Math.min(a.top, b.top) + pen - (p.style === 'tip' ? p.tipLength : 0) - 0.5;
+          let z = low, from = a, to = b;
+          while (z + dist <= hi) {
+            solids.push(rodBetween(M, [from.x, from.y, z], [to.x, to.y, z + dist], r));
+            z += dist;
+            [from, to] = [to, from];
+          }
+        }
+      }
+    }
+    const contacts = new Float32Array(made.length * 3);
+    made.forEach((c, i) => contacts.set([c.x, c.y, c.top], i * 3));
+    if (!solids.length) return { mesh: { positions: new Float32Array(0), indices: new Uint32Array(0) }, count: 0, volume: 0, contacts };
     const all = M.union(solids);
     const volume = all.volume();
     const mesh2 = fromManifold(all);
     all.delete();
-    return { mesh: mesh2, count: p.style === 'volume' ? solids.length : cols.length, volume };
+    const walls = p.style === 'volume' ? solids.length : new Set(made).size;
+    return { mesh: mesh2, count: walls, volume, contacts };
   } finally {
     solids.forEach((s) => s.delete());
   }
@@ -388,16 +603,22 @@ async function buildSupports(mesh: MeshData, areas: OverhangArea[], p: SupportPa
 /**
  * Lift the part, find its overhang areas and build supports under them.
  * `skip`: points (in the part's current position) on areas the user left out.
+ * `edits`: supports added / removed by hand (in the part's current position).
  */
-export async function generateSupports(input: MeshData, p: SupportParams, skip: Vec3[] = []): Promise<SupportResult> {
+export async function generateSupports(input: MeshData, p: SupportParams, skip: Vec3[] = [], edits?: SupportEdits): Promise<SupportResult> {
   const b = computeBounds(input.positions);
   const lift = Math.max(0, p.lift);
   const dz = lift - b.min[2];
   const part = { positions: input.positions.map((v, i) => (i % 3 === 2 ? v + dz : v)), indices: input.indices };
-  const all = withLowest(part, overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0), lift, p.spacing);
+  const found = p.auto === false ? [] : overhangAreas(part, p.criticalAngle, p.minArea, lift > 0 ? -Infinity : 0);
+  const all = p.auto === false || p.lowest === false ? found : withLowest(part, found, lift, p.spacing);
   const skipped = skippedAreas(part, all, skip, dz);
   const areas = all.filter((_, i) => !skipped.has(i));
-  const s = await buildSupports(part, areas, p);
+  const up = (q: Vec3): Vec3 => [q[0], q[1], q[2] + dz];
+  const s = await buildSupports(part, areas, p, {
+    add: (edits?.add ?? []).map(up),
+    remove: (edits?.remove ?? []).map(([x, y, z, r]) => [x, y, z + dz, r] as [number, number, number, number]),
+  });
   return {
     part,
     dz,
@@ -407,6 +628,7 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
     supports: s.mesh,
     count: s.count,
     supportVolume: s.volume,
+    contacts: s.contacts,
   };
 }
 
