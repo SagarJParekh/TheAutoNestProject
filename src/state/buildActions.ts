@@ -194,6 +194,8 @@ export function updateBuildSettings(patch: Partial<BuildGenState>) {
       if (before.zOffset === from && patch.zOffset === undefined) patch = { ...patch, zOffset: to };
     }
   }
+  // a new tilt for all parts shows at once in builds that are kept as they are
+  if (patch.tilt) patch = { ...patch, builds: retilted(before, before.parts, patch.tilt) };
   commitBuild('Build settings', patch);
   // switching automatic nesting off changes nothing to arrange
   if (Object.keys(patch).length === 1 && patch.autoNest === false) return;
@@ -376,7 +378,9 @@ function previewBuilds(copies: { part: BuildPart; copy: number }[], s: BuildGenS
   const boxOf = new Map<string, { min: Vector3; max: Vector3 }>();
   for (const { part } of copies) {
     if (qOf.has(part.id)) continue;
-    const q = s.autoOrient && !part.lockRotation && part.orient?.mesh === part.mesh && (part.orient.rule ?? 'flat') === rule ? new Quaternion(...part.orient.q) : new Quaternion();
+    const base = s.autoOrient && !part.lockRotation && part.orient?.mesh === part.mesh && (part.orient.rule ?? 'flat') === rule ? new Quaternion(...part.orient.q) : new Quaternion();
+    // the tilt shows already before nesting (locked orientations are kept as they are)
+    const q = part.lockRotation ? base : tiltQuaternion(part.tilt ?? s.tilt).multiply(base);
     qOf.set(part.id, q);
     boxOf.set(part.id, rotatedBounds(part.mesh, q));
   }
@@ -1028,13 +1032,60 @@ export function showAllBuildParts() {
 
 /** Give several parts their own tilt (null = follow the tilt for all parts again). */
 export function setTiltFor(ids: string[], tilt: Tilt | null) {
-  const lockedIds = new Set(bg().parts.filter((p) => p.lockRotation).map((p) => p.id));
-  if (tilt && ids.some((id) => lockedIds.has(id))) notify('info', 'Parts with a locked orientation are not tilted');
+  const s = bg();
+  const lockedIds = new Set(s.parts.filter((p) => p.lockRotation).map((p) => p.id));
+  if (tilt && ids.some((id) => lockedIds.has(id))) notify('info', 'Parts with a locked orientation are not tilted (unlock their orientation first)');
   ids = ids.filter((id) => !lockedIds.has(id));
   if (!ids.length) return;
   const set = new Set(ids);
-  commitBuild('Tilt', { parts: bg().parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p)) });
+  const parts = s.parts.map((p) => (set.has(p.id) ? { ...p, tilt } : p));
+  commitBuild('Tilt', { parts, builds: retilted(s, parts) });
   scheduleRegenerate();
+}
+
+/**
+ * Nested builds that are kept as they are (nesting on request, or edited by
+ * hand) still show a new tilt at once: each copy whose tilt changed is turned
+ * by the difference, stays where it is in X / Y and stands on the platform
+ * again. Start nesting repacks them.
+ */
+function retilted(before: BuildGenState, parts: BuildPart[], globalTilt: Tilt = before.tilt): Build[] {
+  if (before.autoNest && !before.manual) return before.builds;
+  const old = new Map(before.parts.map((p) => [p.id, p]));
+  const change = new Map<string, { from: Quaternion; to: Quaternion; base: Quaternion }>();
+  const rule = orientRule(before);
+  for (const p of parts) {
+    const o = old.get(p.id);
+    if (!o || p.lockRotation || p.group) continue;
+    const from = o.tilt ?? before.tilt, to = p.tilt ?? globalTilt;
+    if (from.angle === to.angle && from.azimuth === to.azimuth && (from.turn ?? 0) === (to.turn ?? 0)) continue;
+    const base = before.autoOrient && p.orient?.mesh === p.mesh && (p.orient.rule ?? 'flat') === rule ? new Quaternion(...p.orient.q) : new Quaternion();
+    change.set(p.id, { from: tiltQuaternion(from), to: tiltQuaternion(to), base });
+  }
+  if (!change.size) return before.builds;
+  // a nested copy is turned as  Rz(k·90°) · tilt · base: find its k, then swap the tilt under that turn
+  const quarter = [0, 1, 2, 3].map((k) => new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (k * Math.PI) / 2));
+  const retilt = (q: Quaternion, c: { from: Quaternion; to: Quaternion; base: Quaternion }) => {
+    let best = quarter[0], bd = Infinity;
+    for (const rz of quarter) {
+      const rest = c.from.clone().invert().multiply(rz.clone().invert()).multiply(q);
+      const d = rest.angleTo(c.base);
+      if (d < bd) (bd = d), (best = rz);
+    }
+    return best.clone().multiply(c.to).multiply(c.from.clone().invert()).multiply(best.clone().invert()).multiply(q);
+  };
+  const meshOf = new Map(parts.map((p) => [p.id, p.mesh]));
+  const locks = before.locks ?? {};
+  return before.builds.map((b) => ({
+    ...b,
+    placements: b.placements.map((pl) => {
+      const c = change.get(pl.partId);
+      if (!c || locks[pl.key]?.r.some(Boolean)) return pl;
+      const q = retilt(new Quaternion(...pl.quaternion), c);
+      const bb = rotatedBounds(meshOf.get(pl.partId)!, q);
+      return { ...pl, quaternion: [q.x, q.y, q.z, q.w] as Quat, position: [pl.position[0], pl.position[1], before.zOffset - bb.min.z] as Vec3 };
+    }),
+  }));
 }
 
 /** Lock or unlock the orientation of build parts. */

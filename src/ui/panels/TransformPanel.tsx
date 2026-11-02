@@ -155,6 +155,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           >
             Lock orientation{parts.length > 1 ? ` (${parts.length} parts)` : ''}
           </Check>
+          <LockAllButton />
           {parts.some((p) => p.lockRotation) && (
             <Hint>Locked parts keep their rotation here and in Build generation: they can only be moved in X, Y and Z.</Hint>
           )}
@@ -294,4 +295,16 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
 function arrangeHint(axes: ('x' | 'y')[]): string {
   if (axes.length === 1) return `One line of parts along ${axes[0].toUpperCase()}, spaced by the gap.`;
   return 'Parts spread over X and Y together in a compact, roughly square grid, spaced by the gap. No bed or grid size is used.';
+}
+
+/** Lock (or unlock) the orientation of every part in Mesh prep at once. */
+function LockAllButton() {
+  const all = useStore((s) => s.parts);
+  if (!all.length) return null;
+  const locked = all.every((p) => p.lockRotation);
+  return (
+    <button className={`btn wide ${locked ? 'primary' : ''}`} onClick={() => setRotationLock(all.map((p) => p.id), !locked)} title="Every part in Mesh prep, selected or not">
+      {Icon.rotLock} {locked ? `Unlock all orientations (${all.length} parts)` : `Lock all orientations (${all.length} parts)`}
+    </button>
+  );
 }
