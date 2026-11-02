@@ -507,7 +507,6 @@ export class Viewer {
     this.syncDimensions(s);
     this.syncMarkers(s);
     this.syncContourPick(s);
-    this.syncOverhangs(s);
     this.updateGridSize(s);
     this.requestRender();
   }
@@ -2371,30 +2370,6 @@ export class Viewer {
   private markerGroup = new Group();
 
   /** Red markers (e.g. where parts collide), always on top. */
-  private overhangGroup = new Group();
-  private overhangKey: unknown = null;
-
-  /** Overhang areas from the support analysis, in red over the part (Supports tool only). */
-  private syncOverhangs(s: AppState) {
-    const v = s.tool === 'supports' && !s.preview ? s.overhangView : null;
-    if (v === this.overhangKey) return;
-    this.overhangKey = v;
-    if (!this.overhangGroup.parent) this.scene.add(this.overhangGroup);
-    disposeChildren(this.overhangGroup);
-    this.overhangGroup.clear();
-    if (v && v.mesh.indices.length) {
-      const g = new BufferGeometry();
-      g.setAttribute('position', new BufferAttribute(v.mesh.positions, 3));
-      g.setIndex(new BufferAttribute(v.mesh.indices, 1));
-      g.computeVertexNormals();
-      const m = new Mesh(g, new MeshBasicMaterial({ color: 0xff3b4e, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
-      m.raycast = () => {};
-      m.renderOrder = 5;
-      this.overhangGroup.add(m);
-    }
-    this.requestRender();
-  }
-
   private contourGroup = new Group();
   private contourKey: unknown[] = [];
 

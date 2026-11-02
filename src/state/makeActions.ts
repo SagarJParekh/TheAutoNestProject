@@ -10,7 +10,7 @@ import type { Vec3 } from '../geometry';
 import { SHAPES } from '../geometry/shapes';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { applyMatrix } from '../geometry/transform';
-import { commit, getState, notify, selectedParts, setState, updateParts } from './store';
+import { commit, getState, notify, selectedParts, updateParts } from './store';
 import type { Part, Transform } from './types';
 import { eulerDegFromQuaternion, quaternionOf, worldBounds, worldMesh } from './math';
 import { partFromWorld, replaceWithWorldMeshes, runJob, setPreview } from './actions';
@@ -233,92 +233,4 @@ export async function previewMoulds() {
       commit(`VC mould${made.length > 1 ? 's' : ''}`, [...s.parts.filter((p) => !gone.has(p.id)).map((p) => placed.get(p.id) ?? p), ...created], { selection: created.map((c) => c.id) });
     },
   });
-}
-
-// ---------------------------------------------------------------- supports (SLA / DLP / DMLS)
-
-const supportPart = () => selectedParts().find((p) => !p.locked);
-
-/** Find the overhang areas of the selected part and show them in red. */
-export async function analyseSupports() {
-  const part = supportPart();
-  if (!part) return notify('warning', 'Select an unlocked part');
-  const { skip, ...params } = getState().settings.supports;
-  const r = await runJob('Analysing overhangs', 'supportAnalysis', { mesh: worldMesh(part), params, skip });
-  if (!r) return;
-  setState({ overhangView: { partId: part.id, mesh: r.overhangs, areas: r.areas, area: r.area, skipped: r.skipped } });
-}
-
-/** Generate the supports (preview): the part lifted, its overhangs in red, the supports in blue. */
-export async function previewSupports() {
-  const part = supportPart();
-  if (!part) return notify('warning', 'Select an unlocked part');
-  const { skip, ...params } = getState().settings.supports;
-  const r = await runJob('Generating supports', 'supports', { mesh: worldMesh(part), params, skip });
-  if (!r) return;
-  setState({ overhangView: null });
-  if (!r.count) return notify('info', r.areas ? 'The overhang areas could not be reached from below: no supports made' : 'No overhangs that need supports at this angle');
-  const supName = withSuffix(part.name, 'sup');
-  const kind = params.style === 'volume' ? 'volume (wall) supports' : params.style === 'bar' ? 'bar supports' : 'tip supports';
-  setPreview({
-    tool: 'supports',
-    label: `Supports (${params.tech.toUpperCase()})`,
-    replaces: [part.id],
-    meshes: [
-      { name: part.name, mesh: r.part, color: part.color },
-      { name: 'Overhangs', mesh: r.overhangs, color: '#ff3b4e' },
-      { name: supName, mesh: r.supports, color: '#3fa7ff' },
-    ],
-    summary: [
-      `${params.tech.toUpperCase()}: ${kind}`,
-      `Overhang areas: ${r.areas}${r.skipped ? ` (${r.skipped} left out)` : ''} · critical angle ${params.criticalAngle}°`,
-      `${params.style === 'volume' ? 'Walls' : params.style === 'bar' ? 'Bars' : 'Supports'}: ${r.count} · ${(r.supportVolume / 1000).toFixed(2)} cm³`,
-      `Part lifted to ${params.lift} mm above the platform (moved ${r.dz >= 0 ? '+' : ''}${r.dz.toFixed(2)} mm in Z)`,
-      `${supName}: ${(r.supports.indices.length / 3).toLocaleString()} triangles`,
-    ],
-    apply: () =>
-      replaceWithWorldMeshes(`Supports for ${part.name}`, part.id, [
-        { name: part.name, mesh: r.part, color: part.color },
-        { name: supName, mesh: r.supports, color: '#3fa7ff' },
-      ]),
-  });
-}
-
-/** Click overhang areas to leave them without supports (click again to bring them back). */
-export function startOverhangPick() {
-  const s = getState();
-  setState({ pickMode: s.pickMode === 'overhang' ? null : 'overhang', preview: null });
-  if (!s.overhangView) void analyseSupports();
-}
-
-export function onOverhangPick(point: Vec3) {
-  const s = getState();
-  const st = s.settings.supports;
-  const near = st.skip.findIndex((q) => Math.hypot(q[0] - point[0], q[1] - point[1], q[2] - point[2]) < 3);
-  const skip = near >= 0 ? st.skip.filter((_, i) => i !== near) : [...st.skip, point];
-  setState({ settings: { ...s.settings, supports: { ...st, skip } }, preview: null });
-  void analyseSupports();
-}
-
-export function clearOverhangSkips() {
-  const s = getState();
-  setState({ settings: { ...s.settings, supports: { ...s.settings.supports, skip: [] } }, preview: null });
-  if (s.overhangView) void analyseSupports();
-}
-
-/**
- * Open the Supports tool from Build generation: back to Mesh prep with the
- * parts of the build selected and the standard script of the printer's technology.
- */
-export async function openSupportsFor(tech: 'sla' | 'dlp' | 'dmls') {
-  const { setWorkspace } = await import('./buildActions');
-  const { setTool } = await import('./actions');
-  const { SUPPORT_PRESETS } = await import('../geometry/supports');
-  const s = getState();
-  const from = new Set(s.buildGen.parts.map((p) => p.fromPrep).filter(Boolean) as string[]);
-  setWorkspace('prep');
-  const ids = s.parts.filter((p) => from.has(p.id)).map((p) => p.id);
-  setState({ selection: ids.length ? ids : s.parts.slice(0, 1).map((p) => p.id) });
-  setTool('supports');
-  setState((st) => ({ settings: { ...st.settings, supports: { ...SUPPORT_PRESETS[tech], skip: [] } } }));
 }

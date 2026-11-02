@@ -5,7 +5,7 @@ import { Icon } from '../icons';
 import { SnapControls } from '../SnapControls';
 import { getState, setState, useStore } from '../../state/store';
 import { importFiles } from '../../state/actions';
-import { openSupportsFor } from '../../state/makeActions';
+import { BuildSupports } from '../panels/SupportPanel';
 import { acceptSavedSession } from '../../state/buildSession';
 import {
   addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
@@ -705,14 +705,7 @@ export function BuildsPanel() {
         )}
       </header>
       <div className="panel-scroll">
-        {currentPrinter(g).tech !== 'powder' && (
-          <Section title="Supports">
-            <button className="btn wide" onClick={() => void openSupportsFor(currentPrinter(g).tech as 'sla' | 'dlp' | 'dmls')}>
-              Generate supports ({currentPrinter(g).tech.toUpperCase()})…
-            </button>
-            <Hint>Opens the Supports tool in Mesh prep with these parts selected and the standard {currentPrinter(g).tech.toUpperCase()} script; send them back here afterwards.</Hint>
-          </Section>
-        )}
+        {currentPrinter(g).tech !== 'powder' && <BuildSupports tech={currentPrinter(g).tech as 'sla' | 'dlp' | 'dmls'} />}
         <Section title={`${g.builds.length} build${g.builds.length === 1 ? '' : 's'} · ${total} part${total === 1 ? '' : 's'}`}>
           <ul className="build-list">
             {g.builds.map((b, i) => (
@@ -874,6 +867,11 @@ export function BuildsPanel() {
                   {p.watertight === false && (
                     <span className="badge bad" title="Not watertight: repair it in Mesh prep">
                       !
+                    </span>
+                  )}
+                  {p.supported && (
+                    <span className="badge" title={`${p.supported.count} supports (${p.supported.tech.toUpperCase()}), ${(p.supported.volume / 1000).toFixed(2)} cm³; orientation locked to them`}>
+                      sup
                     </span>
                   )}
                   {p.breakaway && (

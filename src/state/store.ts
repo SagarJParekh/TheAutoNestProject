@@ -80,8 +80,6 @@ export interface AppState {
   labelGhost: Float32Array | null;
   /** the section's contours (world segments), shown while indicating contours for a joint */
   contourLines: Float32Array | null;
-  /** overhang areas found by the support analysis (world mesh), drawn in red */
-  overhangView: { partId: string; mesh: MeshData; areas: number; area: number; skipped: number } | null;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -172,7 +170,6 @@ export const useStore = create<AppState>(() => ({
   pointPicks: {},
   labelGhost: null,
   contourLines: null,
-  overhangView: null,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },

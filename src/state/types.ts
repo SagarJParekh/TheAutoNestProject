@@ -37,7 +37,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc' | 'supports';
+  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -164,7 +164,7 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge' | 'contour' | 'overhang';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge' | 'contour';
 
 /** How a click / drag marks triangles in Repair → Edit. */
 export type MarkTool = 'triangle' | 'plane' | 'surface' | 'shell' | 'brush' | 'window';
@@ -366,6 +366,8 @@ export interface BuildPart {
   cage?: { options: import('../geometry').CageOptions; contents: BuildPart[] };
   /** lighter copy for the view when a build would show very many triangles (never used for nesting or export) */
   display?: { for: MeshData; tris: number; mesh: MeshData };
+  /** supports generated for it (SLA / DLP / DMLS): the mesh holds part + supports; how to undo that */
+  supported?: { original: MeshData; lockRotation: boolean; tech: string; count: number; volume: number };
 }
 
 /** A copy fixed by the user: locked translation / rotation axes and where it was when locked (or last edited). */

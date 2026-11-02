@@ -28,7 +28,6 @@ const TOOLS: { id: ToolId; label: string; short?: string; icon: ReactNode; key: 
   { id: 'blend', label: 'Fillet & Chamfer', short: 'Fillet', icon: Icon.fillet, key: 'palette: fillet' },
   { id: 'wrap', label: 'Shrinkwrap', icon: Icon.wrap, key: 'palette: wrap' },
   { id: 'vc', label: 'VC Module', icon: Icon.mould, key: 'palette: vc' },
-  { id: 'supports', label: 'Supports', icon: Icon.supports, key: 'palette: supports' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
   { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
   { id: 'report', label: 'Report', icon: Icon.report, key: 'N' },
