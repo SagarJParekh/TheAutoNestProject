@@ -8,6 +8,7 @@ import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
 import { pickFaceFor } from '../state/repairActions';
 import { onPointPick } from '../state/featureActions';
+import { onOverhangPick } from '../state/makeActions';
 import { onMeasurePick, setMeasureLabel } from '../state/measureActions';
 import { onSharpEdgePick } from '../state/modifyActions';
 import { onBridgeEdgePick, onBrush, onLassoDone, onPolylineDone, onTrianglePick, onVertexPick, onWindowMark } from '../state/editActions';
@@ -181,6 +182,10 @@ export function ViewerCanvas() {
           if (info) onMeasurePick(info);
           return;
         }
+        if (s.pickMode === 'overhang') {
+          if (info) onOverhangPick(info.point);
+          return;
+        }
         if (s.pickMode === 'contour') {
           if (info) onContourPick(info.point);
           return;
@@ -295,6 +300,7 @@ export function ViewerCanvas() {
           {pickMode === 'face' && <FaceBanner />}
           {pickMode === 'drain' && 'Click on the surface to place a drain hole'}
           {pickMode === 'contour' && <ContourBanner />}
+          {pickMode === 'overhang' && 'Click red overhang areas to leave them without supports (click again to bring them back)'}
           {pickMode === 'point' && <PointBanner />}
           {pickMode === 'triangle' && 'Click to mark triangles · click a marked one (or Ctrl-click) to unmark'}
           {pickMode === 'brush' && 'Drag over the surface to mark · Ctrl-drag to unmark · right-drag to rotate the view'}

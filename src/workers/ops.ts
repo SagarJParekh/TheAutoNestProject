@@ -415,6 +415,17 @@ export const ops = {
     return { result: r, transfer: [r.buffer] };
   },
 
+  async supportAnalysis(args: { mesh: MeshData; params: G.SupportParams; skip: Vec3[] }): Promise<Result<ReturnType<typeof G.analyseOverhangs>>> {
+    const r = G.analyseOverhangs(args.mesh, args.params, args.skip);
+    return { result: r, transfer: meshBuffers(r.overhangs) };
+  },
+
+  async supports(args: { mesh: MeshData; params: G.SupportParams; skip: Vec3[] }, progress: Progress): Promise<Result<G.SupportResult>> {
+    progress(0.2, 'Finding overhangs and building supports');
+    const r = await G.generateSupports(args.mesh, args.params, args.skip);
+    return { result: r, transfer: [...meshBuffers(r.part), ...meshBuffers(r.overhangs), ...meshBuffers(r.supports)] };
+  },
+
   async jointCut(args: { mesh: MeshData; plane: Plane; params: G.JointParams }, progress: Progress): Promise<Result<G.JointResult>> {
     progress(0.2, 'Building the joint');
     const r = await G.jointSplit(args.mesh, args.plane, args.params);

@@ -7,6 +7,7 @@ import type {
 import type { ErrorGroup, MeshData, ThicknessResult } from '../geometry';
 import { DEFAULT_JOINT } from '../geometry/joint';
 import { DEFAULT_POLYCUT } from '../geometry/polycut';
+import { SUPPORT_PRESETS } from '../geometry/supports';
 import { DEFAULT_SHAPE } from '../geometry/shapes';
 import { DEFAULT_LATTICE } from '../geometry/lattice';
 import { DEFAULT_WRAP } from '../geometry/wrap';
@@ -79,6 +80,8 @@ export interface AppState {
   labelGhost: Float32Array | null;
   /** the section's contours (world segments), shown while indicating contours for a joint */
   contourLines: Float32Array | null;
+  /** overhang areas found by the support analysis (world mesh), drawn in red */
+  overhangView: { partId: string; mesh: MeshData; areas: number; area: number; skipped: number } | null;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -169,6 +172,7 @@ export const useStore = create<AppState>(() => ({
   pointPicks: {},
   labelGhost: null,
   contourLines: null,
+  overhangView: null,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },
@@ -238,6 +242,7 @@ export const useStore = create<AppState>(() => ({
     polyCut: { ...DEFAULT_POLYCUT },
     polyRecolor: false,
     cutLine: null,
+    supports: { ...SUPPORT_PRESETS.sla, skip: [] },
   },
   jobs: [],
   notices: [],

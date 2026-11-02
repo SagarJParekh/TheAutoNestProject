@@ -1,6 +1,6 @@
 import type {
   MeshData, Vec3, AnalysisReport, RepairSummary, PerforationParams, PerforationPlan, IntersectionReport, BooleanOp, PropParams,
-  LabelParams, TextureParams, Heightmap, MEntity, JointParams, ShapeParams, LatticeParams, WrapParams, PolyCutParams, LassoCamera,
+  LabelParams, TextureParams, Heightmap, MEntity, JointParams, ShapeParams, LatticeParams, WrapParams, PolyCutParams, LassoCamera, SupportParams,
 } from '../geometry';
 
 export interface Transform {
@@ -37,7 +37,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc';
+  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc' | 'supports';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -164,7 +164,7 @@ export interface DrainHolePick {
   normal: Vec3; // world
 }
 
-export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge' | 'contour';
+export type PickMode = null | 'layflat' | 'face' | 'drain' | 'point' | 'measure' | 'triangle' | 'vertex' | 'brush' | 'window' | 'edge' | 'sharpEdge' | 'contour' | 'overhang';
 
 /** How a click / drag marks triangles in Repair → Edit. */
 export type MarkTool = 'triangle' | 'plane' | 'surface' | 'shell' | 'brush' | 'window';
@@ -316,6 +316,8 @@ export interface ToolSettings {
   polyRecolor: boolean;
   /** the line drawn for the Draw line cut, kept so its teeth and options can be edited */
   cutLine: CutLine | null;
+  /** support generation; `skip`: points on overhang areas left without supports (world) */
+  supports: SupportParams & { skip: Vec3[] };
 }
 
 /** A drawn cut line in camera space, with the view it was drawn in. */

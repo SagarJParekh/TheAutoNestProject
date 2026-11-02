@@ -16,6 +16,7 @@ import { LatticePanel, ShapesPanel, VcPanel, WrapPanel } from './panels/MakePane
 import { DimensionsPanel } from './panels/DimensionsPanel';
 import { ReportPanel } from './panels/ReportPanel';
 import { OffsetPanel } from './panels/OffsetPanel';
+import { SupportPanel } from './panels/SupportPanel';
 import { BlendPanel } from './panels/BlendPanel';
 
 const TITLES = {
@@ -35,6 +36,7 @@ const TITLES = {
   report: 'Report',
   offset: 'Offset',
   blend: 'Fillet & chamfer',
+  supports: 'Supports',
   build: 'Build',
   boolean: 'Boolean operations',
   lattice: 'Lattice',
@@ -82,6 +84,7 @@ export function PropertiesPanel() {
         {tool === 'shapes' && <ShapesPanel />}
         {tool === 'wrap' && <WrapPanel parts={parts} />}
         {tool === 'vc' && <VcPanel />}
+        {tool === 'supports' && <SupportPanel parts={parts} />}
         {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && tool !== 'shapes' && <InfoPanel parts={parts} />}
       </div>
     </aside>
