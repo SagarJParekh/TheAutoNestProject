@@ -1508,75 +1508,124 @@ export function removeBuildSupports(ids?: string[]) {
 
 const noEdits = () => ({ add: [] as Vec3[], remove: [] as [number, number, number, number][], skip: [] as Vec3[] });
 
-/** Where a copy's supports touch it, in the copy's turned frame (as shown, minus its place), and its height there. */
-function contactsOf(p: BuildPart, pl: BuildPlacement, s: BuildGenState): Vec3[] {
-  const e = supportFor(p, pl.quaternion, s);
-  if (!e) return [];
-  const out: Vec3[] = [];
-  for (let i = 0; i < e.contacts.length; i += 3) out.push([e.contacts[i], e.contacts[i + 1], e.contacts[i + 2] - e.dz]);
+export interface TouchPoint {
+  /** copy key and touch point index (into that copy's supports) */
+  key: string;
+  i: number;
+  /** where the support touches the part, world */
+  world: Vec3;
+  /** index of the support added by hand it is, −1 for a generated one */
+  manual: number;
+}
+
+/** Every support touch point of the active build's copies (shown and picked while editing supports). */
+export function supportTouchPoints(s: BuildGenState = bg()): TouchPoint[] {
+  const out: TouchPoint[] = [];
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  for (const pl of s.builds[s.active]?.placements ?? []) {
+    const p = byId.get(pl.partId);
+    if (!p?.supportsOn) continue;
+    const e = supportFor(p, pl.quaternion, s);
+    if (!e) continue;
+    for (let i = 0, k = 0; i < e.contacts.length; i += 3, k++)
+      out.push({ key: pl.key, i: k, world: [pl.position[0] + e.contacts[i], pl.position[1] + e.contacts[i + 1], s.zOffset + e.contacts[i + 2]], manual: e.manual[k] ?? -1 });
+  }
   return out;
 }
 
-/**
- * A click in the build while adding / removing supports by hand: `point` and
- * `normal` in the world, `key` the copy (or its supports) clicked.
- *  - add: a support under the clicked point (on a surface facing down),
- *  - delete: the support nearest the click (and those within the eraser radius),
- *  - area: the whole overhang area clicked gets no supports.
- * Edits are kept in the part's own frame, so every copy gets them and they
- * follow later turns.
- */
-export function onSupportEditPick(key: string, point: Vec3, normal: Vec3) {
-  const st = getState();
-  const mode = st.supportEdit;
-  if (!mode) return;
-  const s = bg();
-  const onSupports = key.endsWith(SUP);
+/** A copy, its part and how to bring world points into the part's own frame. */
+function copyFrame(key: string, s: BuildGenState) {
   const copyKey = key.replace(SUP, '');
   const pl = s.builds[s.active]?.placements.find((x) => x.key === copyKey);
   const p = pl && s.parts.find((x) => x.id === pl.partId);
-  if (!pl || !p) return;
-  if (!supportParams(s)) return notify('warning', 'Supports are for SLA, DLP and DMLS printers');
-  // the click in the copy's turned frame, then in the part's own frame
+  if (!pl || !p) return null;
   const z = shownZ(p, pl, s);
-  const turned: Vec3 = [point[0] - pl.position[0], point[1] - pl.position[1], point[2] - z];
-  const own = (v: Vec3) => turnPoint(v, pl.quaternion, true);
-  const ed = p.supportEdits ?? noEdits();
-  const save = (label: string, edits: typeof ed, on = p.supportsOn) =>
-    commitBuild(label, { parts: s.parts.map((x) => (x === p ? { ...x, supportEdits: edits, supportsOn: on } : x)) });
-  if (mode === 'add') {
-    if (onSupports) return notify('info', 'Click on the part where it needs a support (a surface facing down)');
-    if (normal[2] > -0.02) return notify('warning', 'Supports go under surfaces facing down: turn the view to look at the part from below and click there');
-    save('Add support', { ...ed, add: [...ed.add, own(turned)] }, true);
-    return;
-  }
-  if (!p.supportsOn) return notify('info', `${p.name} has no supports`);
-  const contacts = contactsOf(p, pl, s);
-  if (!contacts.length) return notify('info', 'The supports are still being made: try again in a moment');
-  // the support nearest the click, looking from above (a click on a rod, or on the part right above it)
-  let best = -1, bd = Infinity;
-  contacts.forEach((c, i) => {
-    const d = Math.hypot(c[0] - turned[0], c[1] - turned[1]) + (onSupports ? 0 : Math.abs(c[2] - turned[2]) * 0.5);
-    if (d < bd) (bd = d), (best = i);
+  /** world → the part's own frame */
+  const own = (w: Vec3) => turnPoint([w[0] - pl.position[0], w[1] - pl.position[1], w[2] - z], pl.quaternion, true);
+  return { pl, p, own };
+}
+
+/** Apply edits to several parts at once (one undo step). */
+function saveEdits(label: string, s: BuildGenState, edits: Map<string, ReturnType<typeof noEdits>>, turnOn = false) {
+  commitBuild(label, {
+    parts: s.parts.map((x) => (edits.has(x.id) ? { ...x, supportEdits: edits.get(x.id), supportsOn: turnOn ? true : x.supportsOn } : x)),
   });
-  const params = supportParams(s)!;
-  if (bd > Math.max(2, params.spacing * 1.5)) return notify('info', 'No support there: click on a support or right next to where it touches the part');
-  const c = contacts[best];
-  if (mode === 'area') {
-    save('Remove support area', { ...ed, skip: [...ed.skip, own(c)] });
-    return;
+  setState({ supportSel: [], supportGhost: null });
+}
+
+/** Add a support where the part was clicked (world point): under it on a surface facing down, or under the part below a click on its top. */
+export function addSupportAt(key: string, world: Vec3) {
+  const s = bg();
+  if (!supportParams(s)) return notify('warning', 'Supports are for SLA, DLP and DMLS printers');
+  const f = copyFrame(key, s);
+  if (!f) return;
+  const ed = f.p.supportEdits ?? noEdits();
+  saveEdits('Add support', s, new Map([[f.p.id, { ...ed, add: [...ed.add, f.own(world)] }]]), true);
+}
+
+/** The edits that take these touch points away (generated ones are removed, ones added by hand dropped). */
+function withoutPoints(s: BuildGenState, pts: TouchPoint[], asArea = false) {
+  const edits = new Map<string, ReturnType<typeof noEdits>>();
+  const dropAdd = new Map<string, Set<number>>();
+  for (const t of pts) {
+    const f = copyFrame(t.key, s);
+    if (!f) continue;
+    const ed = edits.get(f.p.id) ?? { ...noEdits(), ...f.p.supportEdits };
+    const own = f.own(t.world);
+    if (asArea) ed.skip = [...ed.skip, own];
+    else if (t.manual >= 0) {
+      const d = dropAdd.get(f.p.id) ?? new Set<number>();
+      d.add(t.manual);
+      dropAdd.set(f.p.id, d);
+    } else ed.remove = [...ed.remove, [...own, 0] as [number, number, number, number]];
+    edits.set(f.p.id, ed);
   }
-  // one added by hand is simply taken back
-  const manual = ed.add.findIndex((a) => {
-    const t = turnPoint(a, pl.quaternion);
-    return Math.hypot(t[0] - c[0], t[1] - c[1]) < 0.3 && Math.abs(t[2] - c[2]) < 2.5;
-  });
-  const r = Math.max(0, st.supportEraser);
-  if (manual >= 0 && r === 0) {
-    save('Remove support', { ...ed, add: ed.add.filter((_, i) => i !== manual) });
-    return;
+  for (const [id, d] of dropAdd) {
+    const ed = edits.get(id)!;
+    edits.set(id, { ...ed, add: ed.add.filter((_, i) => !d.has(i)) });
   }
-  save(r > 0 ? 'Remove supports' : 'Remove support', { ...ed, remove: [...ed.remove, [...own(c), r] as [number, number, number, number]] });
+  return edits;
+}
+
+const selectedPoints = (): TouchPoint[] => {
+  const sel = getState().supportSel;
+  if (!sel.length) return [];
+  const set = new Set(sel.map((x) => `${x.key}|${x.i}`));
+  return supportTouchPoints().filter((t) => set.has(`${t.key}|${t.i}`));
+};
+
+/** Delete the selected supports (or, `area`, every support of the overhang areas they stand under). */
+export function deleteSelectedSupports(area = false) {
+  const pts = selectedPoints();
+  if (!pts.length) return notify('info', 'Select supports first: click their touch points (Shift-drag selects several)');
+  saveEdits(area ? 'Delete support areas' : pts.length > 1 ? `Delete ${pts.length} supports` : 'Delete support', bg(), withoutPoints(bg(), pts, area));
+}
+
+/** Move a support: its touch point goes to the world point given (on the part). */
+export function moveSupport(t: TouchPoint, world: Vec3) {
+  const s = bg();
+  const f = copyFrame(t.key, s);
+  if (!f) return;
+  const edits = withoutPoints(s, [t]);
+  const ed = edits.get(f.p.id) ?? { ...noEdits(), ...f.p.supportEdits };
+  const to = f.own(world);
+  // one added by hand keeps its place in the list (so it stays the same support)
+  const add = t.manual >= 0 ? (f.p.supportEdits?.add ?? []).map((a, i) => (i === t.manual ? to : a)) : [...ed.add, to];
+  edits.set(f.p.id, { ...ed, add });
+  saveEdits('Move support', s, edits);
+}
+
+/** Select touch points: replace the selection, add to it or toggle. */
+export function selectTouchPoints(pts: { key: string; i: number }[], how: 'set' | 'add' | 'toggle' = 'set') {
+  const cur = getState().supportSel;
+  const k = (x: { key: string; i: number }) => `${x.key}|${x.i}`;
+  if (how === 'set') return setState({ supportSel: pts });
+  const have = new Map(cur.map((x) => [k(x), x]));
+  for (const p of pts) {
+    if (how === 'toggle' && have.has(k(p))) have.delete(k(p));
+    else have.set(k(p), p);
+  }
+  setState({ supportSel: [...have.values()] });
 }
 
 /** Drop every support edit made by hand on these parts (or all): back to the generated supports. */

@@ -119,6 +119,8 @@ export interface SupportResult {
   supportVolume: number;
   /** where each support touches the part (x, y, z in the lifted frame), for picking supports by hand */
   contacts: Float32Array;
+  /** for each touch point: the index of the point added by hand it belongs to, −1 for generated ones */
+  manual: Int32Array;
 }
 
 /** Overhang areas of a mesh (already in its printing position), largest first. */
@@ -216,8 +218,10 @@ interface Column {
   v: number;
   gi: number;
   gj: number;
-  /** added by hand */
-  manual?: boolean;
+  /** added by hand: the index of its point in the edits */
+  manual?: number;
+  /** part of a block added by hand, but not its centre (no touch point of its own) */
+  noContact?: boolean;
 }
 
 interface Grid {
@@ -374,18 +378,47 @@ function otherSide(mesh: MeshData, t: number, e: number): number {
   return o < 0 ? -1 : (o / 3) | 0;
 }
 
-/** A support added by hand under the point q (on a surface facing down), or null when there is none there. */
-function manualColumn(mesh: MeshData, bvh: MeshBVH, q: Vec3): Column | null {
+/**
+ * A support added by hand under the point q: on the surface facing down at
+ * q, or (q clicked on top of the part) on the nearest surface facing down
+ * below it; null when there is none there.
+ */
+function manualColumn(mesh: MeshData, bvh: MeshBVH, q: Vec3, index: number, near?: number, within = Infinity): Column | null {
   const hits = hitsAt(bvh, q[0], q[1]);
-  let best = -1;
+  const z = near ?? q[2];
+  let best = -1, bestBelow = -1;
   for (let h = 0; h < hits.length; h++) {
     const f = hits[h].faceIndex ?? -1;
     if (f < 0 || normalZ(mesh, f) > -0.02) continue;
-    if (best < 0 || Math.abs(hits[h].point.z - q[2]) < Math.abs(hits[best].point.z - q[2])) best = h;
+    const hz = hits[h].point.z;
+    if (hz <= z + 0.05 && (bestBelow < 0 || hz > hits[bestBelow].point.z)) bestBelow = h;
+    if (best < 0 || Math.abs(hz - z) < Math.abs(hits[best].point.z - z)) best = h;
   }
-  if (best < 0 || Math.abs(hits[best].point.z - q[2]) > 2) return null;
-  const below = best > 0 ? hits[best - 1].point.z : null;
-  return { x: q[0], y: q[1], top: hits[best].point.z, bottom: below ?? 0, onPart: below !== null, area: -1, u: NaN, v: NaN, gi: NaN, gj: NaN, manual: true };
+  const pick = near === undefined && bestBelow >= 0 ? bestBelow : best;
+  if (pick < 0 || Math.abs(hits[pick].point.z - z) > within) return null;
+  const below = pick > 0 ? hits[pick - 1].point.z : null;
+  return { x: q[0], y: q[1], top: hits[pick].point.z, bottom: below ?? 0, onPart: below !== null, area: -1, u: NaN, v: NaN, gi: NaN, gj: NaN, manual: index };
+}
+
+/**
+ * DMLS: a block added by hand, a 3 × 3 patch of grid points round q (in the
+ * grid's directions) made into walls like the generated ones; only its
+ * centre has a touch point.
+ */
+function manualBlock(mesh: MeshData, bvh: MeshBVH, q: Vec3, index: number, g: Grid): Column[] {
+  const centre = manualColumn(mesh, bvh, q, index);
+  if (!centre) return [];
+  const out: Column[] = [];
+  const area = -2 - index;
+  for (let a = -1; a <= 1; a++)
+    for (let b = -1; b <= 1; b++) {
+      const u = a * g.su, v = b * g.sv;
+      const x = q[0] + u * g.cos - v * g.sin, y = q[1] + u * g.sin + v * g.cos;
+      const c = a === 0 && b === 0 ? { ...centre } : manualColumn(mesh, bvh, [x, y, centre.top], index, centre.top, Math.max(g.su, g.sv) * 2);
+      if (!c) continue;
+      out.push({ ...c, area, u, v, gi: a, gj: b, noContact: a !== 0 || b !== 0 });
+    }
+  return out;
 }
 
 /**
@@ -447,7 +480,7 @@ async function buildSupports(
   areas: OverhangArea[],
   p: SupportParams,
   edits: { add: Vec3[]; remove: [number, number, number, number][] } = { add: [], remove: [] },
-): Promise<{ mesh: MeshData; count: number; volume: number; contacts: Float32Array }> {
+): Promise<{ mesh: MeshData; count: number; volume: number; contacts: Float32Array; manual: Int32Array }> {
   const w = await getManifold();
   const M = w.Manifold;
   const pen = p.penetration;
@@ -459,10 +492,13 @@ async function buildSupports(
   if (edits.remove.length)
     // (radius 0: the one support nearest the point, within half a grid step, so it stays removed when the grid moves with a turn)
     cols = cols.filter((c) => !edits.remove.some(([x, y, z, r]) => Math.hypot(c.x - x, c.y - y, c.top - z) <= (r > 0 ? r : 0.45 * Math.min(g.su, g.sv))));
-  for (const q of edits.add) {
-    const c = manualColumn(mesh, bvh, q);
-    if (c) cols.push(c);
-  }
+  edits.add.forEach((q, i) => {
+    if (p.style === 'volume') cols.push(...manualBlock(mesh, bvh, q, i, g));
+    else {
+      const c = manualColumn(mesh, bvh, q, i);
+      if (c) cols.push(c);
+    }
+  });
   const solids: Manifold[] = [];
   const made: Column[] = [];
   try {
@@ -508,7 +544,7 @@ async function buildSupports(
     } else {
       // volume: thin walls along the grid lines in both directions, following the surface above and below
       const t = Math.max(0.05, p.wall);
-      const grid = cols.filter((c) => !c.manual && Number.isFinite(c.gi));
+      const grid = cols.filter((c) => Number.isFinite(c.gi));
       // supports off the grid (a small area's single support, the ones added by hand) are pins
       for (const c of cols) if (!grid.includes(c)) pin(c, Math.max(0.3, Math.min(g.su, g.sv) / 4, t));
       for (const dir of [0, 1] as const) {
@@ -586,15 +622,21 @@ async function buildSupports(
         }
       }
     }
-    const contacts = new Float32Array(made.length * 3);
-    made.forEach((c, i) => contacts.set([c.x, c.y, c.top], i * 3));
-    if (!solids.length) return { mesh: { positions: new Float32Array(0), indices: new Uint32Array(0) }, count: 0, volume: 0, contacts };
+    // touch points: one per support (walls list their columns twice, blocks only their centre)
+    const touch = [...new Set(made)].filter((c) => !c.noContact);
+    const contacts = new Float32Array(touch.length * 3);
+    const manual = new Int32Array(touch.length);
+    touch.forEach((c, i) => {
+      contacts.set([c.x, c.y, c.top], i * 3);
+      manual[i] = c.manual ?? -1;
+    });
+    if (!solids.length) return { mesh: { positions: new Float32Array(0), indices: new Uint32Array(0) }, count: 0, volume: 0, contacts, manual };
     const all = M.union(solids);
     const volume = all.volume();
     const mesh2 = fromManifold(all);
     all.delete();
     const walls = p.style === 'volume' ? solids.length : new Set(made).size;
-    return { mesh: mesh2, count: walls, volume, contacts };
+    return { mesh: mesh2, count: walls, volume, contacts, manual };
   } finally {
     solids.forEach((s) => s.delete());
   }
@@ -629,6 +671,7 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
     count: s.count,
     supportVolume: s.volume,
     contacts: s.contacts,
+    manual: s.manual,
   };
 }
 

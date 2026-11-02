@@ -506,6 +506,7 @@ export class Viewer {
     this.syncAnnotations(s);
     this.syncDimensions(s);
     this.syncMarkers(s);
+    this.syncSupportPoints(s);
     this.syncContourPick(s);
     this.updateGridSize(s);
     this.requestRender();
@@ -1294,12 +1295,12 @@ export class Viewer {
     this.cb.onPick(info ? { ...info, ...mods } : null, mods);
   }
 
-  pick(clientX: number, clientY: number): Omit<PickInfo, 'shift' | 'ctrl' | 'clientX' | 'clientY'> | null {
+  pick(clientX: number, clientY: number, onlyPart?: string): Omit<PickInfo, 'shift' | 'ctrl' | 'clientX' | 'clientY'> | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const ghosted = new Set(this.state?.preview?.replaces ?? []);
-    const meshes = [...this.objects.values()].filter((o) => o.part.visible && !ghosted.has(o.part.id)).map((o) => o.mesh);
+    const meshes = [...this.objects.values()].filter((o) => o.part.visible && !ghosted.has(o.part.id) && (!onlyPart || o.part.id === onlyPart)).map((o) => o.mesh);
     // parts drawn in groups (hidden shells): hits on hidden triangles do not count
     const grouped = meshes.some((m) => m.geometry.groups.length > 0);
     (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlanes.length && !grouped;
@@ -2411,6 +2412,37 @@ export class Viewer {
       dots.renderOrder = 1006;
       dots.raycast = () => {};
       this.contourGroup.add(dots);
+    }
+    this.requestRender();
+  }
+
+  private supportKey: unknown = null;
+  private supportGroup = new Group();
+
+  /** Support touch points while editing supports: dots always on top (dark rim, colour inside), and the place a dragged one would go. */
+  private syncSupportPoints(s: AppState) {
+    const sp = s.supportPoints ?? null;
+    if (sp === this.supportKey) return;
+    this.supportKey = sp;
+    if (!this.supportGroup.parent) this.scene.add(this.supportGroup);
+    disposeChildren(this.supportGroup);
+    this.supportGroup.clear();
+    if (sp && sp.pos.length) {
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(sp.pos, 3));
+      const rim = new Points(g, new PointsMaterial({ color: 0x0b0e13, size: 13, sizeAttenuation: false, depthTest: false }));
+      const g2 = g.clone().setAttribute('color', new BufferAttribute(sp.col, 3));
+      const dot = new Points(g2, new PointsMaterial({ vertexColors: true, size: 9, sizeAttenuation: false, depthTest: false }));
+      rim.renderOrder = 1007;
+      dot.renderOrder = 1008;
+      rim.raycast = dot.raycast = () => {};
+      this.supportGroup.add(rim, dot);
+    }
+    if (sp?.ghost) {
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(sp.ghost), 3));
+      const ring = new Points(g, new PointsMaterial({ color: 0xffd23f, size: 20, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.55 }));
+      ring.renderOrder = 1009;
+      ring.raycast = () => {};
+      this.supportGroup.add(ring);
     }
     this.requestRender();
   }

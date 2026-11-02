@@ -57,6 +57,8 @@ export interface AppState {
   buildView?: { volume: [number, number, number]; margin: number; zOffset: number };
   /** set only on the view state: red markers (collision locations) */
   markers?: [number, number, number][] | null;
+  /** set only on the view state: support touch points while editing supports (world positions, RGB colours) and a dragged one's new place */
+  supportPoints?: { pos: Float32Array; col: Float32Array; ghost: [number, number, number] | null } | null;
   /** Build generation: how the mouse edits parts (select only, move gizmo, rotate gizmo, drag on the platform) */
   buildEdit: 'select' | 'move' | 'rotate' | 'drag';
   /** Build generation view: cut the build at a height (show what is below, or above with `above`) */
@@ -83,10 +85,12 @@ export interface AppState {
   /** bumped whenever build supports were made (so the view updates); copies still waiting for theirs */
   supportTick: number;
   supportPending: number;
-  /** Build generation: adding / removing supports by clicking in the view */
-  supportEdit: 'add' | 'delete' | 'area' | null;
-  /** radius round a clicked support whose neighbours go too (0: just the one), mm */
-  supportEraser: number;
+  /** Build generation: editing supports by hand (select / move / delete touch points, or add supports) */
+  supportEdit: 'select' | 'add' | null;
+  /** touch points selected while editing supports: copy key and touch point index */
+  supportSel: { key: string; i: number }[];
+  /** where a touch point being dragged would go (world) */
+  supportGhost: [number, number, number] | null;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -180,7 +184,8 @@ export const useStore = create<AppState>(() => ({
   supportTick: 0,
   supportPending: 0,
   supportEdit: null,
-  supportEraser: 0,
+  supportSel: [],
+  supportGhost: null,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },

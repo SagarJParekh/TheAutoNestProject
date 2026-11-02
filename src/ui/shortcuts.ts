@@ -4,7 +4,7 @@ import {
   applyPreview, cancelPreview, centerOnOrigin, deleteParts, dropToBed, duplicateParts, selectAll, setTool, toggleHideOthers,
 } from '../state/actions';
 import { viewerApi } from '../viewer/api';
-import { selectAllBuildParts } from '../state/buildActions';
+import { deleteSelectedSupports, selectAllBuildParts } from '../state/buildActions';
 import { deleteToolSelection } from '../state/editActions';
 import type { DisplayMode, ToolId } from '../state/types';
 
@@ -52,6 +52,7 @@ export function useShortcuts(openFile: () => void) {
           else if (s.tool === 'measure' && (s.measurePending.entities.length || s.measurePending.points.length))
             setState({ measurePending: { entities: [], points: [] } });
           else if (s.pickMode) setState({ pickMode: null });
+          else if (s.supportEdit && s.supportSel.length) setState({ supportSel: [] });
           else if (s.supportEdit) setState({ supportEdit: null });
           else if (s.preview) cancelPreview();
           else if (s.faceSelection) setState({ faceSelection: null });
@@ -63,6 +64,8 @@ export function useShortcuts(openFile: () => void) {
           break;
         case e.key === 'Delete' || e.key === 'Backspace':
           if (s.polyMode) viewerApi.current?.viewer?.undoPolyPoint();
+          // editing supports: the selected supports, never the parts
+          else if (s.workspace === 'build' && s.supportEdit) deleteSelectedSupports();
           // inside a function, the marked triangles / surface / picks go first; only then the part
           else if (s.workspace === 'build' || !deleteToolSelection()) deleteParts();
           break;

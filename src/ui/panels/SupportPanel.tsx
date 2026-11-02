@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
-import { clearSupportEdits, removeBuildSupports, selectedBuildPartIds, supportBuildParts, supportEditCounts } from '../../state/buildActions';
+import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
 import { supportTotals } from '../../state/buildSupports';
 import { SUPPORT_PRESETS, type SupportParams, type SupportTech } from '../../geometry/supports';
 
@@ -137,47 +137,72 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
       <Hint>
         Every copy gets its own supports for the orientation it has: it is lifted by the distance from the platform and every surface facing down at less
         than the critical angle is supported straight down (perpendicular to the platform), onto the platform or onto the part below. When a copy is
-        turned (nesting, hand edits) or a setting changes, its supports are made again automatically. They are exported with the build. Supports added or deleted by hand belong to the part: every copy gets them and they
+        turned (nesting, hand edits) or a setting changes, its supports are made again automatically. They are exported with the build. Supports added, moved or deleted by hand belong to the part: every copy gets them and they
         follow later turns (Ctrl+Z undoes the last one).
       </Hint>
     </Section>
   );
 }
 
-/** Adding and removing supports by clicking on the parts in the build. */
+/**
+ * Editing supports by hand: every touch point is shown as a dot; they can be
+ * selected (click, Ctrl-click, drag a rectangle), deleted, dragged to a new
+ * place on the part, and new supports added by clicking on the part.
+ */
 function SupportHandEdits() {
   const mode = useStore((s) => s.supportEdit);
-  const eraser = useStore((s) => s.supportEraser);
+  const picked = useStore((s) => s.supportSel);
   const parts = useStore((s) => s.buildGen.parts);
   const selection = useStore((s) => s.selection);
+  useStore((s) => s.supportTick);
+  const g = useStore((s) => s.buildGen);
   const sel = selectedBuildPartIds(selection);
   const scope = sel.length ? parts.filter((p) => sel.includes(p.id)) : parts;
   const n = supportEditCounts(scope);
   const edits = n.add + n.remove + n.skip;
+  const total = mode ? supportTouchPoints(g).length : 0;
   return (
     <>
       <div className="sub-title">Edit supports by hand</div>
       <Segmented
         value={mode ?? 'off'}
-        onChange={(v) => setState({ supportEdit: v === 'off' ? null : v })}
+        onChange={(v) => setState({ supportEdit: v === 'off' ? null : v, supportSel: [] })}
         options={[
           { value: 'off', label: 'Off' },
-          { value: 'add', label: 'Add', title: 'Click on a surface facing down to put a support under it (turn the view to look from below)' },
-          { value: 'delete', label: 'Delete', title: 'Click on a support (or right next to where it touches the part) to remove it' },
-          { value: 'area', label: 'Delete area', title: 'Click on a support to remove every support of its overhang area' },
+          { value: 'select', label: 'Select / move', title: 'Touch points are shown as dots: click to select, drag one to move its support, drag a rectangle to select several' },
+          { value: 'add', label: 'Add supports', title: 'Click on the part to add a support there' },
         ]}
       />
-      {mode === 'delete' && (
-        <Row label="Eraser radius">
-          <NumberField
-            value={eraser}
-            min={0}
-            step={0.5}
-            suffix="mm"
-            title="Supports within this distance of the one clicked go too (0: just the one clicked)"
-            onChange={(v) => setState({ supportEraser: Math.max(0, v) })}
-          />
-        </Row>
+      {mode === 'select' && (
+        <>
+          <div className="pick-row">
+            <span className="muted small">
+              {picked.length} of {total} support{total === 1 ? '' : 's'} selected
+            </span>
+            <button className="mini" disabled={!total} onClick={() => selectTouchPoints(supportTouchPoints().map((t) => ({ key: t.key, i: t.i })))}>
+              Select all
+            </button>
+            <button className="mini" disabled={!picked.length} onClick={() => selectTouchPoints([])}>
+              Clear
+            </button>
+          </div>
+          <div className="btn-grid two">
+            <button className="btn" disabled={!picked.length} onClick={() => deleteSelectedSupports()} title="Delete the selected supports (Delete key)">
+              Delete selected
+            </button>
+            <button className="btn" disabled={!picked.length} onClick={() => deleteSelectedSupports(true)} title="Delete every support of the overhang areas the selected ones stand under">
+              Delete their areas
+            </button>
+          </div>
+        </>
+      )}
+      {mode && (
+        <Hint>
+          Dots: <b style={{ color: '#9adbff' }}>generated</b>, <b style={{ color: '#4deb73' }}>added by hand</b>, <b style={{ color: '#ffd133' }}>selected</b>.{' '}
+          {mode === 'select'
+            ? 'Click a dot to select it, Ctrl / Shift-click to add more, drag on empty space to select all dots in a rectangle. Drag a dot over the part to move its support there. Right-drag turns the view.'
+            : 'Click on the part where it needs a support: on a surface facing down, or on top (the support goes under the surface below the click). On DMLS a small block of walls is added.'}
+        </Hint>
       )}
       <div className="pick-row">
         <span className="muted small">
@@ -192,4 +217,3 @@ function SupportHandEdits() {
     </>
   );
 }
-

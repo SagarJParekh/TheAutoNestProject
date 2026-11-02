@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
 import { supportLift } from '../state/buildSupports';
-import { SUP, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, onSupportEditPick, partOfKey, pickingCopies, selectBuildPart } from '../state/buildActions';
+import { SUP, addSupportAt, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, moveSupport, partOfKey, pickingCopies, selectBuildPart, selectTouchPoints, supportTouchPoints, type TouchPoint } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
@@ -81,12 +81,125 @@ function viewState(s: AppState): AppState {
     lassoMode: false,
     polyMode: false,
     buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset },
+    supportPoints: s.supportEdit ? touchOverlay(s) : null,
     // locked copies: the gizmo only offers their free axes, pick & place only moves them along free axes
     gizmoLocks: s.selection.length === 1 ? (s.buildGen.locks?.[s.selection[0]] ?? null) : null,
     placeLocks: s.buildGen.locks ? Object.fromEntries(Object.entries(s.buildGen.locks).map(([k, L]) => [k, L.t])) : null,
   };
   lastView = { src: s, view };
   return view;
+}
+
+/** Support touch points while editing supports: generated ones light blue, ones added by hand green, selected ones yellow. */
+let lastTouch: { key: unknown[]; value: NonNullable<AppState['supportPoints']> } | null = null;
+function touchOverlay(s: AppState): NonNullable<AppState['supportPoints']> {
+  const key = [s.buildGen, s.supportTick, s.supportSel, s.supportGhost];
+  if (lastTouch && key.every((k, i) => k === lastTouch!.key[i])) return lastTouch.value;
+  const pts = supportTouchPoints(s.buildGen);
+  const sel = new Set(s.supportSel.map((x) => `${x.key}|${x.i}`));
+  const pos = new Float32Array(pts.length * 3), col = new Float32Array(pts.length * 3);
+  pts.forEach((t, k) => {
+    pos.set(t.world, k * 3);
+    col.set(sel.has(`${t.key}|${t.i}`) ? [1, 0.82, 0.2] : t.manual >= 0 ? [0.3, 0.92, 0.45] : [0.6, 0.86, 1], k * 3);
+  });
+  lastTouch = { key, value: { pos, col, ghost: s.supportGhost } };
+  return lastTouch.value;
+}
+
+/**
+ * Editing supports (select mode): left button on a touch point selects it
+ * (Ctrl / Shift toggles) and dragging it moves the support over the part;
+ * a left drag elsewhere selects every touch point in the rectangle, a click
+ * on nothing clears the selection. Other buttons orbit as usual.
+ */
+function useSupportMouse(el: () => HTMLDivElement | null, on: boolean) {
+  useEffect(() => {
+    const box = el();
+    if (!on || !box) return;
+    const near = (x: number, y: number): TouchPoint | null => {
+      const v = viewerApi.current?.viewer;
+      if (!v) return null;
+      let best: TouchPoint | null = null, bd = 10;
+      for (const t of supportTouchPoints()) {
+        const p = v.toScreen(t.world);
+        if (!p) continue;
+        const d = Math.hypot(p[0] - x, p[1] - y);
+        if (d < bd) (bd = d), (best = t);
+      }
+      return best;
+    };
+    let drag: { x: number; y: number; hit: TouchPoint | null; mods: boolean; moved: boolean; div: HTMLDivElement | null } | null = null;
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0 || !(e.target instanceof HTMLCanvasElement)) return;
+      const r = (e.target as HTMLCanvasElement).getBoundingClientRect();
+      // the view cube in the corner keeps working
+      if (e.clientX - r.left < 126 && r.bottom - e.clientY < 126) return;
+      e.stopPropagation();
+      e.preventDefault();
+      drag = { x: e.clientX, y: e.clientY, hit: near(e.clientX, e.clientY), mods: e.ctrlKey || e.metaKey || e.shiftKey, moved: false, div: null };
+    };
+    const move = (e: PointerEvent) => {
+      const v = viewerApi.current?.viewer;
+      if (!drag) {
+        if (e.target instanceof HTMLCanvasElement) e.target.style.cursor = near(e.clientX, e.clientY) ? 'move' : '';
+        return;
+      }
+      if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+      drag.moved = true;
+      if (drag.hit) {
+        // the new place: where the cursor is on the same copy
+        const info = v?.pick(e.clientX, e.clientY, drag.hit.key);
+        setState({ supportGhost: info && info.partId === drag.hit.key ? info.point : null });
+        return;
+      }
+      if (!drag.div) {
+        drag.div = document.createElement('div');
+        drag.div.className = 'box-select';
+        drag.div.style.cssText = 'position:fixed;border:1px dashed #ffd23f;background:rgba(255,210,63,0.08);pointer-events:none;z-index:50';
+        document.body.appendChild(drag.div);
+      }
+      const x0 = Math.min(drag.x, e.clientX), y0 = Math.min(drag.y, e.clientY);
+      Object.assign(drag.div.style, { left: `${x0}px`, top: `${y0}px`, width: `${Math.abs(e.clientX - drag.x)}px`, height: `${Math.abs(e.clientY - drag.y)}px` });
+    };
+    const up = (e: PointerEvent) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      e.stopPropagation();
+      d.div?.remove();
+      const v = viewerApi.current?.viewer;
+      if (d.hit) {
+        const ghost = getState().supportGhost;
+        if (d.moved) {
+          setState({ supportGhost: null });
+          if (ghost) moveSupport(d.hit, ghost);
+          return;
+        }
+        selectTouchPoints([{ key: d.hit.key, i: d.hit.i }], d.mods ? 'toggle' : 'set');
+        return;
+      }
+      if (d.moved && v) {
+        const x0 = Math.min(d.x, e.clientX), x1 = Math.max(d.x, e.clientX), y0 = Math.min(d.y, e.clientY), y1 = Math.max(d.y, e.clientY);
+        const inside = supportTouchPoints().filter((t) => {
+          const p = v.toScreen(t.world);
+          return p && p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
+        });
+        selectTouchPoints(inside.map((t) => ({ key: t.key, i: t.i })), d.mods ? 'add' : 'set');
+        return;
+      }
+      if (!d.mods) selectTouchPoints([]);
+    };
+    box.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    return () => {
+      box.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      drag?.div?.remove();
+      setState({ supportGhost: null });
+    };
+  }, [on, el]);
 }
 
 /** Build generation: vertical slider that cuts the build at a height, to look inside. */
@@ -138,6 +251,7 @@ export function ViewerCanvas() {
   const placing = useStore((s) => s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode);
   const building = useStore((s) => s.workspace === 'build');
   const supportEdit = useStore((s) => (s.workspace === 'build' ? s.supportEdit : null));
+  useSupportMouse(useCallback(() => ref.current, []), supportEdit === 'select');
 
   useEffect(() => {
     const el = ref.current!;
@@ -147,7 +261,7 @@ export function ViewerCanvas() {
         if (s.workspace === 'build') {
           // adding / removing supports by hand
           if (s.supportEdit) {
-            if (info) onSupportEditPick(info.partId, info.point, info.normal);
+            if (s.supportEdit === 'add' && info && !info.partId.endsWith(SUP)) addSupportAt(info.partId, info.point);
             return;
           }
           // Build generation: clicks only select parts (Ctrl / Shift toggles)
@@ -240,6 +354,7 @@ export function ViewerCanvas() {
       },
       onBoxSelect(ids, add) {
         const s = getState();
+        if (s.workspace === 'build' && s.supportEdit) return;
         if (s.workspace === 'build') {
           if (pickingCopies(s)) {
             setState({ selection: add ? [...new Set([...s.selection, ...ids])] : ids });
@@ -285,10 +400,8 @@ export function ViewerCanvas() {
       {supportEdit && (
         <div className="pick-banner">
           {supportEdit === 'add'
-            ? 'Click on a surface facing down to add a support under it (turn the view to look from below)'
-            : supportEdit === 'delete'
-              ? 'Click on a support to delete it'
-              : 'Click on a support to delete every support of its overhang area'}
+            ? 'Click on the part to add a support there (a click on top puts it under the surface below)'
+            : 'Click a touch point to select it · Ctrl-click adds · drag a touch point to move it · drag on empty space to select several · Delete removes'}
           <button onClick={() => setState({ supportEdit: null })}>Done (Esc)</button>
         </div>
       )}

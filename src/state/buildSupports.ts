@@ -22,6 +22,8 @@ export interface SupportEntry {
   volume: number;
   /** where each support touches the part (x, y, z), same frame as the mesh */
   contacts: Float32Array;
+  /** for each touch point: index of the support added by hand it is, −1 for generated ones */
+  manual: Int32Array;
 }
 
 const meshIds = new WeakMap<MeshData, number>();
@@ -123,7 +125,7 @@ export async function updateSupports() {
           };
           const skip = (ed?.skip ?? []).map((v) => turnPoint(v, q));
           const r = await pool.run('supports', { mesh: turned, params, skip, edits }).promise;
-          cache.set(k, { mesh: r.supports, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts });
+          cache.set(k, { mesh: r.supports, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts, manual: r.manual });
         } catch (e) {
           if (e instanceof CancelledError) return;
           failed.add(k);
