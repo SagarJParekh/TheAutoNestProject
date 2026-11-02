@@ -305,3 +305,20 @@ export function clearOverhangSkips() {
   setState({ settings: { ...s.settings, supports: { ...s.settings.supports, skip: [] } }, preview: null });
   if (s.overhangView) void analyseSupports();
 }
+
+/**
+ * Open the Supports tool from Build generation: back to Mesh prep with the
+ * parts of the build selected and the standard script of the printer's technology.
+ */
+export async function openSupportsFor(tech: 'sla' | 'dlp' | 'dmls') {
+  const { setWorkspace } = await import('./buildActions');
+  const { setTool } = await import('./actions');
+  const { SUPPORT_PRESETS } = await import('../geometry/supports');
+  const s = getState();
+  const from = new Set(s.buildGen.parts.map((p) => p.fromPrep).filter(Boolean) as string[]);
+  setWorkspace('prep');
+  const ids = s.parts.filter((p) => from.has(p.id)).map((p) => p.id);
+  setState({ selection: ids.length ? ids : s.parts.slice(0, 1).map((p) => p.id) });
+  setTool('supports');
+  setState((st) => ({ settings: { ...st.settings, supports: { ...SUPPORT_PRESETS[tech], skip: [] } } }));
+}
