@@ -35,6 +35,14 @@ export const INPUT_HELP: Record<string, string> = {
     'Solid wall kept under the outer surface, in mm; the lattice fills what is inside it. 0 lets the lattice reach the surface (an open lattice). A closed skin traps powder or resin: add drain holes.',
   'lattice:cells along': 'Direction the honeycomb cells run. Z (the build direction) gives upright walls that need no support.',
   'lattice:quality': 'Resolution of the lattice: Draft is quick and coarse, Fine follows thin walls best but takes longer and makes more triangles.',
+  // ---------------------------------------------------------------- surface to solid
+  'solidify:surface': 'Picked faces: click the surface on a part (it is taken off the part, the part itself is not changed). Whole part: the selected part is the surface (e.g. an imported open sheet).',
+  'solidify:make': 'Thicken: a shell of even thickness following the surface. Fill to base: the surface filled straight down (or up) to a flat base, a fixture or cradle shaped like the part.',
+  'solidify:thickness': 'Wall thickness of the solid, in mm, measured square to the surface.',
+  'solidify:grow': 'Which side the solid grows on: Outwards = away from the part (along the surface normals), Inwards = into the part, Both = half on each side.',
+  'solidify:gap to surface': 'Clearance between the surface and the solid, in mm, so the part fits into the fixture. 0 = touching.',
+  'solidify:fill towards': 'Fill down to a base below the surface (a cradle the part sits in), or up to a base above it (a clamp from the top).',
+  'solidify:base beyond surface': 'How far the flat base reaches past the lowest (or highest) point of the surface, in mm: the thinnest part of the fixture.',
   // ---------------------------------------------------------------- shrinkwrap
   'wrap:close gaps up to': 'Holes, slots, openings and inner cavities up to this size (mm) are closed over by the wrap; larger openings are followed.',
   'wrap:offset': 'How far the wrap stands off the part’s surface, in mm. 0 hugs the surface.',

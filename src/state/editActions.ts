@@ -731,6 +731,8 @@ export function deleteToolSelection(): boolean {
   }
   // a picked surface (face pick in Extrude, Offset, …)
   const fs = s.faceSelection;
+  // surface to solid only takes the surface off the part: Delete drops the pick, never the part's triangles
+  if (fs && s.tool === 'solidify') return setState({ faceSelection: null, preview: null }), true;
   const fsPart = fs && partById(fs.partId);
   if (fs && fsPart && (!fs.mesh || fs.mesh === fsPart.mesh) && fs.tris.length) {
     if (fsPart.locked) return notify('warning', `${fsPart.name} is locked`), true;

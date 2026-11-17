@@ -451,6 +451,22 @@ export const ops = {
     return { result: r, transfer: meshBuffers(r.mesh) };
   },
 
+  async solidify(args: { mesh: MeshData; tris: Uint32Array | null; params: G.SolidifyParams; cut?: MeshData; sheet?: boolean }, progress: Progress): Promise<Result<G.SolidifyResult & { cutFailed?: boolean }>> {
+    progress(0.2, 'Making the surface solid');
+    const r = await G.surfaceToSolid(args.mesh, args.tris, args.params, { sheet: args.sheet });
+    let cutFailed = false;
+    if (args.cut && r.mesh.indices.length) {
+      // the part itself cut out of the solid, so it sits in it exactly
+      progress(0.7, 'Cutting the part out');
+      try {
+        r.mesh = await G.booleanMeshes('subtract', r.mesh, [args.cut]);
+      } catch {
+        cutFailed = true;
+      }
+    }
+    return { result: { ...r, cutFailed }, transfer: meshBuffers(r.mesh) };
+  },
+
   async shrinkwrap(args: { mesh: MeshData; params: G.WrapParams }, progress: Progress): Promise<Result<{ mesh: MeshData; voxelSize: number }>> {
     const r = G.shrinkwrapMesh(args.mesh, args.params, progress);
     return { result: r, transfer: meshBuffers(r.mesh) };

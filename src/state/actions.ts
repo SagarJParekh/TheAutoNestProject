@@ -353,7 +353,7 @@ export function setTool(tool: ToolId) {
     preview: null,
     pickMode: null,
     pickSlot: 'primary',
-    faceSelection: tool === 'extrude' || tool === 'perforate' ? s.faceSelection : null,
+    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' ? s.faceSelection : null,
     ...extra,
   });
 }
@@ -810,15 +810,20 @@ export function mergeFacePicks(old: FaceSelection | null, add: FaceSelection, me
   return { ...old, seed: seeds[0], tris, groups, seeds, normal: r.normal, centroid: r.centroid, area: r.area };
 }
 
+/** The angle tolerance face picks grow with, from the current tool's settings. */
+const faceAngle = (s: ReturnType<typeof getState>) =>
+  s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.tool === 'solidify' ? s.settings.solidify.angleTolerance : s.settings.extrude.angleTolerance;
+
 export async function pickFace(partId: string, faceIndex: number) {
   const s = getState();
   const p = partById(partId);
   if (!p) return;
-  const angle = s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.settings.extrude.angleTolerance;
-  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle }, { silent: p.mesh.indices.length < 600000 });
+  const angle = faceAngle(s);
+  // surface to solid: organic surfaces, so the selection grows across gentle curvature (neighbour to neighbour)
+  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle, smooth: s.tool === 'solidify' && s.settings.solidify.grow !== 'angle' }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
   const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };
-  if (s.tool === 'extrude') {
+  if (s.tool === 'extrude' || s.tool === 'solidify') {
     // extrude takes several faces: each click adds one (or drops it again), picking stays on
     const old = getState().faceSelection;
     const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
@@ -840,10 +845,10 @@ export async function regrowFace() {
   const p = partById(fs.partId);
   if (!p) return;
   const s = getState();
-  const angle = s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.settings.extrude.angleTolerance;
+  const angle = faceAngle(s);
   let sel: FaceSelection | null = null;
   for (const seed of seeds) {
-    const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed, angle }, { silent: true });
+    const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed, angle, smooth: s.tool === 'solidify' && s.settings.solidify.grow !== 'angle' }, { silent: true });
     if (!r) return;
     sel = mergeFacePicks(sel, { partId: p.id, seed, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh }, p.mesh);
   }
@@ -1087,7 +1092,7 @@ export function cancelTool() {
     pickMode: null,
     pickSlot: 'primary',
     zoomWindow: false,
-    faceSelection: tool === 'extrude' || tool === 'perforate' ? null : s.faceSelection,
+    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' ? null : s.faceSelection,
     facePicks: tool === 'repair' || tool === 'texture' || tool === 'align' || tool === 'props' || tool === 'offset' ? {} : s.facePicks,
     blendEdges: tool === 'blend' ? s.blendEdges : [],
     pointPicks: tool === 'props' || tool === 'label' ? {} : s.pointPicks,

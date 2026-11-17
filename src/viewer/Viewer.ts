@@ -857,7 +857,7 @@ export class Viewer {
       const ef = s.tool === 'repair' && s.errorFocus?.partId === obj.part.id && s.errorFocus.mesh === obj.part.mesh ? s.errorFocus : null;
       const thk = s.tool === 'measure' && s.settings.thickness.show && s.thickness[obj.part.id]?.mesh === obj.part.mesh ? s.thickness[obj.part.id] : null;
       const thkSet = s.settings.thickness;
-      const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate') ? s.faceSelection : null;
+      const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate' || s.tool === 'solidify') ? s.faceSelection : null;
       const hl = s.settings.highlight;
       const inRepair = s.tool === 'repair';
       const ix = inRepair ? s.intersections[obj.part.id] : undefined;

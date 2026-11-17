@@ -234,3 +234,49 @@ export async function previewMoulds() {
     },
   });
 }
+
+// ---------------------------------------------------------------- surface to solid
+
+/**
+ * Surface to solid: the picked faces of a part (or a whole open part) made
+ * into a solid: thickened, or filled to a flat base as a fixture; the part is
+ * kept and the solid added as a new part, or the part replaced.
+ */
+export async function previewSolidify() {
+  const s = getState();
+  const st = s.settings.solidify;
+  const fs = s.faceSelection;
+  const part = st.source === 'faces' ? (fs ? s.parts.find((p) => p.id === fs.partId) : undefined) : firstEditable();
+  if (!part) return notify('warning', st.source === 'faces' ? 'Pick the surface on a part first' : 'Select the part (surface) to make solid');
+  if (!st.keep && part.locked) return notify('warning', 'The part is locked');
+  if (st.source === 'faces' && fs?.mesh && fs.mesh !== part.mesh) return notify('warning', 'The part changed since the surface was picked: pick it again');
+  const { source, angleTolerance: _a, grow: _g, keep, cutPart, ...params } = st;
+  void _a;
+  void _g;
+  const world = worldMesh(part);
+  const region = source === 'faces' && fs ? fs.tris : null;
+  const r = await runJob(`Surface to solid (${part.name})`, 'solidify', { mesh: world, tris: region, params, cut: cutPart && st.mode === 'base' ? world : undefined, sheet: source === 'part' });
+  if (!r) return;
+  if (!r.mesh.indices.length) return notify('warning', 'Nothing was made from that surface');
+  const name = keep ? `${part.name} (${st.mode === 'base' ? 'fixture' : 'solid'})` : part.name;
+  const color = keep ? nextColor() : part.color;
+  const what =
+    st.mode === 'base'
+      ? `Filled ${st.baseDir === 'down' ? 'down' : 'up'} to a flat base ${mm(st.baseThickness)} past the surface${st.gap ? `, ${mm(st.gap)} clear of it` : ''}`
+      : `Thickness ${mm(st.thickness)} ${st.side === 'both' ? 'on both sides' : st.side === 'out' ? 'outwards (along the normals)' : 'inwards'}${st.gap && st.side !== 'both' ? `, ${mm(st.gap)} off the surface` : ''}`;
+  setPreview({
+    tool: 'solidify',
+    label: 'Surface to solid',
+    replaces: keep ? [] : [part.id],
+    meshes: [{ name, mesh: r.mesh, color }],
+    summary: [
+      `Surface: ${r.surfaceTris.toLocaleString()} triangles, ${r.loops} edge loop${r.loops === 1 ? '' : 's'} closed with walls`,
+      ...(r.leftOut ? [`${r.leftOut.toLocaleString()} triangles of the pick face away from the base and were left out (the fixture stops at the part's outline)`] : []),
+      what,
+      `Volume: ${(r.volume / 1000).toFixed(2)} cm³ · triangles: ${tris(r.mesh)}`,
+      ...(r.prisms ? ['The offset folded over itself on tight curves, so the solid was built triangle by triangle (closed and clean, edges slightly softer).'] : []),
+      ...(r.cutFailed ? ['⚠ The part could not be cut out (it is not a closed solid); the fixture is shown without the cut.'] : []),
+    ],
+    apply: () => (keep ? addWorldParts('Surface to solid', [{ name, mesh: r.mesh, color }]) : replaceWithWorldMeshes('Surface to solid', part.id, [{ name, mesh: r.mesh, color }])),
+  });
+}

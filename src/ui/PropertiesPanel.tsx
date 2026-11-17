@@ -12,7 +12,7 @@ import { MeasurePanel } from './panels/MeasurePanel';
 import { LabelPanel } from './panels/LabelPanel';
 import { TexturePanel } from './panels/TexturePanel';
 import { AlignTab, BooleanPanel, PropsTab } from './panels/RepairTabs';
-import { LatticePanel, ShapesPanel, VcPanel, WrapPanel } from './panels/MakePanels';
+import { LatticePanel, ShapesPanel, SolidifyPanel, VcPanel, WrapPanel } from './panels/MakePanels';
 import { DimensionsPanel } from './panels/DimensionsPanel';
 import { ReportPanel } from './panels/ReportPanel';
 import { OffsetPanel } from './panels/OffsetPanel';
@@ -40,6 +40,7 @@ const TITLES = {
   lattice: 'Lattice',
   shapes: 'Shapes',
   wrap: 'Shrinkwrap',
+  solidify: 'Surface to solid',
   vc: 'VC module',
 };
 
@@ -81,6 +82,7 @@ export function PropertiesPanel() {
         {tool === 'lattice' && <LatticePanel parts={parts} />}
         {tool === 'shapes' && <ShapesPanel />}
         {tool === 'wrap' && <WrapPanel parts={parts} />}
+        {tool === 'solidify' && <SolidifyPanel parts={parts} />}
         {tool === 'vc' && <VcPanel />}
         {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && tool !== 'shapes' && <InfoPanel parts={parts} />}
       </div>

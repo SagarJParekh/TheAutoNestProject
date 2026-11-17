@@ -11,6 +11,7 @@ import { SUPPORT_PRESETS } from '../geometry/supports';
 import { DEFAULT_SHAPE } from '../geometry/shapes';
 import { DEFAULT_LATTICE } from '../geometry/lattice';
 import { DEFAULT_WRAP } from '../geometry/wrap';
+import { DEFAULT_SOLIDIFY } from '../geometry/solidify';
 import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 
 export interface HistoryEntry {
@@ -221,6 +222,7 @@ export const useStore = create<AppState>(() => ({
     shape: { ...DEFAULT_SHAPE },
     lattice: { ...DEFAULT_LATTICE },
     wrap: { ...DEFAULT_WRAP, keep: false },
+    solidify: { ...DEFAULT_SOLIDIFY, source: 'faces', angleTolerance: 20, grow: 'smooth', keep: true, cutPart: false },
     vc: { scope: 'all', split: false, keepOriginal: true, spread: true },
     align: { mode: 'mate', offset: 0, center: true },
     props: { diameter: 2, spacing: 8, margin: 2, maxLength: 10000, embed: 0.5, merge: false, mode: 'single', shape: 'circle', thinEnds: true, tipDiameter: 1, tipLength: 0.5 },

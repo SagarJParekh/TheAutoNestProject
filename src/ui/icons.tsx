@@ -50,6 +50,8 @@ export const Icon = {
   boolean: P(<><circle cx="9" cy="10" r="6" /><circle cx="15" cy="14" r="6" /></>),
   lattice: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /><path d="M3 3l18 18M21 3 3 21" strokeOpacity=".45" /></>),
   shapes: P(<><path d="M3 13l4-2 4 2v5l-4 2-4-2z" /><circle cx="17" cy="7" r="4" /><path d="M14 21l3-6 3 6z" /></>),
+  // a curved sheet (dashed) above a solid slab with the same curved top
+  solidify: P(<><path d="M3 7c4-3 14-3 18 0" strokeDasharray="2.5 2" /><path d="M3 12c4-3 14-3 18 0v7H3z" /></>),
   wrap: P(<><path d="M7 9l3-3h4l2 3v6l-3 3h-4l-2-3z" /><path d="M5 8a8 8 0 0 1 14 0c2 3 2 7-1 10a8 8 0 0 1-12 0c-3-3-3-7-1-10z" strokeDasharray="3 2" /></>),
   theme: P(<><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.5-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z" /><circle cx="7.5" cy="11" r="1.2" /><circle cx="10" cy="7" r="1.2" /><circle cx="15" cy="7.5" r="1.2" /></>),
   warning: P(<><path d="M12 3 2 20h20z" /><path d="M12 9.5v5M12 17.5v.01" /></>),

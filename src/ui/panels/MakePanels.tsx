@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { useStore } from '../../state/store';
-import { previewLattice, previewMinBox, previewMoulds, previewShape, previewShrinkwrap, vcParts } from '../../state/makeActions';
+import { previewLattice, previewMinBox, previewMoulds, previewShape, previewShrinkwrap, previewSolidify, vcParts } from '../../state/makeActions';
+import { DEFAULT_SOLIDIFY } from '../../geometry/solidify';
+import { FacePickSection } from './FacePickSection';
 import { live } from '../../state/livePreview';
+import { regrowFace } from '../../state/actions';
 import { useSetting } from './RepairTabs';
 import { SHAPES, shapeFields, DEFAULT_SHAPE, type ShapeKind, type ShapeParams } from '../../geometry/shapes';
 import { LATTICES, DEFAULT_LATTICE } from '../../geometry/lattice';
@@ -225,6 +228,128 @@ export function WrapPanel({ parts }: { parts: Part[] }) {
         part. Works on broken scans and meshes with many shells or open edges. Detail finer than the voxel size is smoothed.
       </Hint>
     </Section>
+  );
+}
+
+// ------------------------------------------------------------------ surface to solid
+
+/**
+ * Surface to solid: take a surface (picked faces of a part, or a whole open
+ * part) and make it a solid: thicken it, or fill it to a flat base (fixture).
+ */
+export function SolidifyPanel({ parts }: { parts: Part[] }) {
+  const [st, setSt] = useSetting('solidify');
+  const preview = useStore((s) => s.preview);
+  const fs = useStore((s) => s.faceSelection);
+  const ready = st.source === 'faces' ? !!fs : parts.some((p) => !p.locked);
+  return (
+    <>
+      <Section title="1. Surface">
+        <Row label="Surface">
+          <Segmented
+            value={st.source}
+            onChange={(source) => setSt({ source })}
+            options={[
+              { value: 'faces', label: 'Picked faces', title: 'Pick the surface on a part: it is taken off the part (the part is not changed)' },
+              { value: 'part', label: 'Whole part', title: 'The selected part is the surface (e.g. an imported open sheet)' },
+            ]}
+          />
+        </Row>
+        {st.source === 'faces' && (
+          <Row label="Pick grows">
+            <Segmented
+              value={st.grow}
+              onChange={(grow) => {
+                setSt({ grow });
+                void regrowFace();
+              }}
+              options={[
+                { value: 'smooth', label: 'Follow curvature', title: 'Across smooth curvature, up to edges sharper than the angle tolerance (a whole organic surface)' },
+                { value: 'angle', label: 'Within angle of click', title: 'Only triangles turned less than the angle tolerance from the clicked one (a limited patch, e.g. the underside of a smooth part)' },
+              ]}
+            />
+          </Row>
+        )}
+        {st.source === 'faces' ? <FacePickSection tool="solidify" /> : !ready && <Hint>Select the part that is the surface.</Hint>}
+      </Section>
+      <Section title="2. Solid">
+        <Row label="Make">
+          <Segmented
+            value={st.mode}
+            onChange={(mode) => setSt({ mode })}
+            options={[
+              { value: 'thicken', label: 'Thicken', title: 'A shell of even thickness following the surface' },
+              { value: 'base', label: 'Fill to base', title: 'Fill the surface straight down (or up) to a flat base: a fixture shaped like the part' },
+            ]}
+          />
+        </Row>
+        {st.mode === 'thicken' ? (
+          <>
+            <Row label="Thickness">
+              <NumberField value={st.thickness} min={0.05} step={0.5} suffix="mm" title="Wall thickness, square to the surface" onChange={(thickness) => setSt({ thickness: Math.max(0.05, thickness) })} />
+            </Row>
+            <Row label="Grow">
+              <Segmented
+                value={st.side}
+                onChange={(side) => setSt({ side })}
+                options={[
+                  { value: 'out', label: 'Outwards', title: 'Away from the part (along the surface normals)' },
+                  { value: 'in', label: 'Inwards', title: 'Into the part (against the normals)' },
+                  { value: 'both', label: 'Both', title: 'Half the thickness on each side' },
+                ]}
+              />
+            </Row>
+          </>
+        ) : (
+          <>
+            <Row label="Fill towards">
+              <Segmented
+                value={st.baseDir}
+                onChange={(baseDir) => setSt({ baseDir })}
+                options={[
+                  { value: 'down', label: 'Base below', title: 'A cradle under the part (pick the part’s underside)' },
+                  { value: 'up', label: 'Base above', title: 'A clamp over the part (pick its top)' },
+                ]}
+              />
+            </Row>
+            <Row label="Base beyond surface">
+              <NumberField value={st.baseThickness} min={0.1} step={0.5} suffix="mm" title="How far the flat base reaches past the surface’s lowest (highest) point" onChange={(baseThickness) => setSt({ baseThickness: Math.max(0.1, baseThickness) })} />
+            </Row>
+          </>
+        )}
+        {(st.mode === 'base' || st.side !== 'both') && (
+          <Row label="Gap to surface">
+            <NumberField value={st.gap} min={0} step={0.1} suffix="mm" title="Clearance between the surface and the solid (0 = touching)" onChange={(gap) => setSt({ gap: Math.max(0, gap) })} />
+          </Row>
+        )}
+        {st.mode === 'base' && (
+          <Check checked={st.facingOnly} onChange={(facingOnly) => setSt({ facingOnly })}>
+            Use only the surface facing the base (the fixture stops at the part's outline)
+          </Check>
+        )}
+        {st.mode === 'base' && (
+          <Check checked={st.cutPart} onChange={(cutPart) => setSt({ cutPart })}>
+            Cut the part out of the fixture (where it reaches past the picked surface)
+          </Check>
+        )}
+        <Check checked={st.keep} onChange={(keep) => setSt({ keep })}>
+          Keep the part (add the solid as a new part)
+        </Check>
+        <div className="btn-row">
+          <button className="btn primary grow" disabled={!ready || !!preview} onClick={() => live(previewSolidify)}>
+            Preview solid
+          </button>
+          <button className="btn" onClick={() => setSt({ ...DEFAULT_SOLIDIFY, source: st.source, angleTolerance: 20, grow: 'smooth', keep: st.keep, cutPart: false })}>
+            Reset
+          </button>
+        </div>
+        <Hint>
+          Turns a zero-thickness surface into a solid. To make a fixture: pick the organic surface of the part where it should rest (e.g. its underside),
+          choose Fill to base with a small gap, and keep the part: the new solid is shaped like the part and holds it. Thicken makes an even shell instead
+          (a skin, a cover, a sheet from a scan).
+        </Hint>
+      </Section>
+    </>
   );
 }
 

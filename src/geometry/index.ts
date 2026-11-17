@@ -54,3 +54,4 @@ export * from './wrap';
 export * from './minbox';
 export * from './mould';
 export * from './supports';
+export * from './solidify';

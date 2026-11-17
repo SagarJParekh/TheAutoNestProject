@@ -27,6 +27,7 @@ const TOOLS: { id: ToolId; label: string; short?: string; icon: ReactNode; key: 
   { id: 'offset', label: 'Offset', icon: Icon.offset, key: 'U' },
   { id: 'blend', label: 'Fillet & Chamfer', short: 'Fillet', icon: Icon.fillet, key: 'palette: fillet' },
   { id: 'wrap', label: 'Shrinkwrap', icon: Icon.wrap, key: 'palette: wrap' },
+  { id: 'solidify', label: 'Surface to Solid', short: 'Surf→Solid', icon: Icon.solidify, key: 'palette: surface' },
   { id: 'vc', label: 'VC Module', icon: Icon.mould, key: 'palette: vc' },
   { id: 'measure', label: 'Measure', icon: Icon.measure, key: 'D' },
   { id: 'dimensions', label: 'Dimensions', icon: Icon.dimensions, key: 'I' },
