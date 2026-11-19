@@ -14,6 +14,7 @@ import { commit, getState, notify, selectedParts, updateParts } from './store';
 import type { Part, Transform } from './types';
 import { eulerDegFromQuaternion, quaternionOf, worldBounds, worldMesh } from './math';
 import { partFromWorld, replaceWithWorldMeshes, runJob, setPreview } from './actions';
+import { markedTriangles } from './editActions';
 import { nextColor } from './palette';
 import { SUFFIX, withSuffix } from './naming';
 
@@ -246,15 +247,20 @@ export async function previewSolidify() {
   const s = getState();
   const st = s.settings.solidify;
   const fs = s.faceSelection;
-  const part = st.source === 'faces' ? (fs ? s.parts.find((p) => p.id === fs.partId) : undefined) : firstEditable();
-  if (!part) return notify('warning', st.source === 'faces' ? 'Pick the surface on a part first' : 'Select the part (surface) to make solid');
+  const marks = st.source === 'marked' ? markedTriangles() : null;
+  const part = st.source === 'faces' ? (fs ? s.parts.find((p) => p.id === fs.partId) : undefined) : st.source === 'marked' ? marks?.part : firstEditable();
+  if (!part)
+    return notify(
+      'warning',
+      st.source === 'faces' ? 'Pick the surface on a part first' : st.source === 'marked' ? 'Mark the surface first (Mark tools in the view)' : 'Select the part (surface) to make solid',
+    );
   if (!st.keep && part.locked) return notify('warning', 'The part is locked');
   if (st.source === 'faces' && fs?.mesh && fs.mesh !== part.mesh) return notify('warning', 'The part changed since the surface was picked: pick it again');
   const { source, angleTolerance: _a, grow: _g, keep, cutPart, ...params } = st;
   void _a;
   void _g;
   const world = worldMesh(part);
-  const region = source === 'faces' && fs ? fs.tris : null;
+  const region = source === 'faces' && fs ? fs.tris : source === 'marked' && marks ? Uint32Array.from(marks.tris) : null;
   const r = await runJob(`Surface to solid (${part.name})`, 'solidify', { mesh: world, tris: region, params, cut: cutPart && st.mode === 'base' ? world : undefined, sheet: source === 'part' });
   if (!r) return;
   if (!r.mesh.indices.length) return notify('warning', 'Nothing was made from that surface');

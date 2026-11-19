@@ -417,17 +417,33 @@ export async function previewRemesh(scope: 'part' | 'marked') {
   const m = markedPart();
   const part = scope === 'marked' ? m?.part : (selectedParts().find((p) => !p.locked) ?? undefined);
   if (!part) return notify('warning', scope === 'marked' ? 'Mark the triangles to remesh first' : 'Select an unlocked part first');
-  if (part.locked) return notify('warning', `${part.name} is locked`);
   if (scope === 'marked' && !m?.te.tris.length) return notify('warning', 'Mark the triangles to remesh first');
+  const region = scope === 'marked' ? Uint32Array.from(m!.te.tris) : null;
+  const label = scope === 'marked' ? `Remesh ${m!.te.tris.length.toLocaleString()} marked triangles` : `Remesh ${part.name}`;
+  return previewRemeshRegion(part, region, label);
+}
+
+/** The marked triangles and their part (null when nothing is marked or the part changed since). */
+export function markedTriangles(): { part: Part; tris: number[] } | null {
+  const m = markedPart();
+  return m && m.te.tris.length ? { part: m.part, tris: m.te.tris } : null;
+}
+
+/**
+ * Preview an isotropic remesh of a part, only inside `region` (triangle ids of
+ * its mesh) when given: the region's border stays attached to the rest, the
+ * triangles outside it are not touched.
+ */
+export async function previewRemeshRegion(part: Part, region: Uint32Array | null, label: string) {
+  if (part.locked) return notify('warning', `${part.name} is locked`);
   const st = getState().settings.remesh;
   const sc = part.transform.scale;
   const k = (Math.abs(sc[0]) + Math.abs(sc[1]) + Math.abs(sc[2])) / 3 || 1;
   // estimate before starting: very small edges on big parts would never finish
-  const region = scope === 'marked' ? Uint32Array.from(m!.te.tris) : null;
   const area = regionArea(part.mesh, region) * k * k;
   const estimate = estimateRemeshTriangles(area, st.edgeLength);
   if (estimate > 6_000_000) return notify('warning', `About ${estimate.toLocaleString()} triangles at ${st.edgeLength} mm; use a larger edge length`);
-  const r = await runJob(scope === 'marked' ? 'Remeshing marked area' : 'Remeshing part', 'remesh', {
+  const r = await runJob(region ? 'Remeshing the surface' : 'Remeshing part', 'remesh', {
     mesh: part.mesh,
     edgeLength: st.edgeLength / k,
     region,
@@ -435,18 +451,32 @@ export async function previewRemesh(scope: 'part' | 'marked') {
     featureAngle: st.featureAngle,
   });
   if (!r) return;
-  const label = scope === 'marked' ? `Remesh ${m!.te.tris.length.toLocaleString()} marked triangles` : `Remesh ${part.name}`;
+  const total = part.mesh.indices.length / 3;
   setPreview({
-    tool: 'repair',
+    tool: getState().tool,
     label,
     replaces: [part.id],
     meshes: [{ name: part.name, mesh: worldMesh({ ...part, mesh: r.mesh }), color: part.color }],
-    summary: [`Triangles: ${r.trianglesBefore.toLocaleString()} → ${r.trianglesAfter.toLocaleString()}`, `Target edge length: ${st.edgeLength} mm`],
+    summary: [
+      region
+        ? `Surface: ${region.length.toLocaleString()} of ${total.toLocaleString()} triangles remeshed, the rest of the part untouched (border stays attached)`
+        : 'Whole part',
+      `Triangles (part): ${r.trianglesBefore.toLocaleString()} → ${r.trianglesAfter.toLocaleString()}`,
+      `Target edge length: ${st.edgeLength} mm · sharp edges over ${st.featureAngle}° kept`,
+    ],
     apply: () => {
       afterLocalChange(label, part, r.mesh);
-      setState({ triEdit: null });
+      // the old triangle ids mean nothing on the new mesh
+      setState({ triEdit: null, faceSelection: null });
     },
   });
+}
+
+/** Average edge length (world mm) of a region of a part, a good starting remesh size. */
+export function regionEdgeLength(part: Part, region: ArrayLike<number> | null): number {
+  const sc = part.transform.scale;
+  const k = (Math.abs(sc[0]) + Math.abs(sc[1]) + Math.abs(sc[2])) / 3;
+  return meanEdgeLength(part.mesh, region) * k;
 }
 
 function regionArea(mesh: MeshData, region: ArrayLike<number> | null): number {
@@ -732,7 +762,7 @@ export function deleteToolSelection(): boolean {
   // a picked surface (face pick in Extrude, Offset, …)
   const fs = s.faceSelection;
   // surface to solid only takes the surface off the part: Delete drops the pick, never the part's triangles
-  if (fs && s.tool === 'solidify') return setState({ faceSelection: null, preview: null }), true;
+  if (fs && (s.tool === 'solidify' || s.tool === 'remesh')) return setState({ faceSelection: null, preview: null }), true;
   const fsPart = fs && partById(fs.partId);
   if (fs && fsPart && (!fs.mesh || fs.mesh === fsPart.mesh) && fs.tris.length) {
     if (fsPart.locked) return notify('warning', `${fsPart.name} is locked`), true;

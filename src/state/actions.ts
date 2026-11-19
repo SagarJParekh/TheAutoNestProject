@@ -353,7 +353,7 @@ export function setTool(tool: ToolId) {
     preview: null,
     pickMode: null,
     pickSlot: 'primary',
-    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' ? s.faceSelection : null,
+    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' || tool === 'remesh' ? s.faceSelection : null,
     ...extra,
   });
 }
@@ -812,7 +812,15 @@ export function mergeFacePicks(old: FaceSelection | null, add: FaceSelection, me
 
 /** The angle tolerance face picks grow with, from the current tool's settings. */
 const faceAngle = (s: ReturnType<typeof getState>) =>
-  s.tool === 'perforate' ? s.settings.perforate.angleTolerance : s.tool === 'solidify' ? s.settings.solidify.angleTolerance : s.settings.extrude.angleTolerance;
+  s.tool === 'perforate'
+    ? s.settings.perforate.angleTolerance
+    : s.tool === 'solidify'
+      ? s.settings.solidify.angleTolerance
+      : s.tool === 'remesh'
+        ? s.settings.remesh.angleTolerance
+        : s.settings.extrude.angleTolerance;
+/** Face picks that grow across smooth curvature (neighbour to neighbour) rather than within an angle of the clicked face. */
+const smoothPick = (s: ReturnType<typeof getState>) => (s.tool === 'solidify' && s.settings.solidify.grow !== 'angle') || s.tool === 'remesh';
 
 export async function pickFace(partId: string, faceIndex: number) {
   const s = getState();
@@ -820,10 +828,10 @@ export async function pickFace(partId: string, faceIndex: number) {
   if (!p) return;
   const angle = faceAngle(s);
   // surface to solid: organic surfaces, so the selection grows across gentle curvature (neighbour to neighbour)
-  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle, smooth: s.tool === 'solidify' && s.settings.solidify.grow !== 'angle' }, { silent: p.mesh.indices.length < 600000 });
+  const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed: faceIndex, angle, smooth: smoothPick(s) }, { silent: p.mesh.indices.length < 600000 });
   if (!r) return;
   const pick: FaceSelection = { partId, seed: faceIndex, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh };
-  if (s.tool === 'extrude' || s.tool === 'solidify') {
+  if (s.tool === 'extrude' || s.tool === 'solidify' || s.tool === 'remesh') {
     // extrude takes several faces: each click adds one (or drops it again), picking stays on
     const old = getState().faceSelection;
     const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
@@ -848,7 +856,7 @@ export async function regrowFace() {
   const angle = faceAngle(s);
   let sel: FaceSelection | null = null;
   for (const seed of seeds) {
-    const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed, angle, smooth: s.tool === 'solidify' && s.settings.solidify.grow !== 'angle' }, { silent: true });
+    const r = await runJob('Selecting face', 'grow', { mesh: p.mesh, seed, angle, smooth: smoothPick(s) }, { silent: true });
     if (!r) return;
     sel = mergeFacePicks(sel, { partId: p.id, seed, tris: r.tris, normal: r.normal, centroid: r.centroid, area: r.area, mesh: p.mesh }, p.mesh);
   }
@@ -1092,13 +1100,14 @@ export function cancelTool() {
     pickMode: null,
     pickSlot: 'primary',
     zoomWindow: false,
-    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' ? null : s.faceSelection,
+    faceSelection: tool === 'extrude' || tool === 'perforate' || tool === 'solidify' || tool === 'remesh' ? null : s.faceSelection,
     facePicks: tool === 'repair' || tool === 'texture' || tool === 'align' || tool === 'props' || tool === 'offset' ? {} : s.facePicks,
     blendEdges: tool === 'blend' ? s.blendEdges : [],
     pointPicks: tool === 'props' || tool === 'label' ? {} : s.pointPicks,
     lassoMode: false,
     polyMode: false,
-    triEdit: null,
+    // marked triangles stay (the Mark widget uses them in every tool); vertex / bridge picks go
+    triEdit: s.triEdit ? { ...s.triEdit, verts: [], bridgeA: undefined, bridgeB: undefined } : null,
     shellView: null,
     perfPoints: tool === 'perforate' ? [] : s.perfPoints,
     measurePending: { entities: [], points: [] },

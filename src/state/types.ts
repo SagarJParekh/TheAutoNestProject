@@ -37,7 +37,7 @@ export interface Part {
 
 export type ToolId =
   | 'transform' | 'clip' | 'cut' | 'repair' | 'hollow' | 'perforate' | 'extrude' | 'measure' | 'label' | 'texture' | 'align' | 'props'
-  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc' | 'solidify';
+  | 'dimensions' | 'report' | 'offset' | 'blend' | 'build' | 'boolean' | 'lattice' | 'shapes' | 'wrap' | 'vc' | 'solidify' | 'remesh';
 
 /** An edge picked for fillet / chamfer, stored in the part's local space. */
 export interface BlendEdgePick {
@@ -253,7 +253,7 @@ export interface ToolSettings {
   lattice: LatticeParams;
   wrap: WrapParams & { keep: boolean };
   /** surface to solid: the surface is picked faces of a part or the whole part; keep the part; cut the part out of the result */
-  solidify: import('../geometry').SolidifyParams & { source: 'faces' | 'part'; angleTolerance: number; grow: 'smooth' | 'angle'; keep: boolean; cutPart: boolean };
+  solidify: import('../geometry').SolidifyParams & { source: 'faces' | 'marked' | 'part'; angleTolerance: number; grow: 'smooth' | 'angle'; keep: boolean; cutPart: boolean };
   /** VC module: which parts, split the mould in two halves, keep the master parts */
   vc: { scope: 'all' | 'selected'; split: boolean; keepOriginal: boolean; spread: boolean };
   align: { mode: 'mate' | 'flush'; offset: number; center: boolean };
@@ -293,7 +293,14 @@ export interface ToolSettings {
     /** window marking also takes hidden triangles behind the visible surface */
     windowThrough: boolean;
   };
-  remesh: { edgeLength: number; iterations: number; featureAngle: number };
+  remesh: {
+    edgeLength: number;
+    iterations: number;
+    featureAngle: number;
+    /** Remesh tool: the surface to remesh (picked faces, the marked triangles, or the whole part) and how far a face pick grows */
+    source: 'faces' | 'marked' | 'part';
+    angleTolerance: number;
+  };
   offset: {
     mode: 'global' | 'local';
     /** mm; positive grows the part / pushes the surface out */

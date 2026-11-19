@@ -2,11 +2,11 @@ import { NumberField, Row } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { cancelPreview, regrowFace } from '../../state/actions';
 
-export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'solidify' }) {
+export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'solidify' | 'remesh' }) {
   const fs = useStore((s) => s.faceSelection);
   const pickMode = useStore((s) => s.pickMode);
   const tol = useStore((s) => s.settings[tool].angleTolerance);
-  const multi = tool === 'extrude' || tool === 'solidify';
+  const multi = tool === 'extrude' || tool === 'solidify' || tool === 'remesh';
   return (
     <>
       <button className={`btn wide ${pickMode === 'face' ? 'primary' : ''}`} onClick={() => setState({ pickMode: pickMode === 'face' ? null : 'face', pickSlot: 'primary' })}>
@@ -42,7 +42,7 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'sol
       )}
       {multi && (
         <p className="muted small">
-          {tool === 'solidify'
+          {tool === 'solidify' || tool === 'remesh'
             ? 'Click the surface to take: it grows across smooth curvature up to edges sharper than the angle tolerance. Click more to add, click a picked one again to drop it.'
             : 'Click several faces to extrude them together; click a picked face again to drop it.'}
         </p>
@@ -54,7 +54,7 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'sol
           max={89}
           step={0.5}
           suffix="°"
-          title={tool === 'solidify' ? 'Grow the surface across neighbouring triangles that bend less than this from each other (organic surfaces: 15–30°)' : 'Grow the selection across neighbouring triangles within this angle of the picked face'}
+          title={tool === 'solidify' || tool === 'remesh' ? 'Grow the surface across neighbouring triangles that bend less than this from each other (organic surfaces: 15–30°)' : 'Grow the selection across neighbouring triangles within this angle of the picked face'}
           onChange={(v) => {
             const s = getState();
             setState({ settings: { ...s.settings, [tool]: { ...s.settings[tool], angleTolerance: v } } });

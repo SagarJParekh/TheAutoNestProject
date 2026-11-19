@@ -17,6 +17,7 @@ import { DimensionsPanel } from './panels/DimensionsPanel';
 import { ReportPanel } from './panels/ReportPanel';
 import { OffsetPanel } from './panels/OffsetPanel';
 import { BlendPanel } from './panels/BlendPanel';
+import { RemeshPanel } from './panels/RemeshPanel';
 
 const TITLES = {
   transform: 'Transform',
@@ -41,6 +42,7 @@ const TITLES = {
   shapes: 'Shapes',
   wrap: 'Shrinkwrap',
   solidify: 'Surface to solid',
+  remesh: 'Remesh',
   vc: 'VC module',
 };
 
@@ -83,6 +85,7 @@ export function PropertiesPanel() {
         {tool === 'shapes' && <ShapesPanel />}
         {tool === 'wrap' && <WrapPanel parts={parts} />}
         {tool === 'solidify' && <SolidifyPanel parts={parts} />}
+        {tool === 'remesh' && <RemeshPanel parts={parts} />}
         {tool === 'vc' && <VcPanel />}
         {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && tool !== 'shapes' && <InfoPanel parts={parts} />}
       </div>

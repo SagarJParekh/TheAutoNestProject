@@ -190,17 +190,9 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
   const st = useStore((s) => s.settings.triEdit);
   const te = useStore((s) => s.triEdit);
   const pickMode = useStore((s) => s.pickMode);
-  const preview = useStore((s) => s.preview);
   const live = te && part && te.partId === part.id && te.mesh === part.mesh ? te : null;
   const marked = live?.tris.length ?? 0;
   const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, triEdit: { ...getState().settings.triEdit, ...patch } } });
-  const marking = pickMode === 'triangle' || pickMode === 'brush' || pickMode === 'window';
-  const chooseTool = (markTool: MarkTool) => {
-    set({ markTool });
-    // switch the active pick mode along with the tool
-    if (marking) setState({ pickMode: PICK_FOR[markTool] });
-  };
-  const busy = !!preview || !!part?.locked;
   return (
     <>
       <Section title="Edit triangles">
@@ -220,6 +212,50 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
         {st.mode === 'bridge' ? (
           <BridgeControls part={part} />
         ) : st.mode === 'mark' ? (
+          <MarkControls part={part} />
+        ) : (
+          <>
+            <button className={`btn wide ${pickMode === 'vertex' ? 'primary' : ''}`} onClick={() => startTriPick('vertex')}>
+              {pickMode === 'vertex' ? 'Done creating' : 'Pick vertices…'}
+            </button>
+            <p className="muted small">
+              {live?.verts.length ? `${live.verts.length} of 3 vertices picked` : 'Click three existing vertices (corners) to add a triangle between them, e.g. across a hole.'}
+            </p>
+            {live?.verts.length ? (
+              <button className="btn" onClick={clearTriSelection}>
+                Restart
+              </button>
+            ) : null}
+          </>
+        )}
+        <Hint>Each delete / create / remesh is one undo step (Ctrl+Z). New triangles are wound to match the neighbouring open edges.</Hint>
+      </Section>
+      <RemeshSection part={part} marked={marked} />
+    </>
+  );
+}
+
+/**
+ * Marking triangles: the mark tools (triangle, plane, surface, shell, brush,
+ * window), grow / shrink / invert, and what to do with the marked triangles.
+ * Used in Repair → Edit and in the Mark widget in the view (every tool).
+ */
+export function MarkControls({ part, compact = false }: { part: Part | null; compact?: boolean }) {
+  const st = useStore((s) => s.settings.triEdit);
+  const te = useStore((s) => s.triEdit);
+  const pickMode = useStore((s) => s.pickMode);
+  const preview = useStore((s) => s.preview);
+  const live = te && part && te.partId === part.id && te.mesh === part.mesh ? te : null;
+  const marked = live?.tris.length ?? 0;
+  const set = (patch: Partial<typeof st>) => setState({ settings: { ...getState().settings, triEdit: { ...getState().settings.triEdit, ...patch } } });
+  const marking = pickMode === 'triangle' || pickMode === 'brush' || pickMode === 'window';
+  const chooseTool = (markTool: MarkTool) => {
+    set({ markTool });
+    // switch the active pick mode along with the tool
+    if (marking) setState({ pickMode: PICK_FOR[markTool] });
+  };
+  const busy = !!preview || !!part?.locked;
+  return (
           <>
             <div className="mark-tools">
               {MARK_TOOLS.map((m) => (
@@ -252,7 +288,7 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
               {marking ? 'Done marking' : `Start marking (${MARK_TOOLS.find((m) => m.value === st.markTool)!.label.toLowerCase()})…`}
             </button>
             <p className="muted small">{marked ? `${marked.toLocaleString()} triangles marked` : 'Nothing marked yet. Ctrl + click / drag unmarks.'}</p>
-            <EditShellsBox part={part} marked={marked} />
+            {!compact && <EditShellsBox part={part} marked={marked} />}
             <div className="btn-grid three">
               <button className="btn" disabled={!marked} onClick={() => growMarked(1)} title="Add the triangles next to the marked area">
                 Grow
@@ -282,25 +318,6 @@ export function TriEditTab({ parts }: { parts: Part[] }) {
               </button>
             </div>
           </>
-        ) : (
-          <>
-            <button className={`btn wide ${pickMode === 'vertex' ? 'primary' : ''}`} onClick={() => startTriPick('vertex')}>
-              {pickMode === 'vertex' ? 'Done creating' : 'Pick vertices…'}
-            </button>
-            <p className="muted small">
-              {live?.verts.length ? `${live.verts.length} of 3 vertices picked` : 'Click three existing vertices (corners) to add a triangle between them, e.g. across a hole.'}
-            </p>
-            {live?.verts.length ? (
-              <button className="btn" onClick={clearTriSelection}>
-                Restart
-              </button>
-            ) : null}
-          </>
-        )}
-        <Hint>Each delete / create / remesh is one undo step (Ctrl+Z). New triangles are wound to match the neighbouring open edges.</Hint>
-      </Section>
-      <RemeshSection part={part} marked={marked} />
-    </>
   );
 }
 

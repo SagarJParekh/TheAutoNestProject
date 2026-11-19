@@ -104,6 +104,8 @@ export interface AppState {
   polyMode: boolean;
   shellView: ShellView | null;
   triEdit: TriEdit | null;
+  /** the Mark widget in the view is open: marked triangles are shown and can be marked in every tool */
+  markBar: boolean;
   /** wall thickness analysis per part (Measure tool) */
   thickness: Record<string, { mesh: MeshData; result: ThicknessResult }>;
   /** problem cluster the repair tool is zoomed to */
@@ -197,6 +199,7 @@ export const useStore = create<AppState>(() => ({
   polyMode: false,
   shellView: null,
   triEdit: null,
+  markBar: false,
   errorFocus: null,
   thickness: {},
   buildEdit: 'select',
@@ -248,7 +251,7 @@ export const useStore = create<AppState>(() => ({
     perforateExtra: { keepPlugs: false },
     openEdges: { maxPerimeter: 20 },
     triEdit: { mode: 'mark', bridgeSide: 'A', markTool: 'triangle', angle: 20, planeAngle: 2, brushRadius: 3, windowThrough: false },
-    remesh: { edgeLength: 1, iterations: 5, featureAngle: 35 },
+    remesh: { edgeLength: 1, iterations: 5, featureAngle: 35, source: 'faces', angleTolerance: 20 },
     offset: { mode: 'global', distance: 1, voxel: 0, asCopy: false, smooth: true, angle: 20 },
     blend: { kind: 'fillet', size: 2 },
     cutMode: 'plane',

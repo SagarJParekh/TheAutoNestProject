@@ -28,6 +28,8 @@ export const HELP: Record<string, string> = {
   fillet: 'Fillet & Chamfer: round (fillet) or bevel (chamfer) picked sharp edges; outside edges lose material, inside edges gain it.',
   'supports (sla)': 'Supports: analyse the overhangs of a part and generate supports for SLA, DLP (tip supports on a raft) or DMLS (volume / wall supports), with the standard parameters of each.',
   'vc module': 'VC module (vacuum casting): arrange parts in their minimum bounding box, then create silicone mould blocks around all or selected parts — 20 / 30 / 50 mm clearance on all sides by part size — with the part as the cavity.',
+  remesh: 'Remesh: make the triangles of a surface even. Only the picked surfaces or the marked triangles change (their border stays joined to the rest), or the whole part.',
+  mark: 'Mark: the Repair → Edit mark tools (triangle, plane, surface, shell, brush, window) from any tool. The marks stay when you change tools: Remesh and Surface to Solid can use them.',
   'surface to solid': 'Surface to Solid: turn a zero-thickness surface into a solid. Pick a surface on a part (organic surfaces grow across smooth curvature) or use a whole open part, then thicken it or fill it down to a flat base: a fixture that holds the part.',
   shrinkwrap: 'Shrinkwrap: wrap one closed surface around a part and make it solid — closes holes, gaps and cavities up to a size; good for broken scans.',
   measure: 'Measure: distances, angles, diameters and wall thickness between points, edges, surfaces, circles and spheres; plus a wall-thickness heat map.',

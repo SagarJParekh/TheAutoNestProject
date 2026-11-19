@@ -857,7 +857,7 @@ export class Viewer {
       const ef = s.tool === 'repair' && s.errorFocus?.partId === obj.part.id && s.errorFocus.mesh === obj.part.mesh ? s.errorFocus : null;
       const thk = s.tool === 'measure' && s.settings.thickness.show && s.thickness[obj.part.id]?.mesh === obj.part.mesh ? s.thickness[obj.part.id] : null;
       const thkSet = s.settings.thickness;
-      const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate' || s.tool === 'solidify') ? s.faceSelection : null;
+      const fs = s.faceSelection?.partId === obj.part.id && (s.tool === 'extrude' || s.tool === 'perforate' || s.tool === 'solidify' || s.tool === 'remesh') ? s.faceSelection : null;
       const hl = s.settings.highlight;
       const inRepair = s.tool === 'repair';
       const ix = inRepair ? s.intersections[obj.part.id] : undefined;
@@ -875,7 +875,7 @@ export class Viewer {
             (s.tool === 'offset' && slot === 'offset')),
       );
       const sv = inRepair && s.repairTab === 'shells' && s.shellView?.partId === obj.part.id && s.shellView.mesh === obj.part.mesh ? s.shellView : null;
-      const te = inRepair && s.repairTab === 'edit' && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
+      const te = ((inRepair && s.repairTab === 'edit') || s.markBar) && s.triEdit?.partId === obj.part.id && s.triEdit.mesh === obj.part.mesh ? s.triEdit : null;
       const blend = s.tool === 'blend' ? s.blendEdges.filter((e) => e.partId === obj.part.id && e.mesh === obj.part.mesh) : [];
       const key = `${analysis ? 'a' : ''}${hl.open}${hl.nonManifold}${hl.flipped}${hl.holeIndex}|${fs ? this.refId(fs.tris) + ':' + fs.seed : ''}|${showNormals ? `${s.settings.normals.outColor}${s.settings.normals.inColor}${a?.mesh === obj.part.mesh ? 'a' : ''}` : ''}|${picks.map(([k, p]) => k + p.seed + ':' + this.refId(p.tris)).join()}|${sv ? sv.selected.join(',') + ':' + sv.hover + ':' + sv.isolate : ''}|${te ? this.refId(te.tris) + ':' + te.verts.join(',') + ':' + this.refId(te.bridgeA ?? []) + ':' + this.refId(te.bridgeB ?? []) : ''}|${blend.length ? this.refId(s.blendEdges) : ''}|${ef ? this.refId(ef.group) : ''}|${thk ? `${this.refId(thk.result)}:${thkSet.view}:${thkSet.limit}:${thkSet.scaleMin}:${thkSet.scaleMax}` : ''}`;
       // hidden shells (Shells and Edit tabs): draw only the other triangles (draw groups need a material array;

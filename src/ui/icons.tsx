@@ -50,6 +50,10 @@ export const Icon = {
   boolean: P(<><circle cx="9" cy="10" r="6" /><circle cx="15" cy="14" r="6" /></>),
   lattice: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /><path d="M3 3l18 18M21 3 3 21" strokeOpacity=".45" /></>),
   shapes: P(<><path d="M3 13l4-2 4 2v5l-4 2-4-2z" /><circle cx="17" cy="7" r="4" /><path d="M14 21l3-6 3 6z" /></>),
+  // a brush marking triangles
+  brush: P(<><path d="M3 21l6-2 10-10-4-4L5 15z" /><path d="M13 7l4 4" /><path d="M3 21l2-6" /></>),
+  // a triangle mesh: half coarse, half fine
+  remesh: P(<><path d="M3 20h18L12 4z" /><path d="M7.5 12h9M12 20l-4.5-8M12 20l4.5-8" /><path d="M9.75 16h4.5M12 12l-2.25 4M12 12l2.25 4" strokeOpacity=".6" /></>),
   // a curved sheet (dashed) above a solid slab with the same curved top
   solidify: P(<><path d="M3 7c4-3 14-3 18 0" strokeDasharray="2.5 2" /><path d="M3 12c4-3 14-3 18 0v7H3z" /></>),
   wrap: P(<><path d="M7 9l3-3h4l2 3v6l-3 3h-4l-2-3z" /><path d="M5 8a8 8 0 0 1 14 0c2 3 2 7-1 10a8 8 0 0 1-12 0c-3-3-3-7-1-10z" strokeDasharray="3 2" /></>),

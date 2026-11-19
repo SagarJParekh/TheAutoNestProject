@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
-import { useStore } from '../../state/store';
+import { setState, useStore } from '../../state/store';
 import { previewLattice, previewMinBox, previewMoulds, previewShape, previewShrinkwrap, previewSolidify, vcParts } from '../../state/makeActions';
 import { DEFAULT_SOLIDIFY } from '../../geometry/solidify';
 import { FacePickSection } from './FacePickSection';
@@ -241,16 +241,21 @@ export function SolidifyPanel({ parts }: { parts: Part[] }) {
   const [st, setSt] = useSetting('solidify');
   const preview = useStore((s) => s.preview);
   const fs = useStore((s) => s.faceSelection);
-  const ready = st.source === 'faces' ? !!fs : parts.some((p) => !p.locked);
+  const te = useStore((s) => s.triEdit);
+  const ready = st.source === 'faces' ? !!fs : st.source === 'marked' ? !!te?.tris.length : parts.some((p) => !p.locked);
   return (
     <>
       <Section title="1. Surface">
         <Row label="Surface">
           <Segmented
             value={st.source}
-            onChange={(source) => setSt({ source })}
+            onChange={(source) => {
+              setSt({ source });
+              if (source === 'marked') setState({ markBar: true });
+            }}
             options={[
               { value: 'faces', label: 'Picked faces', title: 'Pick the surface on a part: it is taken off the part (the part is not changed)' },
+              { value: 'marked', label: 'Marked', title: 'The triangles marked with the Mark tools in the view (brush, window, surface…)' },
               { value: 'part', label: 'Whole part', title: 'The selected part is the surface (e.g. an imported open sheet)' },
             ]}
           />
@@ -270,7 +275,13 @@ export function SolidifyPanel({ parts }: { parts: Part[] }) {
             />
           </Row>
         )}
-        {st.source === 'faces' ? <FacePickSection tool="solidify" /> : !ready && <Hint>Select the part that is the surface.</Hint>}
+        {st.source === 'faces' ? (
+          <FacePickSection tool="solidify" />
+        ) : st.source === 'marked' ? (
+          <Hint>{te?.tris.length ? `${te.tris.length.toLocaleString()} triangles marked.` : 'Mark the surface with the Mark tools in the view (e.g. Brush or Surface).'}</Hint>
+        ) : (
+          !ready && <Hint>Select the part that is the surface.</Hint>
+        )}
       </Section>
       <Section title="2. Solid">
         <Row label="Make">
