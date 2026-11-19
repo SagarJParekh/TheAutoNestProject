@@ -116,6 +116,8 @@ export interface AppState {
   /** Build generation: the tab open in the left and right panels */
   buildLeftTab: 'parts' | 'printer' | 'nesting';
   buildRightTab: 'builds' | 'parts' | 'supports' | 'edit';
+  /** Build generation: the platform (plate and grid) hidden in the view */
+  buildHidePlatform: boolean;
   /** side panels collapsed to a thin bar */
   panelsCollapsed: { left: boolean; right: boolean };
   /** touch points selected while editing supports: copy key and touch point index */
@@ -219,6 +221,7 @@ export const useStore = create<AppState>(() => ({
   supportTick: 0,
   supportPending: 0,
   supportEdit: null,
+  buildHidePlatform: false,
   buildLeftTab: 'parts',
   buildRightTab: 'builds',
   panelsCollapsed: (() => {

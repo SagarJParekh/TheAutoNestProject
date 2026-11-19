@@ -82,7 +82,7 @@ function viewState(s: AppState): AppState {
     zoomWindow: false,
     lassoMode: false,
     polyMode: false,
-    buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset, hidePlatform: !!s.supportEdit },
+    buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset, hidePlatform: !!s.supportEdit || s.buildHidePlatform },
     supportPoints: s.supportEdit ? touchOverlay(s) : null,
     // locked copies: the gizmo only offers their free axes, pick & place only moves them along free axes
     gizmoLocks: s.selection.length === 1 ? (s.buildGen.locks?.[s.selection[0]] ?? null) : null,

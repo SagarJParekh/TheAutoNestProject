@@ -46,6 +46,7 @@ export function BuildToolRow() {
   const selection = useStore((s) => s.selection);
   const supportEdit = useStore((s) => s.supportEdit);
   const busy = useStore((s) => s.buildGen.busy);
+  const hidePlatform = useStore((s) => s.buildHidePlatform);
   const [arrayOpen, setArrayOpen] = useState(false);
   const [arr, setArr] = useState({ nx: 3, ny: 2, gx: 3, gy: 3 });
   if (workspace !== 'build') return null;
@@ -115,6 +116,13 @@ export function BuildToolRow() {
       <Group caption="View">
         <Tool icon={Icon.eyeOff} label="Hide" title="Hide the selected parts / copies" disabled={!selection.length} onClick={hideBuildSelection} />
         <Tool icon={Icon.eye} label={hidden ? `Show (${hidden})` : 'Show'} title="Show everything again" disabled={!hidden} onClick={showAllBuildParts} />
+        <Tool
+          icon={Icon.grid}
+          label="Platform"
+          title={hidePlatform ? 'Show the platform (plate and grid) again' : 'Hide the platform (plate and grid), e.g. to look at the parts from below'}
+          active={!hidePlatform}
+          onClick={() => setState((s) => ({ buildHidePlatform: !s.buildHidePlatform }))}
+        />
       </Group>
       <Group caption="Lock">
         <Tool icon={Icon.lock} label="Lock" title="Lock the selected copies where they are (nesting arranges the rest around them)" disabled={!has} onClick={() => setCopyLocks(targets, [true, true, true], [true, true, true])} />
