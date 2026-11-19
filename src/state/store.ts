@@ -17,7 +17,22 @@ import { DEFAULT_APPEARANCE, loadAppearance, type Appearance } from './theme';
 export interface HistoryEntry {
   label: string;
   parts: Part[];
+  /** the selections at that point (marked triangles, picked surfaces / planes, picked edges), restored with it */
+  picks?: PickSnap;
+  /** a selection step only (the parts did not change) */
+  pickOnly?: boolean;
+  /** when it was made (successive samples of one brush stroke make one step) */
+  at?: number;
 }
+
+/** The selections kept in the undo history. */
+export interface PickSnap {
+  triEdit: AppState['triEdit'];
+  faceSelection: AppState['faceSelection'];
+  facePicks: AppState['facePicks'];
+  blendEdges: AppState['blendEdges'];
+}
+const pickSnap = (s: AppState): PickSnap => ({ triEdit: s.triEdit, faceSelection: s.faceSelection, facePicks: s.facePicks, blendEdges: s.blendEdges });
 
 /** A Build generation undo step: the whole build state before the change. */
 export interface BuildHistoryEntry {
@@ -74,6 +89,8 @@ export interface AppState {
   snap: { on: boolean; move: number; rotate: number };
   /** view only (Build generation): locked axes of the copy under the gizmo, and per part id for pick & place */
   gizmoLocks?: { t: [boolean, boolean, boolean]; r: [boolean, boolean, boolean] } | null;
+  /** set only on the view state: the move / rotate gizmo may carry several selected objects together */
+  multiGizmo?: boolean;
   placeLocks?: Record<string, [boolean, boolean, boolean]> | null;
   repairTab: RepairTab;
   intersections: Record<string, IntersectionEntry>;
@@ -313,7 +330,7 @@ export function commit(label: string, parts: Part[], extra: Partial<AppState> = 
     const r0 = old.transform.rotation, r1 = p.transform.rotation;
     return r0[0] === r1[0] && r0[1] === r1[1] && r0[2] === r1[2] ? p : { ...p, transform: { ...p.transform, rotation: r0 } };
   });
-  const past = trimHistory([...s.past, { label, parts: s.parts }], parts);
+  const past = trimHistory([...s.past, { label, parts: s.parts, picks: pickSnap(s), at: Date.now() }], parts);
   const ids = new Set(parts.map((p) => p.id));
   setState({
     parts,
@@ -322,6 +339,33 @@ export function commit(label: string, parts: Part[], extra: Partial<AppState> = 
     selection: (extra.selection ?? s.selection).filter((id) => ids.has(id)),
     ...extra,
   });
+}
+
+/**
+ * Change a selection (marked triangles, a picked surface / plane / edge) as an
+ * undoable step: Ctrl+Z takes back the last pick before any edit of the parts.
+ * The samples of one brush stroke (`stroke`) are one step.
+ */
+export function commitPicks(label: string, patch: Partial<AppState>, opts: { stroke?: boolean } = {}) {
+  const s = getState();
+  if (s.workspace === 'build') return setState(patch);
+  const now = Date.now();
+  const last = s.past[s.past.length - 1];
+  // samples of one brush stroke (`stroke`) arrive a few ms apart: they make one step
+  if (opts.stroke && last?.pickOnly && last.label === label && now - (last.at ?? 0) < 400) {
+    // same stroke: keep the step's starting point, just move its time on
+    setState({ ...patch, past: [...s.past.slice(0, -1), { ...last, at: now }], future: [] });
+    return;
+  }
+  setState({ ...patch, past: trimHistory([...s.past, { label, parts: s.parts, picks: pickSnap(s), pickOnly: true, at: now }], s.parts), future: [] });
+}
+
+/** Undo / redo several steps at once: to just before the `index`-th past step (history list). */
+export function jumpHistory(steps: number) {
+  for (let i = 0; i < Math.abs(steps); i++) (steps < 0 ? undo : redo)(true);
+  const s = getState();
+  const at = undoLabel(s);
+  notify('info', steps < 0 ? `Undone ${-steps} step${steps < -1 ? 's' : ''}${at ? ` (now after: ${at})` : ''}` : `Redone ${steps} step${steps > 1 ? 's' : ''}`);
 }
 
 // ---------------------------------------------------------------- build history
@@ -354,22 +398,22 @@ function restoreBuild(gen: BuildGenState) {
   onBuildRestore();
 }
 
-function buildUndo() {
+function buildUndo(quiet = false) {
   const s = getState();
   const prev = s.buildPast[s.buildPast.length - 1];
   if (!prev) return;
   setState({ buildPast: s.buildPast.slice(0, -1), buildFuture: [{ label: prev.label, gen: buildSnapshot(s.buildGen) }, ...s.buildFuture] });
   restoreBuild(prev.gen);
-  notify('info', `Undo: ${prev.label}`);
+  if (!quiet) notify('info', `Undo: ${prev.label}`);
 }
 
-function buildRedo() {
+function buildRedo(quiet = false) {
   const s = getState();
   const next = s.buildFuture[0];
   if (!next) return;
   setState({ buildPast: [...s.buildPast, { label: next.label, gen: buildSnapshot(s.buildGen) }], buildFuture: s.buildFuture.slice(1) });
   restoreBuild(next.gen);
-  notify('info', `Redo: ${next.label}`);
+  if (!quiet) notify('info', `Redo: ${next.label}`);
 }
 
 /** Label of the step Undo / Redo would take back in the workspace in use, or null. */
@@ -378,38 +422,39 @@ export function undoLabel(s: AppState, redoStep = false): string | null {
   return (redoStep ? s.future[0] : s.past[s.past.length - 1])?.label ?? null;
 }
 
-export function undo() {
+export function undo(quiet = false) {
   const s = getState();
-  if (s.workspace === 'build') return buildUndo();
+  if (s.workspace === 'build') return buildUndo(quiet);
   const prev = s.past[s.past.length - 1];
   if (!prev) return;
   const ids = new Set(prev.parts.map((p) => p.id));
   setState({
     parts: prev.parts,
     past: s.past.slice(0, -1),
-    future: [{ label: prev.label, parts: s.parts }, ...s.future],
+    future: [{ label: prev.label, parts: s.parts, picks: pickSnap(s), pickOnly: prev.pickOnly }, ...s.future],
     selection: s.selection.filter((id) => ids.has(id)),
     preview: null,
-    faceSelection: null,
+    // the selections as they were before that step (older steps without them: nothing picked)
+    ...(prev.picks ?? { faceSelection: null }),
   });
-  notify('info', `Undo: ${prev.label}`);
+  if (!quiet) notify('info', `Undo: ${prev.label}`);
 }
 
-export function redo() {
+export function redo(quiet = false) {
   const s = getState();
-  if (s.workspace === 'build') return buildRedo();
+  if (s.workspace === 'build') return buildRedo(quiet);
   const next = s.future[0];
   if (!next) return;
   const ids = new Set(next.parts.map((p) => p.id));
   setState({
     parts: next.parts,
-    past: [...s.past, { label: next.label, parts: s.parts }],
+    past: [...s.past, { label: next.label, parts: s.parts, picks: pickSnap(s), pickOnly: next.pickOnly, at: Date.now() }],
     future: s.future.slice(1),
     selection: s.selection.filter((id) => ids.has(id)),
     preview: null,
-    faceSelection: null,
+    ...(next.picks ?? { faceSelection: null }),
   });
-  notify('info', `Redo: ${next.label}`);
+  if (!quiet) notify('info', `Redo: ${next.label}`);
 }
 
 export function updateParts(label: string, ids: string[], fn: (p: Part) => Part) {

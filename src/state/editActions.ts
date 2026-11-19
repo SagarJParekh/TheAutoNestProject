@@ -9,7 +9,7 @@ import {
 } from '../geometry';
 import type { VertexTriangles } from '../geometry';
 import type { MeshData } from '../geometry';
-import { commit, getState, notify, partById, selectedParts, setState } from './store';
+import { commit, getState, notify, partById, selectedParts, setState, commitPicks } from './store';
 import type { OpenEdgeMethod } from '../geometry';
 import type { Part, ShellView } from './types';
 import { matrixOf, worldMesh } from './math';
@@ -277,14 +277,16 @@ function applyMarks(part: Part, tris: ArrayLike<number>, remove: boolean) {
   const hidden = hiddenTriMask(part);
   const out: number[] = [];
   for (let t = 0; t < nt; t++) if (mask[t] && !hidden?.[t]) out.push(t);
-  setState({ triEdit: { ...te, tris: out, verts: [] }, selection: [part.id] });
+  // an undo step of its own (one brush stroke / drag is one step)
+  const tool = getState().settings.triEdit.markTool;
+  commitPicks(remove ? `Unmark (${tool})` : `Mark (${tool})`, { triEdit: { ...te, tris: out, verts: [] }, selection: [part.id] }, { stroke: getState().pickMode === 'brush' });
 }
 
-function setMarks(part: Part, tris: ArrayLike<number>) {
+function setMarks(part: Part, tris: ArrayLike<number>, label: string) {
   const te = liveTriEdit(part.id)!;
   const hidden = hiddenTriMask(part);
   const list = hidden ? Array.from(tris).filter((t) => !hidden[t]) : Array.from(tris);
-  setState({ triEdit: { ...te, tris: list, verts: [] }, selection: [part.id] });
+  commitPicks(label, { triEdit: { ...te, tris: list, verts: [] }, selection: [part.id] });
 }
 
 /**
@@ -307,7 +309,7 @@ export async function hideShellsForEdit(which: 'marked' | 'others') {
   const hide = which === 'marked' ? [...ofMarked] : sv.shells.map((x) => x.id).filter((id) => !ofMarked.has(id));
   patchShells({ hidden: [...new Set([...(sv.hidden ?? []), ...hide])], selected: [], isolate: false });
   // marks on hidden shells go away
-  setMarks(part, which === 'marked' ? [] : m.te.tris);
+  setMarks(part, which === 'marked' ? [] : m.te.tris, 'Hide shells');
 }
 
 /** Click with the triangle / plane / surface / shell mark tools. Ctrl-click unmarks. */
@@ -365,27 +367,27 @@ function markedPart() {
 export function growMarked(rings = 1) {
   const m = markedPart();
   if (!m || !m.te.tris.length) return notify('warning', 'Mark some triangles first');
-  setMarks(m.part, growSelection(m.part.mesh, m.te.tris, rings, vtOf(m.part.mesh)));
+  setMarks(m.part, growSelection(m.part.mesh, m.te.tris, rings, vtOf(m.part.mesh)), 'Grow marks');
 }
 
 export function shrinkMarked() {
   const m = markedPart();
   if (!m || !m.te.tris.length) return notify('warning', 'Mark some triangles first');
-  setMarks(m.part, shrinkSelection(m.part.mesh, m.te.tris, vtOf(m.part.mesh)));
+  setMarks(m.part, shrinkSelection(m.part.mesh, m.te.tris, vtOf(m.part.mesh)), 'Shrink marks');
 }
 
 export function invertMarked() {
   const m = markedPart();
   const part = m?.part ?? selectedParts()[0];
   if (!part) return notify('warning', 'Select a part first');
-  setMarks(part, invertSelection(part.mesh.indices.length / 3, m?.te.tris ?? []));
+  setMarks(part, invertSelection(part.mesh.indices.length / 3, m?.te.tris ?? []), 'Invert marks');
 }
 
 /** Mark every triangle of the selected part. */
 export function markAll() {
   const part = markedPart()?.part ?? selectedParts()[0];
   if (!part) return notify('warning', 'Select a part first');
-  setMarks(part, invertSelection(part.mesh.indices.length / 3, []));
+  setMarks(part, invertSelection(part.mesh.indices.length / 3, []), 'Mark all');
 }
 
 /** Copy the marked triangles into a new part. */
@@ -495,7 +497,8 @@ function regionArea(mesh: MeshData, region: ArrayLike<number> | null): number {
 
 export function clearTriSelection() {
   const te = getState().triEdit;
-  if (te) setState({ triEdit: { ...te, tris: [], verts: [] } });
+  if (te && te.tris.length) commitPicks('Clear marks', { triEdit: { ...te, tris: [], verts: [] } });
+  else if (te) setState({ triEdit: { ...te, tris: [], verts: [] } });
 }
 
 export function deleteSelectedTriangles() {
@@ -762,7 +765,7 @@ export function deleteToolSelection(): boolean {
   // a picked surface (face pick in Extrude, Offset, …)
   const fs = s.faceSelection;
   // surface to solid only takes the surface off the part: Delete drops the pick, never the part's triangles
-  if (fs && (s.tool === 'solidify' || s.tool === 'remesh')) return setState({ faceSelection: null, preview: null }), true;
+  if (fs && (s.tool === 'solidify' || s.tool === 'remesh')) return commitPicks('Clear surface pick', { faceSelection: null, preview: null }), true;
   const fsPart = fs && partById(fs.partId);
   if (fs && fsPart && (!fs.mesh || fs.mesh === fsPart.mesh) && fs.tris.length) {
     if (fsPart.locked) return notify('warning', `${fsPart.name} is locked`), true;

@@ -8,8 +8,7 @@ import type { OpArgs, OpName, OpResult } from '../workers/ops';
 import { getLoader, extensionOf } from '../loaders/registry';
 import '../loaders/index';
 import {
-  commit, getState, notify, partById, selectedParts, setState, startJob, updateParts,
-} from './store';
+  commit, getState, notify, partById, selectedParts, setState, startJob, updateParts, commitPicks } from './store';
 import { applyUiTheme, saveAppearance } from './theme';
 import { nextColor } from './palette';
 import type { FaceSelection, Part, Preview, ToolId } from './types';
@@ -835,10 +834,10 @@ export async function pickFace(partId: string, faceIndex: number) {
     // extrude takes several faces: each click adds one (or drops it again), picking stays on
     const old = getState().faceSelection;
     const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
-    setState({ faceSelection: merged, selection: [partId], preview: null });
+    commitPicks(merged && (!old || merged.tris.length > old.tris.length) ? 'Pick surface' : 'Drop surface', { faceSelection: merged, selection: [partId], preview: null });
     return;
   }
-  setState({ faceSelection: pick, selection: [partId], pickMode: null, preview: null });
+  commitPicks('Pick face', { faceSelection: pick, selection: [partId], pickMode: null, preview: null });
 }
 
 /** Re-grow the current selection after the angle tolerance changed. */

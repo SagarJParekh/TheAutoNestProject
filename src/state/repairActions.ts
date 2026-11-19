@@ -6,7 +6,7 @@
 import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { alignMatrix, flipMesh, flipTriangles, mergeMeshes } from '../geometry';
 import type { MeshData, Vec3 } from '../geometry';
-import { commit, getState, notify, partById, selectedParts, setState } from './store';
+import { commit, getState, notify, partById, selectedParts, setState, commitPicks } from './store';
 import type { FaceSelection, Part, PickSlot } from './types';
 import { eulerDegFromQuaternion, matrixOf, worldMesh } from './math';
 import { partFromWorld, prepareMesh, replaceLocalMesh, replaceWithWorldMeshes, runJob, setPreview, analyzePart, mergeFacePicks } from './actions';
@@ -59,15 +59,13 @@ export async function pickFaceFor(slot: Slot, partId: string, faceIndex: number)
     // offset takes several faces: each click adds a face (or removes it when already picked), picking stays on
     const old = getState().facePicks.offset;
     const merged = mergeFacePicks(old && old.partId === partId && old.mesh === p.mesh ? old : null, pick, p.mesh);
-    setState((s) => {
-      const f = { ...s.facePicks };
-      if (merged) f.offset = merged;
-      else delete f.offset;
-      return { facePicks: f, preview: null };
-    });
+    const f = { ...getState().facePicks };
+    if (merged) f.offset = merged;
+    else delete f.offset;
+    commitPicks('Pick face', { facePicks: f, preview: null });
     return;
   }
-  setState((s) => ({ facePicks: { ...s.facePicks, [slot]: pick }, pickMode: null, preview: null }));
+  commitPicks('Pick face', { facePicks: { ...getState().facePicks, [slot]: pick }, pickMode: null, preview: null });
 }
 
 

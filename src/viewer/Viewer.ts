@@ -52,6 +52,8 @@ interface MeasureLabel {
 export interface ViewerCallbacks {
   onPick: (info: PickInfo | null, ev: { shift: boolean; ctrl: boolean; clientX: number; clientY: number }) => void;
   onTransformEnd: (partId: string, t: Transform) => void;
+  /** several objects moved / turned together with one gizmo (one undo step) */
+  onTransformsEnd?: (moves: { id: string; t: Transform }[]) => void;
   /** called after a zoom-window drag finishes (or is cancelled) */
   onZoomDone?: () => void;
   /** called with the lasso outline (client coordinates) when a lasso drag ends */
@@ -250,7 +252,25 @@ export class Viewer {
       const dragging = (e as unknown as { value: boolean }).value;
       this.draggingGizmo = dragging;
       this.controls.enabled = !dragging;
+      if (dragging && this.multi) {
+        // several objects on one gizmo: remember where everything starts
+        this.multi.pivotStart.copy(this.multiPivot.matrixWorld);
+        this.multi.starts = this.multi.groups.map((g) => g.matrixWorld.clone());
+      }
       if (!dragging) this.commitGizmo();
+    });
+    // several objects: they follow the pivot the gizmo is on
+    this.gizmo.addEventListener('objectChange', () => {
+      const m = this.multi;
+      if (!m || !this.draggingGizmo) return;
+      this.multiPivot.updateMatrixWorld();
+      const delta = this.multiPivot.matrixWorld.clone().multiply(m.pivotStart.clone().invert());
+      const scl = new Vector3();
+      m.groups.forEach((g, i) => {
+        delta.clone().multiply(m.starts[i]).decompose(g.position, g.quaternion, scl);
+        g.updateMatrixWorld();
+      });
+      this.requestRender();
     });
 
     this.scene.add(this.gridGroup, this.partsGroup, this.capsGroup, this.previewGroup, this.overlayGroup, this.annotGroup, this.hoverGroup, this.dimGroup, this.volumeGroup);
@@ -750,6 +770,10 @@ export class Viewer {
   /** pick & place: translation axes locked per part id */
   private placeLocks: Record<string, [boolean, boolean, boolean]> | null = null;
 
+  /** the gizmo on several objects at once: an invisible pivot at their middle, and where each object started */
+  private multiPivot = new Object3D();
+  private multi: { key: string; groups: Group[]; ids: string[]; pivotStart: Matrix4; starts: Matrix4[] } | null = null;
+
   private syncGizmo(s: AppState) {
     const snap = s.snap?.on ? s.snap : null;
     this.gizmo.setTranslationSnap(snap && snap.move > 0 ? snap.move : null);
@@ -765,6 +789,33 @@ export class Viewer {
     this.gizmo.showY = !locks?.[1];
     this.gizmo.showZ = !locks?.[2];
     this.placeLocks = s.placeLocks ?? null;
+    // several objects selected (Build generation): one gizmo moves / turns them together about their middle
+    const several = !sel && s.multiGizmo && s.selection.length > 1 && s.tool === 'transform' && (s.gizmo === 'translate' || s.gizmo === 'rotate') && !s.preview && !s.pickMode;
+    const groups = several
+      ? s.selection.map((id) => this.objects.get(id)).filter((o): o is PartObject => !!o && !o.part.locked && o.part.visible && !(s.gizmo === 'rotate' && o.part.lockRotation))
+      : [];
+    if (several && groups.length > 1) {
+      const key = groups.map((o) => o.part.id).join('|');
+      if (!this.draggingGizmo && (this.multi?.key !== key || this.gizmo.object !== this.multiPivot)) {
+        const box = new Box3();
+        for (const o of groups) {
+          o.group.updateMatrixWorld();
+          const gb = o.mesh.geometry.boundingBox;
+          if (gb) box.union(gb.clone().applyMatrix4(o.group.matrixWorld));
+        }
+        if (!this.multiPivot.parent) this.scene.add(this.multiPivot);
+        box.getCenter(this.multiPivot.position);
+        this.multiPivot.quaternion.identity();
+        this.multiPivot.updateMatrixWorld();
+        this.multi = { key, groups: groups.map((o) => o.group), ids: groups.map((o) => o.part.id), pivotStart: new Matrix4(), starts: [] };
+        this.gizmo.attach(this.multiPivot);
+      }
+      this.gizmo.setMode(s.gizmo === 'rotate' ? 'rotate' : 'translate');
+      this.gizmo.setSpace('world');
+      this.gizmoHelper.visible = true;
+      return;
+    }
+    this.multi = null;
     if (can && !(locks && locks.every(Boolean))) {
       if (this.gizmo.object !== sel.group) this.gizmo.attach(sel.group);
       this.gizmo.setMode(s.gizmo === 'rotate' ? 'rotate' : 'translate');
@@ -779,6 +830,17 @@ export class Viewer {
   private commitGizmo() {
     const g = this.gizmo.object;
     if (!g) return;
+    if (this.multi && g === this.multiPivot) {
+      const moves = this.multi.groups.map((o, i) => ({
+        id: this.multi!.ids[i],
+        t: { position: [round(o.position.x), round(o.position.y), round(o.position.z)] as Vec3, rotation: eulerDegFromQuaternion(o.quaternion as Quaternion), scale: [o.scale.x, o.scale.y, o.scale.z] as Vec3 },
+      }));
+      // the pivot is placed again at the new middle on the next sync
+      this.multi = { ...this.multi, key: '' };
+      if (this.cb.onTransformsEnd) this.cb.onTransformsEnd(moves);
+      else for (const m of moves) this.cb.onTransformEnd(m.id, m.t);
+      return;
+    }
     const id = g.name;
     const t: Transform = {
       position: [round(g.position.x), round(g.position.y), round(g.position.z)],

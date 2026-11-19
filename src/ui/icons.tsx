@@ -50,6 +50,8 @@ export const Icon = {
   boolean: P(<><circle cx="9" cy="10" r="6" /><circle cx="15" cy="14" r="6" /></>),
   lattice: P(<><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /><path d="M3 3l18 18M21 3 3 21" strokeOpacity=".45" /></>),
   shapes: P(<><path d="M3 13l4-2 4 2v5l-4 2-4-2z" /><circle cx="17" cy="7" r="4" /><path d="M14 21l3-6 3 6z" /></>),
+  // a clock with a back arrow
+  history: P(<><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 7.5V12l3 2" /></>),
   // a brush marking triangles
   brush: P(<><path d="M3 21l6-2 10-10-4-4L5 15z" /><path d="M13 7l4 4" /><path d="M3 21l2-6" /></>),
   // a triangle mesh: half coarse, half fine

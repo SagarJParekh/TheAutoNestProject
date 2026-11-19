@@ -991,7 +991,12 @@ export function pickingCopies(s = getState()): boolean {
 export function selectBuildPart(partId: string | null, toggle = false) {
   if (!partId) return toggle ? undefined : setState({ selection: [] });
   if (pickingCopies()) {
-    // editing by hand: select the very copy that was clicked
+    // editing by hand: select the very copy that was clicked (a part from the list: its first copy in this build)
+    if (!partId.includes('#')) {
+      const pl = bg().builds[bg().active]?.placements.find((p) => p.partId === partId);
+      if (!pl) return notify('info', 'That part has no copy in this build');
+      partId = pl.key;
+    }
     const cur = getState().selection;
     return setState({ selection: !toggle ? [partId] : cur.includes(partId) ? cur.filter((k) => k !== partId) : [...cur, partId] });
   }
@@ -1373,8 +1378,37 @@ export function editPlacements(changes: { key: string; position?: Vec3; quaterni
     }
     return { ...pl, position, quaternion };
   });
-  // new height of the build
+  // keep edited copies on the platform: resin / metal copies stand on it (after a tilt they are put back down on it),
+  // powder copies may float in the bed but never go below it
   const byId = new Map(s.parts.map((p) => [p.id, p]));
+  const printer = printerById(s.printerId);
+  const outside: string[] = [];
+  for (let i = 0; i < placements.length; i++) {
+    const pl = placements[i];
+    if (!by.has(pl.key)) continue;
+    const p = byId.get(pl.partId);
+    if (!p) continue;
+    const m = new Matrix4().compose(new Vector3(...pl.position), new Quaternion(...pl.quaternion), new Vector3(1, 1, 1)).elements;
+    const pos = p.mesh.positions;
+    let zMin = Infinity, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let k = 0; k < pos.length; k += 3) {
+      const x = m[0] * pos[k] + m[4] * pos[k + 1] + m[8] * pos[k + 2] + m[12];
+      const y = m[1] * pos[k] + m[5] * pos[k + 1] + m[9] * pos[k + 2] + m[13];
+      const z = m[2] * pos[k] + m[6] * pos[k + 1] + m[10] * pos[k + 2] + m[14];
+      if (z < zMin) zMin = z;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+    const locked = locks[pl.key]?.t[2];
+    const dz = printer.tech === 'powder' ? Math.max(0, s.zOffset - zMin) : s.zOffset - zMin;
+    if (!locked && Math.abs(dz) > 1e-6) placements[i] = { ...pl, position: [pl.position[0], pl.position[1], pl.position[2] + dz] };
+    const [vx, vy] = printer.volume;
+    if (x0 < -vx / 2 - 1e-3 || x1 > vx / 2 + 1e-3 || y0 < -vy / 2 - 1e-3 || y1 > vy / 2 + 1e-3) outside.push(p.quantity > 1 ? `${p.name} (${pl.copy + 1})` : p.name);
+  }
+  if (outside.length) notify('warning', `Outside the build volume: ${outside.slice(0, 4).join(', ')}${outside.length > 4 ? '…' : ''}`);
+  // new height of the build
   let height = 0;
   for (const pl of placements) {
     const p = byId.get(pl.partId);

@@ -3,7 +3,7 @@
  */
 import { Matrix4, Vector3 } from 'three';
 import type { Vec3 } from '../geometry';
-import { getState, notify, partById, selectedParts, setState } from './store';
+import { getState, notify, partById, selectedParts, setState, commitPicks } from './store';
 import { matrixOf, worldMesh } from './math';
 import { partFromWorld, replaceLocalMesh, replaceWithWorldMeshes, requestEdges, runJob, setPreview } from './actions';
 import { commit } from './store';
@@ -111,11 +111,11 @@ export function onSharpEdgePick(info: PickInfo) {
   const next: BlendEdgePick[] = picked
     ? keep.filter((e) => !segs.some((g) => same(e, g)))
     : [...keep, ...segs.map(([a, b]) => ({ partId: part.id, mesh: part.mesh, a, b }))];
-  setState({ blendEdges: next, selection: [part.id], preview: null });
+  commitPicks(picked ? 'Drop edge' : 'Pick edge', { blendEdges: next, selection: [part.id], preview: null });
 }
 
 export function clearBlendEdges() {
-  setState({ blendEdges: [], preview: null });
+  commitPicks('Clear edges', { blendEdges: [], preview: null });
 }
 
 export function liveBlendEdges(): BlendEdgePick[] {

@@ -1,5 +1,5 @@
 import { NumberField, Row } from '../controls';
-import { getState, setState, useStore } from '../../state/store';
+import { commitPicks, getState, setState, useStore } from '../../state/store';
 import { cancelPreview, regrowFace } from '../../state/actions';
 
 export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'solidify' | 'remesh' }) {
@@ -34,7 +34,7 @@ export function FacePickSection({ tool }: { tool: 'extrude' | 'perforate' | 'sol
           disabled={!fs}
           onClick={() => {
             cancelPreview();
-            setState({ faceSelection: null, pickMode: getState().pickMode === 'face' ? null : getState().pickMode });
+            commitPicks('Clear surface pick', { faceSelection: null, pickMode: getState().pickMode === 'face' ? null : getState().pickMode });
           }}
         >
           Clear selection

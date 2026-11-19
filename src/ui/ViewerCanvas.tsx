@@ -84,6 +84,7 @@ function viewState(s: AppState): AppState {
     supportPoints: s.supportEdit ? touchOverlay(s) : null,
     // locked copies: the gizmo only offers their free axes, pick & place only moves them along free axes
     gizmoLocks: s.selection.length === 1 ? (s.buildGen.locks?.[s.selection[0]] ?? null) : null,
+    multiGizmo: true,
     placeLocks: s.buildGen.locks ? Object.fromEntries(Object.entries(s.buildGen.locks).map(([k, L]) => [k, L.t])) : null,
   };
   lastView = { src: s, view };
@@ -340,6 +341,23 @@ export function ViewerCanvas() {
           return;
         }
         select(info.partId, mods.ctrl ? 'toggle' : mods.shift ? 'add' : 'set');
+      },
+      onTransformsEnd(moves) {
+        const s = getState();
+        if (s.workspace === 'build') {
+          // several copies moved / turned together: one hand edit
+          const g = s.buildGen;
+          editPlacements(
+            moves.map(({ id, t }) => {
+              const q = quaternionOf(t);
+              const part = g.parts.find((p) => p.id === partOfKey(id));
+              const lift = part ? supportLift(part, g) : 0;
+              return { key: id, position: [t.position[0], t.position[1], t.position[2] - lift] as [number, number, number], quaternion: [q.x, q.y, q.z, q.w] as [number, number, number, number] };
+            }),
+          );
+          return;
+        }
+        for (const m of moves) setTransform(m.id, m.t, 'Move / rotate');
       },
       onTransformEnd(id, t) {
         if (getState().workspace === 'build') {

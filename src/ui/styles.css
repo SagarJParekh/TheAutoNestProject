@@ -524,3 +524,17 @@ table.report tr:last-child td { border-bottom: none; }
 .view-tools > * { pointer-events: auto; }
 .view-tools .clip-chip, .view-tools .clip-widget { position: static; }
 .mark-widget .mark-tools { flex-wrap: wrap; }
+
+/* undo history list */
+.history-menu { position: relative; display: inline-flex; }
+.history-backdrop { position: fixed; inset: 0; z-index: 40; }
+.history-list { position: absolute; top: calc(100% + 6px); left: 0; z-index: 41; width: 280px; max-height: 60vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); font-size: 12px; }
+.history-list header { padding: 8px 10px; font-weight: 600; border-bottom: 1px solid var(--line); color: var(--muted); }
+.history-list ul { list-style: none; margin: 0; padding: 4px 0; }
+.history-list li { padding: 5px 10px; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+.history-list li:hover { background: var(--line); }
+.history-list li.future { color: var(--muted); font-style: italic; }
+.history-list li.now { color: var(--accent); font-weight: 600; cursor: default; }
+.history-list li.now:hover, .history-list li.empty:hover { background: none; }
+.history-list li.empty { color: var(--muted); cursor: default; }
+.history-list .tag { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--line-2); color: var(--muted); font-style: normal; }

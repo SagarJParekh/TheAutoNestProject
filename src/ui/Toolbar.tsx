@@ -3,7 +3,8 @@ import { Icon } from './icons';
 import { ThemeMenu } from './ThemeMenu';
 import { BuildTabs } from './build/BuildPanels';
 import { setWorkspace } from '../state/buildActions';
-import { getState, redo, setState, undo, undoLabel, useStore } from '../state/store';
+import { getState, jumpHistory, redo, setState, undo, undoLabel, useStore } from '../state/store';
+import { useState } from 'react';
 import { importFiles, setImportQuality, setTool } from '../state/actions';
 import { arrangeOnBed } from '../state/featureActions';
 import { viewerApi } from '../viewer/api';
@@ -102,12 +103,13 @@ export function Toolbar() {
         />
       </div>
       <div className="tb-group">
-        <button className="tb icon" disabled={!canUndo} title={`Undo ${undoText ?? ''} (Ctrl+Z)`} onClick={undo}>
+        <button className="tb icon" disabled={!canUndo} title={`Undo ${undoText ?? ''} (Ctrl+Z)`} onClick={() => undo()}>
           {Icon.undo}
         </button>
-        <button className="tb icon" disabled={!canRedo} title={`Redo ${redoText ?? ''} (Ctrl+Shift+Z)`} onClick={redo}>
+        <button className="tb icon" disabled={!canRedo} title={`Redo ${redoText ?? ''} (Ctrl+Shift+Z)`} onClick={() => redo()}>
           {Icon.redo}
         </button>
+        <HistoryMenu />
       </div>
       {workspace === 'prep' && (
       <>
@@ -221,5 +223,49 @@ export function Toolbar() {
       </div>
       )}
     </header>
+  );
+}
+
+/**
+ * History: every step that Undo / Redo can take (edits of the parts, and the
+ * selections: marked triangles, picked surfaces / planes / edges), newest at
+ * the top. Clicking a step goes back (or forward) to just after it.
+ */
+function HistoryMenu() {
+  const [open, setOpen] = useState(false);
+  const build = useStore((s) => s.workspace === 'build');
+  const past = useStore((s) => (build ? s.buildPast : s.past));
+  const future = useStore((s) => (build ? s.buildFuture : s.future));
+  const pickOnly = (e: unknown) => !!(e as { pickOnly?: boolean }).pickOnly;
+  return (
+    <div className="history-menu">
+      <button className={`tb icon ${open ? 'active' : ''}`} disabled={!past.length && !future.length} title="History: go back or forward several steps" onClick={() => setOpen(!open)}>
+        {Icon.history}
+      </button>
+      {open && (
+        <>
+          <div className="history-backdrop" onClick={() => setOpen(false)} />
+          <div className="history-list" role="menu">
+            <header>History ({build ? 'Build generation' : 'Mesh prep'})</header>
+            <ul>
+              {[...future].reverse().map((e, i) => (
+                <li key={`f${i}`} className="future" onClick={() => jumpHistory(future.length - i)} title="Redo up to this step">
+                  {pickOnly(e) && <span className="tag">select</span>}
+                  {e.label}
+                </li>
+              ))}
+              <li className="now">● Now</li>
+              {[...past].reverse().map((e, i) => (
+                <li key={`p${i}`} onClick={() => jumpHistory(-(i + 1))} title="Undo back to before this step">
+                  {pickOnly(e) && <span className="tag">select</span>}
+                  {e.label}
+                </li>
+              ))}
+              {!past.length && <li className="empty">Nothing to undo</li>}
+            </ul>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
