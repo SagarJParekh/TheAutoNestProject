@@ -168,4 +168,24 @@ describe('a lifted part always stands on supports', () => {
     expect(b.supportVolume).toBeGreaterThan(a.supportVolume);
     expect(isWatertight(b.supports)).toBe(true);
   });
+
+  it('raft features: hole size, rib, bar width, pad, case wall', async () => {
+    const t = await tShape();
+    const base = { ...SUPPORT_PRESETS.sla, braces: false, spacing: 4, spacingY: 4, baseDiameter: 1.4 };
+    const raftVol = async (patch: Partial<typeof base>) => {
+      const r = await generateSupports(t, { ...base, ...patch });
+      expect(isWatertight(r.raft)).toBe(true);
+      return Math.abs(meshVolume(r.raft));
+    };
+    // bigger hexagonal holes: less raft; wider ribs: more
+    expect(await raftVol({ raftType: 'hex', raftHole: 4 })).toBeLessThan(await raftVol({ raftType: 'hex', raftHole: 2 }));
+    expect(await raftVol({ raftType: 'hex', raftHole: 3, raftRib: 2 })).toBeGreaterThan(await raftVol({ raftType: 'hex', raftHole: 3, raftRib: 0.6 }));
+    // wider bars and bigger pads: more
+    expect(await raftVol({ raftType: 'cross', raftBar: 1.5 })).toBeGreaterThan(await raftVol({ raftType: 'cross', raftBar: 0.6 }));
+    expect(await raftVol({ raftType: 'skate', raftPad: 3 })).toBeGreaterThan(await raftVol({ raftType: 'skate', raftPad: 1.6 }));
+    // thicker / taller case wall: more; thicker raft: more
+    expect(await raftVol({ raftType: 'case', raftRib: 2 })).toBeGreaterThan(await raftVol({ raftType: 'case', raftRib: 0.8 }));
+    expect(await raftVol({ raftType: 'case', caseHeight: 8 })).toBeGreaterThan(await raftVol({ raftType: 'case', caseHeight: 2 }));
+    expect(await raftVol({ raftType: 'solid', raftThickness: 2 })).toBeGreaterThan(await raftVol({ raftType: 'solid', raftThickness: 1 }));
+  }, 120000);
 });

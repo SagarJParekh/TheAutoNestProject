@@ -1,4 +1,5 @@
 import { useStore } from '../state/store';
+import { SectionTabs } from './controls';
 import { cancelTool } from '../state/actions';
 import { InfoPanel } from './panels/InfoPanel';
 import { TransformPanel } from './panels/TransformPanel';
@@ -63,7 +64,7 @@ export function PropertiesPanel() {
           </button>
         )}
       </header>
-      <div className="panel-scroll">
+      <SectionTabs id={`prep-${tool}`}>
         <PreviewBar />
         {tool === 'transform' && <TransformPanel parts={parts} />}
         {(tool === 'clip' || tool === 'cut') && <ClipCutPanel parts={parts} />}
@@ -88,7 +89,7 @@ export function PropertiesPanel() {
         {tool === 'remesh' && <RemeshPanel parts={parts} />}
         {tool === 'vc' && <VcPanel />}
         {parts.length > 0 && tool !== 'dimensions' && tool !== 'report' && tool !== 'shapes' && <InfoPanel parts={parts} />}
-      </div>
+      </SectionTabs>
     </aside>
   );
 }

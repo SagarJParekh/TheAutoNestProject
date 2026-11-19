@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { SaveLocationRow } from '../Dialogs';
-import { Check, Hint, PanelTabs, NumberField, Row, Section, Segmented } from '../controls';
+import { Check, Hint, PanelTabs, SectionTabs, NumberField, Row, Section, Segmented } from '../controls';
 import { Icon } from '../icons';
 import { SnapControls } from '../SnapControls';
 import { getState, setState, useStore } from '../../state/store';
@@ -413,7 +413,7 @@ export function BuildSetupPanel() {
           { value: 'nesting', label: 'Nesting', title: 'Spacing, arrangement and tilt' },
         ]}
       />
-      <div className="panel-scroll">
+      <SectionTabs id={`build-left-${tab}`}>
         {tab === 'parts' && (
         <Section title="Parts">
           <SavedSessionBanner />
@@ -608,7 +608,7 @@ export function BuildSetupPanel() {
         <TiltSection />
         </>
         )}
-      </div>
+      </SectionTabs>
     </aside>
   );
 }
@@ -718,7 +718,7 @@ export function BuildsPanel() {
           { value: 'edit', label: 'Edit & check', title: 'Editing by hand, locks, collision and density checks' },
         ]}
       />
-      <div className="panel-scroll">
+      <SectionTabs id={`build-right-${rtab}`}>
         {rtab === 'supports' && supportsTab && <BuildSupports tech={currentPrinter(g).tech as 'sla' | 'dlp' | 'dmls'} />}
         {rtab === 'edit' && (
           <Section title="Edit by hand & check">
@@ -1007,7 +1007,7 @@ export function BuildsPanel() {
         )}
         </>
         )}
-      </div>
+      </SectionTabs>
     </aside>
   );
 }

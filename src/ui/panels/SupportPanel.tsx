@@ -171,13 +171,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
                 </select>
               </Row>
               <Hint>{RAFT_TYPES.find((r) => r.value === (st.raftType ?? 'solid'))?.title}</Hint>
-              {(st.raftType ?? 'solid') !== 'none' && (
-                <>
-                  {mm('Raft thickness', 'raftThickness', 'Thickness of the raft', 0.1, 0.1)}
-                  {(st.raftType ?? 'solid') !== 'skate' && (st.raftType ?? 'solid') !== 'cross' && mm('Raft margin', 'raftMargin', 'How far the raft reaches past the outermost feet', 0.25, 0)}
-                  {st.raftType === 'case' && mm('Case height', 'caseHeight', 'Height of the wall round the raft (0 = up to the part)', 0.5, 0)}
-                </>
-              )}
+              {(st.raftType ?? 'solid') !== 'none' && <RaftFeatures st={st} />}
             </>
           )}
         </Section>
@@ -215,6 +209,73 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         </Hint>
       </Section>
     </>
+  );
+}
+
+/**
+ * The raft's features for its type (0 = worked out from the supports): its
+ * thickness everywhere; the margin round a plate; hole size and rib width of
+ * the hexagonal grid; bar width and pad size of the skate / cross grid; the
+ * wall of the protection case. A small top view shows the pattern.
+ */
+function RaftFeatures({ st }: { st: SupportParams }) {
+  const type = st.raftType ?? 'solid';
+  const field = (label: string, key: keyof SupportParams, title: string, opts: { step?: number; min?: number; auto?: boolean } = {}) => (
+    <Row label={label}>
+      <NumberField
+        value={st[key] as number}
+        min={opts.min ?? 0}
+        step={opts.step ?? 0.1}
+        suffix="mm"
+        title={`${title}${opts.auto ? ' (0 = automatic, from the supports)' : ''}`}
+        onChange={(v) => setSup({ [key]: Math.max(opts.min ?? 0, v) })}
+      />
+      {opts.auto && (st[key] as number) === 0 && <span className="muted small">auto</span>}
+    </Row>
+  );
+  const plate = type === 'hex' || type === 'solid' || type === 'case';
+  return (
+    <>
+      <RaftPreview type={type} />
+      {field('Thickness', 'raftThickness', 'Thickness of the raft', { min: 0.1 })}
+      {plate && field('Margin', 'raftMargin', 'How far the raft reaches past the outermost feet', { step: 0.25 })}
+      {type === 'hex' && field('Hole size', 'raftHole', 'Size of the hexagonal holes, corner to corner', { step: 0.25, auto: true })}
+      {type === 'hex' && field('Rib width', 'raftRib', 'Width of the ribs between the holes', { step: 0.1, auto: true })}
+      {(type === 'skate' || type === 'cross') && field('Bar width', 'raftBar', 'Width of the bars joining the feet', { step: 0.1, auto: true })}
+      {(type === 'skate' || type === 'cross') && field('Pad Ø', 'raftPad', 'Diameter of the pad under each foot', { step: 0.1, auto: true })}
+      {type === 'case' && field('Wall thickness', 'raftRib', 'Thickness of the wall round the raft', { step: 0.1, auto: true })}
+      {type === 'case' && field('Wall height', 'caseHeight', 'Height of the wall round the raft (0 = up to the part)', { step: 0.5, auto: true })}
+      <Hint>The bars and pads follow the support grid: change Spacing X / Y (Placement) to change the grid of a skate or cross grid raft.</Hint>
+    </>
+  );
+}
+
+/** Top view of a raft type: feet (dots) on the raft pattern. */
+function RaftPreview({ type }: { type: RaftType }) {
+  const feet: [number, number][] = [];
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 3; j++) feet.push([40 + i * 45, 22 + j * 23]);
+  const fill = '#5f8fbf';
+  return (
+    <svg className="raft-preview" viewBox="0 0 280 92" width="280" height="92" aria-hidden>
+      {(type === 'solid' || type === 'hex' || type === 'case') && <rect x="22" y="6" width="236" height="80" rx="10" fill={fill} opacity="0.85" />}
+      {type === 'case' && <rect x="16" y="2" width="248" height="88" rx="13" fill="none" stroke={fill} strokeWidth="5" />}
+      {type === 'hex' &&
+        Array.from({ length: 4 }, (_, r) =>
+          Array.from({ length: 10 }, (_, c) => {
+            const cx = 38 + c * 22 + (r % 2 ? 11 : 0), cy = 16 + r * 19;
+            if (cx > 246) return null;
+            const pts = Array.from({ length: 6 }, (_, k) => `${cx + 8 * Math.cos((Math.PI / 3) * k + Math.PI / 6)},${cy + 8 * Math.sin((Math.PI / 3) * k + Math.PI / 6)}`).join(' ');
+            return <polygon key={`${r}-${c}`} points={pts} fill="var(--panel)" />;
+          }),
+        )}
+      {(type === 'skate' || type === 'cross') &&
+        [0, 1, 2].map((j) => <rect key={`r${j}`} x="40" y={22 + j * 23 - 3} width="180" height="6" fill={fill} />)}
+      {type === 'cross' && [0, 1, 2, 3, 4].map((i) => <rect key={`c${i}`} x={40 + i * 45 - 3} y="22" width="6" height="46" fill={fill} />)}
+      {(type === 'skate' || type === 'cross') && feet.map(([x, y], k) => <circle key={`p${k}`} cx={x} cy={y} r="8" fill={fill} />)}
+      {feet.map(([x, y], k) => (
+        <circle key={k} cx={x} cy={y} r="4" fill="#d9dee6" stroke="#1b1f26" strokeWidth="1" />
+      ))}
+    </svg>
   );
 }
 

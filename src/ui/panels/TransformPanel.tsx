@@ -56,6 +56,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
   const rotated = !!single && single.transform.rotation.some((r) => Math.abs(r) > 1e-9);
 
   return (
+    <>
     <Section title="Transform">
       <Row label="Mouse">
         <Segmented
@@ -147,6 +148,9 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           </Row>
         </>
       )}
+    </Section>
+    <Section title="Place & mirror">
+      {parts.length === 0 && <Hint>Select the parts to lock, mirror, drop or lay flat.</Hint>}
       {parts.length > 0 && (
         <>
           <Check
@@ -193,7 +197,8 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
           {parts.some((p) => p.locked) && <Hint>Locked parts are not changed.</Hint>}
         </>
       )}
-      <h4>Align to part</h4>
+    </Section>
+    <Section title="Align to part">
       {selOrder.length < 2 ? (
         <Hint>Select the reference part, then Ctrl-click the part(s) to move.</Hint>
       ) : (
@@ -247,6 +252,8 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
             ? `Puts the parts ${al.distance} mm outside the reference's ${al.location} side${al.axis === 'both' ? ', centred on the other axis' : ''}.`
             : `Lines up the ${al.location} edges with the reference.`}
       </Hint>
+    </Section>
+    <Section title="Array & arrange">
       <h4>Array (2D)</h4>
       <Row label="Columns × rows">
         <NumberField value={arr.cols} min={1} max={50} step={1} precision={0} onChange={(cols) => setArr({ cols: Math.round(cols) })} />
@@ -289,6 +296,7 @@ export function TransformPanel({ parts }: { parts: Part[] }) {
       </button>
       <Hint>{arrangeHint(arr.axes)}</Hint>
     </Section>
+    </>
   );
 }
 

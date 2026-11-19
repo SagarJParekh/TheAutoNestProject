@@ -78,6 +78,14 @@ export interface SupportParams {
   raftType: RaftType;
   /** protection case: height of the wall round the raft, mm; 0 = up to the part's bottom (the lift) */
   caseHeight: number;
+  /** hexagonal grid: size of the holes (corner to corner), mm; 0 = from the support spacing */
+  raftHole: number;
+  /** hexagonal grid: width of the ribs between the holes; protection case: thickness of the wall, mm; 0 = from the foot size */
+  raftRib: number;
+  /** skate / cross grid: width of the bars, mm; 0 = from the foot size */
+  raftBar: number;
+  /** skate / cross grid: diameter of the pad under each foot, mm; 0 = the foot's diameter */
+  raftPad: number;
 }
 
 /** Raft shapes: none, rails (skate), a grid of bars, a plate with hexagonal holes, a solid plate, a solid plate walled round (protection case). */
@@ -107,17 +115,17 @@ export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
-    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
-    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
   },
   dmls: {
     tech: 'dmls', style: 'volume', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
-    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
   },
 };
 
@@ -622,9 +630,10 @@ function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, n
   try {
     if (type === 'skate' || type === 'cross') {
       // a pad under every foot, joined to the next foot along the grid rows (and columns: cross grid)
-      const bw = Math.max(0.6, rf * 0.8);
+      const bw = p.raftBar > 0 ? p.raftBar : Math.max(0.6, rf * 0.8);
+      const pad = p.raftPad > 0 ? p.raftPad / 2 : rf + 0.2;
       const uv = feet.map(([x, y]) => [x * g.cos + y * g.sin, -x * g.sin + y * g.cos]);
-      for (const [x, y] of feet) parts.push(CS.hull([circle(x, y, rf + 0.2, 16)]));
+      for (const [x, y] of feet) parts.push(CS.hull([circle(x, y, pad, 16)]));
       const dirs: [number, number, number][] = type === 'cross' ? [[0, g.su, g.sv], [1, g.sv, g.su]] : [[0, g.su, g.sv]];
       for (const [axis, along, across] of dirs)
         feet.forEach((f, i) => {
@@ -647,7 +656,8 @@ function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, n
     let plate = CS.hull([ring]);
     if (type === 'hex') {
       // hexagonal holes all over, a rim left round the edge and a solid pad under every foot
-      const hr = Math.max(1, Math.min(3, Math.min(g.su, g.sv) * 0.6)), wall = Math.max(0.6, rf * 0.5);
+      const hr = p.raftHole > 0 ? p.raftHole / 2 : Math.max(1, Math.min(3, Math.min(g.su, g.sv) * 0.6));
+      const wall = p.raftRib > 0 ? p.raftRib : Math.max(0.6, rf * 0.5);
       const pitch = hr * Math.sqrt(3) + wall;
       const inner = plate.offset(-wall, 'Miter');
       const b = inner.bounds();
@@ -669,7 +679,7 @@ function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, n
     out.push(plate.extrude(t));
     if (type === 'case') {
       // a wall round the plate, up to the part's bottom (or the height given)
-      const wall = Math.max(0.6, rf);
+      const wall = p.raftRib > 0 ? p.raftRib : Math.max(0.6, rf);
       const outer = plate.offset(wall, 'Round', 2, 24);
       const band = outer.subtract(plate);
       out.push(band.extrude(p.caseHeight > 0 ? p.caseHeight : Math.max(t, p.lift)));
