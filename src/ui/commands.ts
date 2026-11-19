@@ -1,3 +1,4 @@
+import { startTriPick } from '../state/editActions';
 /**
  * Searchable command list for the command palette (Ctrl+K or /).
  * Each command opens a tool (and tab) or runs an action directly.
@@ -109,7 +110,7 @@ export function buildCommands(): Command[] {
     { id: 'supports', label: 'Supports: generate supports (SLA / DLP / DMLS)', group: 'Tools', keywords: 'support overhang tip cone raft block volume metal resin dmls sla dlp', run: () => setWorkspace('build') },
     { id: 'vc', label: 'VC module: vacuum casting moulds', group: 'Tools', keywords: 'mould mold silicone vacuum casting minimum box', run: () => setTool('vc') },
     { id: 'remesh', label: 'Remesh a surface (only picked surfaces / marked triangles, or the whole part)', group: 'Tools', keywords: 'remesh isotropic triangles even refine coarsen surface region marked', run: () => setTool('remesh') },
-    { id: 'mark', label: 'Mark triangles (mark tools in the view, from any tool)', group: 'Tools', keywords: 'mark select triangles brush window plane surface shell edit', run: () => setState({ markBar: true }) },
+    { id: 'mark', label: 'Mark triangles (Mark row above the view, from any tool)', group: 'Tools', keywords: 'mark select triangles brush window plane surface shell edit', run: () => startTriPick('brush') },
     { id: 'solidify', label: 'Surface to solid (thicken a surface, make a fixture from a part\'s surface)', group: 'Tools', keywords: 'surface solid thicken sheet zero thickness fixture cradle nest holder jig extract organic', run: () => setTool('solidify') },
     { id: 'wrap', label: 'Shrinkwrap (wrap a solid around the part)', group: 'Tools', keywords: 'wrap envelope close holes solidify scan', run: () => setTool('wrap') },
     { id: 'offset', label: 'Offset part (grow / shrink)', group: 'Tools', keywords: 'shell thicken thin grow shrink global', shortcut: 'U', run: () => { setTool('offset'); setState((s) => ({ settings: { ...s.settings, offset: { ...s.settings.offset, mode: 'global' } } })); } },

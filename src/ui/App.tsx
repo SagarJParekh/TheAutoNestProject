@@ -5,7 +5,7 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { ViewerCanvas } from './ViewerCanvas';
 import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
 import { ClipWidget } from './panels/ClipCutPanel';
-import { MarkWidget } from './panels/MarkWidget';
+import { MarkRow } from './panels/MarkWidget';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
 import { HoverHelp } from './HoverHelp';
@@ -87,14 +87,16 @@ export function App() {
       <Toolbar />
       {workspace === 'build' ? <BuildSetupPanel /> : <PartsPanel />}
       <main className="center">
-        <ViewerCanvas />
-        <ProgressOverlay />
-        {/* view tools usable with every function: section clip and triangle marking */}
-        <div className="view-tools">
-          <ClipWidget />
-          <MarkWidget />
+        {/* triangle marking, usable with every function (Mesh prep) */}
+        <MarkRow />
+        <div className="center-view">
+          <ViewerCanvas />
+          <ProgressOverlay />
+          <div className="view-tools">
+            <ClipWidget />
+          </div>
+          <Notices />
         </div>
-        <Notices />
       </main>
       {workspace === 'build' ? <BuildsPanel /> : <PropertiesPanel />}
       <StatusBar />

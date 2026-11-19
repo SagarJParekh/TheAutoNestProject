@@ -252,7 +252,7 @@ export async function previewSolidify() {
   if (!part)
     return notify(
       'warning',
-      st.source === 'faces' ? 'Pick the surface on a part first' : st.source === 'marked' ? 'Mark the surface first (Mark tools in the view)' : 'Select the part (surface) to make solid',
+      st.source === 'faces' ? 'Pick the surface on a part first' : st.source === 'marked' ? 'Mark the surface first (Mark row above the view)' : 'Select the part (surface) to make solid',
     );
   if (!st.keep && part.locked) return notify('warning', 'The part is locked');
   if (st.source === 'faces' && fs?.mesh && fs.mesh !== part.mesh) return notify('warning', 'The part changed since the surface was picked: pick it again');

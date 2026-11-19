@@ -141,7 +141,7 @@ export function ShellsTab({ parts }: { parts: Part[] }) {
 
 // ------------------------------------------------------------------ triangle edit
 
-const MARK_TOOLS: { value: MarkTool; label: string; title: string }[] = [
+export const MARK_TOOLS: { value: MarkTool; label: string; title: string }[] = [
   { value: 'triangle', label: 'Triangle', title: 'Mark single triangles by clicking' },
   { value: 'plane', label: 'Plane', title: 'Mark the flat area around the clicked triangle' },
   { value: 'surface', label: 'Surface', title: 'Mark the surface around the clicked triangle, up to sharp edges' },
@@ -150,7 +150,7 @@ const MARK_TOOLS: { value: MarkTool; label: string; title: string }[] = [
   { value: 'window', label: 'Window', title: 'Drag a rectangle to mark the triangles inside it' },
 ];
 
-const PICK_FOR: Record<MarkTool, 'triangle' | 'brush' | 'window'> = {
+export const PICK_FOR: Record<MarkTool, 'triangle' | 'brush' | 'window'> = {
   triangle: 'triangle',
   plane: 'triangle',
   surface: 'triangle',

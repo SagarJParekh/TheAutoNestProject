@@ -45,7 +45,6 @@ export function RemeshPanel({ parts }: { parts: Part[] }) {
   const preview = useStore((s) => s.preview);
   useStore((s) => s.faceSelection);
   useStore((s) => s.triEdit);
-  const markBar = useStore((s) => s.markBar);
   const t = target(parts);
   return (
     <>
@@ -54,8 +53,6 @@ export function RemeshPanel({ parts }: { parts: Part[] }) {
           value={st.source}
           onChange={(source) => {
             set({ source });
-            // the marked triangles come from the Mark widget: open it
-            if (source === 'marked') setState({ markBar: true });
           }}
           options={[
             { value: 'faces', label: 'Picked surfaces', title: 'Click the surfaces to remesh (each grows up to sharp edges)' },
@@ -67,12 +64,7 @@ export function RemeshPanel({ parts }: { parts: Part[] }) {
         {st.source === 'marked' && (
           <>
             <p className="muted small">{t ? `${t.what} on ${t.part.name}` : 'Nothing marked yet.'}</p>
-            {!markBar && (
-              <button className="btn wide" onClick={() => setState({ markBar: true })}>
-                Open the Mark tools
-              </button>
-            )}
-            <Hint>Mark the triangles with the Mark tools in the view (triangle, plane, surface, shell, brush or window), then preview.</Hint>
+            <Hint>Mark the triangles with the Mark row above the view (triangle, plane, surface, shell, brush or window), then preview.</Hint>
           </>
         )}
         {st.source === 'part' && !t && <Hint>Select an unlocked part.</Hint>}
