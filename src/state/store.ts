@@ -113,6 +113,11 @@ export interface AppState {
   supportPending: number;
   /** Build generation: editing supports by hand (select / move / delete touch points, or add supports) */
   supportEdit: 'select' | 'add' | null;
+  /** Build generation: the tab open in the left and right panels */
+  buildLeftTab: 'parts' | 'printer' | 'nesting';
+  buildRightTab: 'builds' | 'parts' | 'supports' | 'edit';
+  /** side panels collapsed to a thin bar */
+  panelsCollapsed: { left: boolean; right: boolean };
   /** touch points selected while editing supports: copy key and touch point index */
   supportSel: { key: string; i: number }[];
   /** where a touch point being dragged would go (world) */
@@ -214,6 +219,15 @@ export const useStore = create<AppState>(() => ({
   supportTick: 0,
   supportPending: 0,
   supportEdit: null,
+  buildLeftTab: 'parts',
+  buildRightTab: 'builds',
+  panelsCollapsed: (() => {
+    try {
+      return { left: false, right: false, ...JSON.parse(localStorage.getItem('autonest.panels') ?? '{}') };
+    } catch {
+      return { left: false, right: false };
+    }
+  })(),
   supportSel: [],
   supportGhost: null,
   supportHover: null,

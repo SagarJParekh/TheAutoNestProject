@@ -155,3 +155,16 @@ export function Check({ checked, onChange, children }: { checked: boolean; onCha
 export function Hint({ children }: { children: ReactNode }) {
   return <p className="hint">{children}</p>;
 }
+
+/** Tabs across the top of a side panel. */
+export function PanelTabs<T extends string>({ value, tabs, onChange }: { value: T; tabs: { value: T; label: ReactNode; title?: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="panel-tabs" role="tablist">
+      {tabs.map((t) => (
+        <button key={t.value} role="tab" aria-selected={value === t.value} className={value === t.value ? 'active' : ''} title={t.title} onClick={() => onChange(t.value)}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}

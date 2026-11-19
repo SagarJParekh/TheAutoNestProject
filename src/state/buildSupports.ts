@@ -7,7 +7,7 @@
  * are cached per part, orientation and settings.
  */
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import { applyMatrix, SMALL_PILLAR, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
+import { applyMatrix, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
 import { getState, setState, useStore } from './store';
 import { printerById } from './printers';
 import { pool, CancelledError } from '../workers/client';
@@ -16,6 +16,8 @@ import type { BuildGenState, BuildPart } from './types';
 export interface SupportEntry {
   /** supports, in the frame where the turned part is lifted to the support lift (z = 0 is the platform) */
   mesh: MeshData;
+  /** the raft under them (same frame) */
+  raft: MeshData;
   /** how far the turned, centred part was moved up in that frame */
   dz: number;
   count: number;
@@ -41,11 +43,12 @@ const failed = new Set<string>();
 export function supportParams(g: BuildGenState = getState().buildGen): SupportParams | null {
   const tech = printerById(g.printerId).tech;
   if (tech === 'powder') return null;
-  const { skip: _skip, kind, pillar, ...st } = getState().settings.supports;
+  const { skip: _skip, ...st } = getState().settings.supports as SupportParams & { skip: unknown; kind?: unknown; pillar?: unknown };
   void _skip;
-  // settings from older sessions lack the newer variables: the standard values fill them in;
-  // small pillars take their own shape values
-  return { ...SUPPORT_PRESETS[tech], ...st, ...(kind === 'pillar' ? { ...SMALL_PILLAR, ...pillar } : {}), tech };
+  // settings from older sessions lack the newer variables (the standard values fill them in), or carry the old small-pillar choice (dropped)
+  delete st.kind;
+  delete st.pillar;
+  return { ...SUPPORT_PRESETS[tech], ...st, tech };
 }
 
 const qKey = (q: readonly number[]) => q.map((v) => Math.round(v * 1e4)).join(',');
@@ -126,7 +129,7 @@ export async function updateSupports() {
           };
           const skip = (ed?.skip ?? []).map((v) => turnPoint(v, q));
           const r = await pool.run('supports', { mesh: turned, params, skip, edits }).promise;
-          cache.set(k, { mesh: r.supports, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts, manual: r.manual });
+          cache.set(k, { mesh: r.supports, raft: r.raft, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts, manual: r.manual });
         } catch (e) {
           if (e instanceof CancelledError) return;
           failed.add(k);

@@ -24,7 +24,8 @@ describe('support generation', () => {
       expect(computeBounds(r.part.positions).min[2]).toBeCloseTo(p.lift, 5);
       expect(r.count).toBeGreaterThan(20);
       expect(isWatertight(r.supports)).toBe(true);
-      const b = computeBounds(r.supports.positions);
+      // supports and raft together reach down to the platform
+      const b = computeBounds(Float32Array.from([...r.supports.positions, ...r.raft.positions]));
       expect(b.min[2]).toBeCloseTo(0, 3);
       // reaching the plate's underside (lifted) plus the penetration
       expect(b.max[2]).toBeGreaterThan(p.lift + 20 - 0.01);
@@ -53,7 +54,7 @@ describe('a lifted part always stands on supports', () => {
     const box = applyMatrix(boxMesh([-10, -10, -10], [10, 10, 10]), new Matrix4().makeRotationX(Math.PI / 4).elements);
     const r = await generateSupports(box, SUPPORT_PRESETS.sla);
     expect(r.count).toBeGreaterThan(0);
-    const b = computeBounds(r.supports.positions);
+    const b = computeBounds(Float32Array.from([...r.supports.positions, ...r.raft.positions]));
     expect(b.min[2]).toBeCloseTo(0, 3);
     expect(b.max[2]).toBeGreaterThan(SUPPORT_PRESETS.sla.lift);
   });
@@ -142,8 +143,12 @@ describe('a lifted part always stands on supports', () => {
     for (const raftType of ['none', 'skate', 'cross', 'hex', 'solid', 'case'] as const) {
       const r = await generateSupports(t, { ...base, raftType });
       expect(isWatertight(r.supports)).toBe(true);
+      // the raft is a mesh of its own (hidden while editing supports)
+      if (raftType === 'none') expect(r.raft.indices.length).toBe(0);
+      else expect(isWatertight(r.raft)).toBe(true);
       vol[raftType] = r.supportVolume;
-      const b = computeBounds(r.supports.positions);
+      // the supports stand on the raft, the raft on the platform
+      const b = computeBounds(raftType === 'none' ? r.supports.positions : r.raft.positions);
       expect(b.min[2]).toBeCloseTo(0, 3);
     }
     // more raft, more volume: none < skate < cross < hex < solid < case

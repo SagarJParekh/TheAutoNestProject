@@ -3,10 +3,9 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
 import { supportTotals } from '../../state/buildSupports';
-import { RAFT_TYPES, SMALL_PILLAR, SUPPORT_PRESETS, type RaftType, type SupportKind, type SupportParams, type SupportShape, type SupportTech } from '../../geometry/supports';
+import { RAFT_TYPES, SUPPORT_PRESETS, type RaftType, type SupportParams, type SupportShape, type SupportTech } from '../../geometry/supports';
 
-type SupportSettings = SupportParams & { kind?: SupportKind; pillar?: SupportShape };
-const setSup = (patch: Partial<SupportSettings>) => {
+const setSup = (patch: Partial<SupportParams>) => {
   const s = getState().settings;
   setState({ settings: { ...s, supports: { ...s.supports, ...patch } } });
 };
@@ -42,7 +41,6 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
     </Row>
   );
   const resin = tech !== 'dmls';
-  const kind = st.kind ?? 'regular';
   const targets = mode === 'selected' ? sel : undefined;
   const apply = () => {
     if (mode === 'selected' && !sel.length) return;
@@ -89,15 +87,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         )}
         {st.style === 'tip' ? (
           <>
-            <div className="support-tabs" role="tablist">
-              <button role="tab" className={kind === 'regular' ? 'active' : ''} onClick={() => setSup({ kind: 'regular' })} title="Supports for the part as a whole">
-                Regular support
-              </button>
-              <button role="tab" className={kind === 'pillar' ? 'active' : ''} onClick={() => setSup({ kind: 'pillar' })} title="Thin supports for small, delicate features">
-                Small pillar
-              </button>
-            </div>
-            <SupportDiagram kind={kind} st={st} />
+            <SupportDiagram st={st} />
           </>
         ) : (
           <>
@@ -210,7 +200,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
             Clear all
           </button>
         </div>
-        <button className="btn wide" onClick={() => setSup({ ...SUPPORT_PRESETS[tech], kind: 'regular', pillar: undefined })} title={`Back to the standard ${tech.toUpperCase()} script`}>
+        <button className="btn wide" onClick={() => setSup({ ...SUPPORT_PRESETS[tech] })} title={`Back to the standard ${tech.toUpperCase()} script`}>
           Standard values
         </button>
         {supported.length > 0 && (
@@ -241,12 +231,11 @@ function DiagramField({ x, y, label, value, onChange, title, min = 0, step = 0.0
 /**
  * The support drawn with its sizes on it (like the support parameter sheets of
  * resin slicers): a regular support on the platform at the left, one standing
- * on the part below at the right. Regular supports and small pillars have their
- * own values.
+ * on the part below at the right.
  */
-function SupportDiagram({ kind, st }: { kind: SupportKind; st: SupportParams & { pillar?: SupportShape } }) {
-  const v: SupportShape = kind === 'pillar' ? { ...SMALL_PILLAR, ...st.pillar } : st;
-  const set = (patch: Partial<SupportShape>) => (kind === 'pillar' ? setSup({ pillar: { ...SMALL_PILLAR, ...st.pillar, ...patch } }) : setSup(patch));
+function SupportDiagram({ st }: { st: SupportParams }) {
+  const v: SupportShape = st;
+  const set = (patch: Partial<SupportShape>) => setSup(patch);
   const line = 'var(--muted)';
   return (
     <div className="support-diagram">

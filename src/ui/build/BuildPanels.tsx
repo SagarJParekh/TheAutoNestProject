@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { SaveLocationRow } from '../Dialogs';
-import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
+import { Check, Hint, PanelTabs, NumberField, Row, Section, Segmented } from '../controls';
 import { Icon } from '../icons';
 import { SnapControls } from '../SnapControls';
 import { getState, setState, useStore } from '../../state/store';
@@ -398,12 +398,23 @@ export function BuildSetupPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
   const accept = [...importableExtensions(), 'bin'].map((e) => '.' + e).join(',');
   const custom = g.customVolumes[printer.id] ?? printer.volume;
+  const tab = useStore((s) => s.buildLeftTab);
   return (
     <aside className="panel left build-setup">
       <header className="panel-head">
         <h2>Build generation</h2>
       </header>
+      <PanelTabs
+        value={tab}
+        onChange={(buildLeftTab) => setState({ buildLeftTab })}
+        tabs={[
+          { value: 'parts', label: 'Parts', title: 'Add parts and start nesting' },
+          { value: 'printer', label: 'Printer', title: 'The printer and its build volume' },
+          { value: 'nesting', label: 'Nesting', title: 'Spacing, arrangement and tilt' },
+        ]}
+      />
       <div className="panel-scroll">
+        {tab === 'parts' && (
         <Section title="Parts">
           <SavedSessionBanner />
           <div className="btn-grid two">
@@ -433,6 +444,8 @@ export function BuildSetupPanel() {
           </Hint>
           <StartNesting />
         </Section>
+        )}
+        {tab === 'printer' && (
         <Section title="Printer">
           <div className="printer-tree">
             {TECHNOLOGIES.map((t) => (
@@ -477,6 +490,9 @@ export function BuildSetupPanel() {
           )}
           <Hint>{TECHNOLOGIES.find((t) => t.id === printer.tech)!.note}{printer.provisional ? ' Build volume to be confirmed.' : ''}</Hint>
         </Section>
+        )}
+        {tab === 'nesting' && (
+        <>
         <Section title="Spacing">
           {printer.tech === 'powder' && g.nest3d ? (
             <Row label="Clearance between parts">
@@ -590,6 +606,8 @@ export function BuildSetupPanel() {
           </Hint>
         </Section>
         <TiltSection />
+        </>
+        )}
       </div>
     </aside>
   );
@@ -674,6 +692,11 @@ export function BuildsPanel() {
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
   const groups = groupLabels(g.parts);
   const resin = isResin(currentPrinter(g).tech);
+  const supportsTab = currentPrinter(g).tech !== 'powder';
+  const storedTab = useStore((s) => s.buildRightTab);
+  const supportEdit = useStore((s) => s.supportEdit);
+  // editing supports (from the tool row or the view) shows the Supports tab
+  const rtab = supportEdit && supportsTab ? 'supports' : storedTab === 'supports' && !supportsTab ? 'builds' : storedTab;
   return (
     <aside className="panel right">
       <header className="panel-head">
@@ -685,8 +708,29 @@ export function BuildsPanel() {
           </button>
         )}
       </header>
+      <PanelTabs
+        value={rtab}
+        onChange={(buildRightTab) => setState({ buildRightTab })}
+        tabs={[
+          { value: 'builds', label: 'Builds', title: 'The builds, nesting progress and export' },
+          { value: 'parts', label: 'Part list', title: 'Quantities, tilt and options of each part' },
+          ...(supportsTab ? [{ value: 'supports' as const, label: 'Supports', title: 'Support generation (SLA / DLP / DMLS)' }] : []),
+          { value: 'edit', label: 'Edit & check', title: 'Editing by hand, locks, collision and density checks' },
+        ]}
+      />
       <div className="panel-scroll">
-        {currentPrinter(g).tech !== 'powder' && <BuildSupports tech={currentPrinter(g).tech as 'sla' | 'dlp' | 'dmls'} />}
+        {rtab === 'supports' && supportsTab && <BuildSupports tech={currentPrinter(g).tech as 'sla' | 'dlp' | 'dmls'} />}
+        {rtab === 'edit' && (
+          <Section title="Edit by hand & check">
+            {!active && <Hint>Nest the parts first.</Hint>}
+            {active && <EditBox />}
+            <NestLogBox />
+            {active && <LockBox />}
+            {active && !active.preview && <ChecksBox />}
+            {active && !active.preview && <DensityBox />}
+          </Section>
+        )}
+        {rtab === 'builds' && (
         <Section title={`${g.builds.length} build${g.builds.length === 1 ? '' : 's'} · ${total} part${total === 1 ? '' : 's'}`}>
           <ul className="build-list">
             {g.builds.map((b, i) => (
@@ -748,17 +792,12 @@ export function BuildsPanel() {
           ) : (
             g.parts.length > 0 && (g.stale || !g.builds.length) && <StartNesting />
           )}
-          {active && <EditBox />}
-          <NestLogBox />
-          {active && <LockBox />}
           {active?.preview && (
             <Hint>
               The parts wait beside the platform until they are nested. Arrange or lock copies by hand if you like, then press Start nesting to place them in
               builds.
             </Hint>
           )}
-          {active && !active.preview && <ChecksBox />}
-          {active && !active.preview && <DensityBox />}
           {active && !active.preview && (
             <div className="btn-grid two">
               <button className="btn primary" onClick={() => exportBuilds(g.active, '3mf')}>
@@ -784,6 +823,9 @@ export function BuildsPanel() {
           )}
           {g.builds.length > 0 && <SaveLocationRow />}
         </Section>
+        )}
+        {rtab === 'parts' && (
+        <>
         <Section
           title={`Parts (${g.parts.length})`}
           actions={
@@ -962,6 +1004,8 @@ export function BuildsPanel() {
               <Hint>Uses the tilt for all parts ({g.tilt.angle}°).</Hint>
             )}
           </Section>
+        )}
+        </>
         )}
       </div>
     </aside>

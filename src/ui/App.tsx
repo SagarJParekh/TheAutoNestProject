@@ -13,7 +13,7 @@ import { HoverHelp } from './HoverHelp';
 import { initBuildSession } from '../state/buildSession';
 import { useShortcuts } from './shortcuts';
 import { importFiles } from '../state/actions';
-import { useStore } from '../state/store';
+import { setState, useStore } from '../state/store';
 import { BuildSetupPanel, BuildsPanel } from './build/BuildPanels';
 
 interface FsEntry {
@@ -51,6 +51,22 @@ async function filesFromEntries(entries: FsEntry[]): Promise<File[]> {
 export function App() {
   const [dragging, setDragging] = useState(false);
   const workspace = useStore((s) => s.workspace);
+  const collapsed = useStore((s) => s.panelsCollapsed);
+  const toggle = (side: 'left' | 'right') =>
+    setState((s) => {
+      const panelsCollapsed = { ...s.panelsCollapsed, [side]: !s.panelsCollapsed[side] };
+      try {
+        localStorage.setItem('autonest.panels', JSON.stringify(panelsCollapsed));
+      } catch {
+        /* the choice is just not remembered */
+      }
+      return { panelsCollapsed };
+    });
+  // the view keeps its size in step with the panels
+  useEffect(() => {
+    const id = requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return () => cancelAnimationFrame(id);
+  }, [collapsed.left, collapsed.right]);
   const openFile = useCallback(() => (document.querySelector('.toolbar input[type=file]') as HTMLInputElement | null)?.click(), []);
   useShortcuts(openFile);
   useEffect(() => {
@@ -73,7 +89,8 @@ export function App() {
 
   return (
     <div
-      className="app"
+      className={`app ${collapsed.left ? 'left-collapsed' : ''} ${collapsed.right ? 'right-collapsed' : ''}`}
+      style={{ ...(collapsed.left ? { ['--lw' as string]: '0px' } : {}), ...(collapsed.right ? { ['--rw' as string]: '0px' } : {}) }}
       onDragOver={(e) => {
         if (Array.from(e.dataTransfer.types).includes('Files')) {
           e.preventDefault();
@@ -94,6 +111,12 @@ export function App() {
         <div className="center-view">
           <ViewerCanvas />
           <ProgressOverlay />
+          <button className="panel-toggle left" onClick={() => toggle('left')} title={collapsed.left ? 'Show the left panel' : 'Hide the left panel (more room for the view)'}>
+            {collapsed.left ? '›' : '‹'}
+          </button>
+          <button className="panel-toggle right" onClick={() => toggle('right')} title={collapsed.right ? 'Show the right panel' : 'Hide the right panel (more room for the view)'}>
+            {collapsed.right ? '‹' : '›'}
+          </button>
           <div className="view-tools">
             <ClipWidget />
           </div>

@@ -3,7 +3,7 @@ import { Viewer } from '../viewer/Viewer';
 import { viewerApi } from '../viewer/api';
 import { getState, notify, setState, setTransform, updateParts, useStore, type AppState } from '../state/store';
 import { supportLift } from '../state/buildSupports';
-import { SUP, addSupportAt, touchPointAt, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, moveSupport, partOfKey, pickingCopies, selectBuildPart, selectTouchPoints, supportTouchPoints, type TouchPoint } from '../state/buildActions';
+import { RAFT, SUP, addSupportAt, touchPointAt, buildDisplayParts, currentPrinter, editPlacements, isHiddenKey, moveSupport, partOfKey, pickingCopies, selectBuildPart, selectTouchPoints, supportTouchPoints, type TouchPoint } from '../state/buildActions';
 import { quaternionOf } from '../state/math';
 import type { Part } from '../state/types';
 import { layFlat, onContourPick, pickFace, requestEdges, select } from '../state/actions';
@@ -58,7 +58,9 @@ function viewState(s: AppState): AppState {
   const involved = checks
     ? new Set([...(checks.collisions ?? []).flatMap((c) => [c.a, c.b]), ...(checks.stuck ?? [])])
     : null;
-  const shown = s.buildGen.hidden?.length ? lastBuild.parts.filter((p) => !isHiddenKey(s.buildGen, p.id)) : lastBuild.parts;
+  let shown = s.buildGen.hidden?.length ? lastBuild.parts.filter((p) => !isHiddenKey(s.buildGen, p.id)) : lastBuild.parts;
+  // editing supports by hand: the rafts are hidden too (with the platform), nothing in the way below the parts
+  if (s.supportEdit) shown = shown.filter((p) => !p.id.endsWith(RAFT));
   const parts = checks?.showOnly && involved?.size ? shown.filter((p) => involved.has(p.id)) : shown;
   const edit = s.buildEdit ?? 'select';
   const view: AppState = {
@@ -333,7 +335,7 @@ export function ViewerCanvas() {
           }
           // Build generation: clicks only select parts (Ctrl / Shift toggles)
           // a click on a copy's supports selects the copy
-          selectBuildPart(info?.partId?.replace(SUP, '') ?? null, mods.ctrl || mods.shift);
+          selectBuildPart(info?.partId?.replace(SUP, '').replace(RAFT, '') ?? null, mods.ctrl || mods.shift);
           return;
         }
         if (s.pickMode === 'layflat') {

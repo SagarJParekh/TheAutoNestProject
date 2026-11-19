@@ -52,7 +52,7 @@ h2, h3, h4 { margin: 0; font-weight: 600; }
 
 .app {
   display: grid;
-  grid-template-columns: 260px 1fr 320px;
+  grid-template-columns: var(--lw, 260px) 1fr var(--rw, 320px);
   grid-template-rows: auto 1fr 26px;
   grid-template-areas: 'tb tb tb' 'left center right' 'sb sb sb';
   height: 100vh;
@@ -236,7 +236,7 @@ h2, h3, h4 { margin: 0; font-weight: 600; }
 kbd { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, monospace; font-size: 12px; }
 
 @media (max-width: 1100px) {
-  .app { grid-template-columns: 210px 1fr 270px; }
+  .app { grid-template-columns: var(--lw, 210px) 1fr var(--rw, 270px); }
   .tb span { display: none; }
 }
 @media (max-width: 760px) {
@@ -555,9 +555,6 @@ table.report tr:last-child td { border-bottom: none; }
 .mark-sep { width: 1px; height: 18px; background: var(--line-2); }
 
 /* Supports: type tabs, the drawing with its sizes, the raft switch */
-.support-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; margin: 6px 0 8px; }
-.support-tabs button { padding: 6px 8px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; }
-.support-tabs button.active { background: var(--panel-2); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
 .support-diagram { position: relative; width: 288px; height: 340px; margin: 0 auto 6px; }
 .support-diagram svg { position: absolute; inset: 0; }
 .diagram-field { position: absolute; width: 70px; display: flex; flex-direction: column; gap: 1px; font-size: 10px; color: var(--muted); }
@@ -589,3 +586,16 @@ table.report tr:last-child td { border-bottom: none; }
 .bt-pop-host { position: relative; display: flex; }
 .bt-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: 250px; padding: 10px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 8px; }
 .bt-pop-row { display: flex; gap: 6px; }
+
+/* tabs across the top of a side panel */
+.panel-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; overflow-x: auto; }
+.panel-tabs button { flex: 1; white-space: nowrap; padding: 7px 8px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; margin-bottom: -1px; }
+.panel-tabs button:hover { color: var(--text); }
+.panel-tabs button.active { background: var(--panel-2); color: var(--text); border-color: var(--line); border-bottom: 1px solid var(--panel-2); }
+
+/* collapsing the side panels: a thin tab on the view's edge */
+.panel-toggle { position: absolute; top: 50%; z-index: 6; transform: translateY(-50%); width: 16px; height: 56px; display: flex; align-items: center; justify-content: center; padding: 0; background: var(--panel); color: var(--muted); border: 1px solid var(--line-2); cursor: pointer; font-size: 12px; }
+.panel-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.panel-toggle.left { left: 0; border-left: 0; border-radius: 0 6px 6px 0; }
+.panel-toggle.right { right: 0; border-right: 0; border-radius: 6px 0 0 6px; }
+.app.left-collapsed > .panel.left, .app.right-collapsed > .panel.right { display: none; }

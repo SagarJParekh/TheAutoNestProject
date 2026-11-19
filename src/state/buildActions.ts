@@ -21,6 +21,8 @@ import { supportFor, supportLift, supportParams, turnPoint, updateSupports } fro
 
 /** key suffix of the supports shown under a copy */
 export const SUP = '~sup';
+/** key suffix of the raft shown under a copy's supports */
+export const RAFT = '~raft';
 
 type Quat = [number, number, number, number];
 
@@ -889,6 +891,16 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
         mesh: sup.mesh,
         transform: { position: [pl.position[0], pl.position[1], s.zOffset], rotation: [0, 0, 0], scale: [1, 1, 1] },
       });
+    if (sup && sup.raft?.indices.length)
+      out.push({
+        id: `${pl.key}${RAFT}`,
+        name: `${name} raft`,
+        color: '#5f8fbf',
+        visible: true,
+        locked: true,
+        mesh: sup.raft,
+        transform: { position: [pl.position[0], pl.position[1], s.zOffset], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      });
   }
   return out;
 }
@@ -917,9 +929,11 @@ function exportItems(s: BuildGenState, i: number) {
   const sup = s.builds[i].placements.flatMap((pl) => {
     const p = byId.get(pl.partId);
     const e = p ? supportFor(p, pl.quaternion, s) : undefined;
-    if (!p || !e || !e.mesh.indices.length) return [];
+    if (!p || !e || (!e.mesh.indices.length && !e.raft?.indices.length)) return [];
     const m = new Matrix4().makeTranslation(pl.position[0], pl.position[1], s.zOffset);
-    return [{ name: `${p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name}_sup`, mesh: applyMatrix(e.mesh, m.elements) }];
+    // supports and raft together, as one piece
+    const both = e.raft?.indices.length ? mergeMeshes([e.mesh, e.raft]) : e.mesh;
+    return [{ name: `${p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name}_sup`, mesh: applyMatrix(both, m.elements) }];
   });
   return [...buildItems(s, i), ...sup];
 }

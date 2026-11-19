@@ -326,12 +326,7 @@ export interface ToolSettings {
   /** the line drawn for the Draw line cut, kept so its teeth and options can be edited */
   cutLine: CutLine | null;
   /** support generation; `skip`: points on overhang areas left without supports (world) */
-  supports: SupportParams & {
-    skip: Vec3[];
-    /** which support type is made: regular supports or small pillars (each with its own shape values) */
-    kind?: import('../geometry').SupportKind;
-    pillar?: import('../geometry').SupportShape;
-  };
+  supports: SupportParams & { skip: Vec3[] };
 }
 
 /** A drawn cut line in camera space, with the view it was drawn in. */

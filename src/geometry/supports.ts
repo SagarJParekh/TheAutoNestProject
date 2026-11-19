@@ -99,11 +99,8 @@ export interface SupportEdits {
   remove: [number, number, number, number][];
 }
 
-/** The values that differ between the two support types (Regular support, Small pillar). */
+/** The sizes of a support (drawn with their values in the Supports panel). */
 export type SupportShape = Pick<SupportParams, 'tipDiameter' | 'penetration' | 'tipLength' | 'bodyDiameter' | 'bottomDiameter' | 'footHeight' | 'baseDiameter'>;
-export type SupportKind = 'regular' | 'pillar';
-/** Small pillars: thin supports for small, delicate features (less to remove, fewer marks). */
-export const SMALL_PILLAR: SupportShape = { tipDiameter: 0.25, penetration: 0.15, tipLength: 1, bodyDiameter: 0.5, bottomDiameter: 0.3, footHeight: 0.5, baseDiameter: 1 };
 
 /** The standard support scripts. */
 export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
@@ -141,6 +138,8 @@ export interface SupportResult {
   /** areas left out by the user */
   skipped: number;
   supports: MeshData;
+  /** the raft under the supports (its own mesh, so it can be hidden while editing supports) */
+  raft: MeshData;
   /** bars / tips / walls made */
   count: number;
   supportVolume: number;
@@ -689,7 +688,7 @@ async function buildSupports(
   areas: OverhangArea[],
   p: SupportParams,
   edits: { add: Vec3[]; remove: [number, number, number, number][] } = { add: [], remove: [] },
-): Promise<{ mesh: MeshData; count: number; volume: number; contacts: Float32Array; manual: Int32Array }> {
+): Promise<{ mesh: MeshData; raft: MeshData; count: number; volume: number; contacts: Float32Array; manual: Int32Array }> {
   const w = await getManifold();
   const M = w.Manifold;
   const pen = p.penetration;
@@ -712,6 +711,8 @@ async function buildSupports(
   const blocked = p.onPart ? [] : cols.filter((c) => c.onPart && !c.noContact);
   if (!p.onPart) cols = cols.filter((c) => !c.onPart);
   const solids: Manifold[] = [];
+  /** the raft, kept apart from the supports (shown / hidden on its own) */
+  const raftParts: Manifold[] = [];
   const made: Column[] = [];
   const feet: [number, number][] = [];
   try {
@@ -809,7 +810,7 @@ async function buildSupports(
     if (resin && raftOn(p) && feet.length) {
       const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2);
       const rf = p.style === 'tip' ? Math.max(rb, p.baseDiameter / 2) : Math.max(0.1, p.wall / 2);
-      solids.push(...raftSolids(w, feet, p, g, rf));
+      raftParts.push(...raftSolids(w, feet, p, g, rf));
     }
     // braces: zigzag rods between neighbouring free-standing supports, on tall ones
     if (resin && p.braces) {
@@ -843,15 +844,24 @@ async function buildSupports(
       contacts.set([c.x, c.y, c.top], i * 3);
       manual[i] = c.manual ?? -1;
     });
-    if (!solids.length) return { mesh: { positions: new Float32Array(0), indices: new Uint32Array(0) }, count: 0, volume: 0, contacts, manual };
+    const empty = (): MeshData => ({ positions: new Float32Array(0), indices: new Uint32Array(0) });
+    let raft = empty(), raftVolume = 0;
+    if (raftParts.length) {
+      const r = M.union(raftParts);
+      raftVolume = r.volume();
+      raft = fromManifold(r);
+      r.delete();
+    }
+    if (!solids.length) return { mesh: empty(), raft, count: 0, volume: raftVolume, contacts, manual };
     const all = M.union(solids);
-    const volume = all.volume();
+    const volume = all.volume() + raftVolume;
     const mesh2 = fromManifold(all);
     all.delete();
     const walls = p.style === 'volume' ? solids.length : new Set(made).size;
-    return { mesh: mesh2, count: walls, volume, contacts, manual };
+    return { mesh: mesh2, raft, count: walls, volume, contacts, manual };
   } finally {
     solids.forEach((s) => s.delete());
+    raftParts.forEach((s) => s.delete());
   }
 }
 
@@ -881,6 +891,7 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
     areas: areas.length,
     skipped: skipped.size,
     supports: s.mesh,
+    raft: s.raft,
     count: s.count,
     supportVolume: s.volume,
     contacts: s.contacts,
