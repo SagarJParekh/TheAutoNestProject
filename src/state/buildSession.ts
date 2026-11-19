@@ -111,13 +111,19 @@ export async function savedBuildSession(): Promise<{ savedAt: number; parts: num
 }
 
 /**
- * Sessions saved before powder beds defaulted to 1 mm margins and 1 mm off the
- * platform still hold the old 5 mm defaults: bring those to 1 mm (once).
+ * Sessions saved with older spacing defaults: powder beds once had 5 mm
+ * margins and 5 mm off the platform (now 1 mm), SLA / DLP / DMLS 5 mm off the
+ * platform (now 0: on the platform). Values still at the old default are
+ * brought to the new one (once); values typed in by hand stay.
  */
 function upgradeSpacing(g: BuildGenState, saved: { spacingDefaults?: number }): BuildGenState {
-  if (saved.spacingDefaults) return g;
+  const v = saved.spacingDefaults ?? 0;
+  if (v >= 2) return g;
   const powder = printerById(g.printerId).tech === 'powder';
-  return { ...g, spacingDefaults: 1, ...(powder && g.margin === 5 ? { margin: 1 } : {}), ...(powder && g.zOffset === 5 ? { zOffset: 1 } : {}) };
+  let out: BuildGenState = { ...g, spacingDefaults: 2 };
+  if (v < 1 && powder) out = { ...out, ...(g.margin === 5 ? { margin: 1 } : {}), ...(g.zOffset === 5 ? { zOffset: 1 } : {}) };
+  if (!powder && g.zOffset === 5) out = { ...out, zOffset: 0 };
+  return out;
 }
 
 /** Bring back the saved session (parts, settings, builds, locks). */
