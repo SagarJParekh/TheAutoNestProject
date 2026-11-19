@@ -80,11 +80,12 @@ function viewState(s: AppState): AppState {
     zoomWindow: false,
     lassoMode: false,
     polyMode: false,
-    buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset },
+    buildView: { volume: printer.volume, margin: s.buildGen.margin, zOffset: s.buildGen.zOffset, hidePlatform: !!s.supportEdit },
     supportPoints: s.supportEdit ? touchOverlay(s) : null,
     // locked copies: the gizmo only offers their free axes, pick & place only moves them along free axes
     gizmoLocks: s.selection.length === 1 ? (s.buildGen.locks?.[s.selection[0]] ?? null) : null,
     multiGizmo: true,
+    pickSkipSuffix: s.supportEdit === 'add' ? SUP : undefined,
     placeLocks: s.buildGen.locks ? Object.fromEntries(Object.entries(s.buildGen.locks).map(([k, L]) => [k, L.t])) : null,
   };
   lastView = { src: s, view };
@@ -94,7 +95,7 @@ function viewState(s: AppState): AppState {
 /** Support touch points while editing supports: generated ones light blue, ones added by hand green, selected ones yellow. */
 let lastTouch: { key: unknown[]; value: NonNullable<AppState['supportPoints']> } | null = null;
 function touchOverlay(s: AppState): NonNullable<AppState['supportPoints']> {
-  const key = [s.buildGen, s.supportTick, s.supportSel, s.supportGhost];
+  const key = [s.buildGen, s.supportTick, s.supportSel, s.supportGhost, s.supportHover];
   if (lastTouch && key.every((k, i) => k === lastTouch!.key[i])) return lastTouch.value;
   const pts = supportTouchPoints(s.buildGen);
   const sel = new Set(s.supportSel.map((x) => `${x.key}|${x.i}`));
@@ -103,7 +104,7 @@ function touchOverlay(s: AppState): NonNullable<AppState['supportPoints']> {
     pos.set(t.world, k * 3);
     col.set(sel.has(`${t.key}|${t.i}`) ? [1, 0.82, 0.2] : t.manual >= 0 ? [0.3, 0.92, 0.45] : [0.6, 0.86, 1], k * 3);
   });
-  lastTouch = { key, value: { pos, col, ghost: s.supportGhost } };
+  lastTouch = { key, value: { pos, col, ghost: s.supportGhost, hover: s.supportEdit === 'add' ? s.supportHover : null } };
   return lastTouch.value;
 }
 
@@ -209,6 +210,52 @@ function useSupportMouse(el: () => HTMLDivElement | null, on: boolean) {
   }, [on, el]);
 }
 
+/**
+ * Adding supports: a reference point follows the mouse over the parts (where
+ * the support would touch: under a surface facing up it is the surface facing
+ * down below it), with a line down to where the support would stand.
+ */
+function useSupportHover(el: () => HTMLDivElement | null, on: boolean) {
+  useEffect(() => {
+    const box = el();
+    if (!on || !box) return;
+    let frame = 0;
+    let last: { x: number; y: number } | null = null;
+    const update = () => {
+      frame = 0;
+      const v = viewerApi.current?.viewer;
+      if (!v || !last) return;
+      const info = v.pick(last.x, last.y);
+      if (!info || info.partId.endsWith(SUP)) return setState({ supportHover: null });
+      const down: [number, number, number] = [0, 0, -1];
+      let at = info.point;
+      if (info.normal[2] > -0.02) {
+        // a surface facing up (or a wall): the support goes under the surface facing down below the point
+        const below = v.castRay([at[0], at[1], at[2] - 1e-3], down, { onlyPart: info.partId, minDistance: 1e-3 });
+        if (!below) return setState({ supportHover: null });
+        at = below.point;
+      }
+      const z0 = getState().buildGen.zOffset;
+      const foot = v.castRay([at[0], at[1], at[2] - 1e-3], down, { onlyPart: info.partId, minDistance: 0.05 });
+      setState({ supportHover: { at, foot: foot ? foot.point : [at[0], at[1], z0] } });
+    };
+    const move = (e: PointerEvent) => {
+      if (!(e.target instanceof HTMLCanvasElement) || e.buttons) return;
+      last = { x: e.clientX, y: e.clientY };
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    const leave = () => setState({ supportHover: null });
+    box.addEventListener('pointermove', move);
+    box.addEventListener('pointerleave', leave);
+    return () => {
+      box.removeEventListener('pointermove', move);
+      box.removeEventListener('pointerleave', leave);
+      if (frame) cancelAnimationFrame(frame);
+      setState({ supportHover: null });
+    };
+  }, [on, el]);
+}
+
 /** Build generation: vertical slider that cuts the build at a height, to look inside. */
 function BuildClipSlider() {
   const clip = useStore((s) => s.buildClip);
@@ -258,7 +305,9 @@ export function ViewerCanvas() {
   const placing = useStore((s) => s.tool === 'transform' && s.gizmo === 'place' && !s.pickMode);
   const building = useStore((s) => s.workspace === 'build');
   const supportEdit = useStore((s) => (s.workspace === 'build' ? s.supportEdit : null));
-  useSupportMouse(useCallback(() => ref.current, []), supportEdit === 'select');
+  const host = useCallback(() => ref.current, []);
+  useSupportMouse(host, supportEdit === 'select');
+  useSupportHover(host, supportEdit === 'add');
 
   useEffect(() => {
     const el = ref.current!;

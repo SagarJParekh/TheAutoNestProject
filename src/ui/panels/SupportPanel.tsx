@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
 import { supportTotals } from '../../state/buildSupports';
-import { SUPPORT_PRESETS, type SupportParams, type SupportTech } from '../../geometry/supports';
+import { RAFT_TYPES, SMALL_PILLAR, SUPPORT_PRESETS, type RaftType, type SupportKind, type SupportParams, type SupportShape, type SupportTech } from '../../geometry/supports';
 
-const setSup = (patch: Partial<SupportParams>) => {
+type SupportSettings = SupportParams & { kind?: SupportKind; pillar?: SupportShape };
+const setSup = (patch: Partial<SupportSettings>) => {
   const s = getState().settings;
   setState({ settings: { ...s, supports: { ...s.supports, ...patch } } });
 };
@@ -28,6 +29,9 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
   useStore((s) => s.supportTick);
   const g = useStore((s) => s.buildGen);
   const totals = supportTotals(g);
+  const [mode, setMode] = useState<'all' | 'selected'>('all');
+  // Cancel goes back to the settings of the last Apply (or as they were when the panel opened)
+  const applied = useRef(getState().settings.supports);
   // the printer decides the technology: its standard script is loaded when it changes
   useEffect(() => {
     if (getState().settings.supports.tech !== tech) setSup({ ...SUPPORT_PRESETS[tech] });
@@ -38,72 +42,106 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
     </Row>
   );
   const resin = tech !== 'dmls';
+  const kind = st.kind ?? 'regular';
+  const targets = mode === 'selected' ? sel : undefined;
+  const apply = () => {
+    if (mode === 'selected' && !sel.length) return;
+    applied.current = getState().settings.supports;
+    supportBuildParts(targets);
+  };
+  const cancel = () => {
+    setState((s) => ({ settings: { ...s.settings, supports: applied.current }, supportEdit: null, supportSel: [] }));
+  };
+  const clearAll = () => {
+    clearSupportEdits(targets);
+    removeBuildSupports(targets);
+    setState({ supportEdit: null, supportSel: [] });
+  };
   return (
-    <Section title={`Supports (${tech.toUpperCase()})`}>
-      {supported.length > 0 && <SupportHandEdits />}
-      <Row label="Critical angle">
-        <NumberField value={st.criticalAngle} min={0} max={89} step={1} suffix="°" title="Surfaces making less than this angle with the platform get supports" onChange={(criticalAngle) => setSup({ criticalAngle: Math.max(0, Math.min(89, criticalAngle)) })} />
-      </Row>
-      <Row label="Minimal area">
-        <NumberField value={st.minArea} min={0} step={0.1} suffix="mm²" title="Overhang areas smaller than this are left without supports" onChange={(minArea) => setSup({ minArea: Math.max(0, minArea) })} />
-      </Row>
-      {mm('Distance from platform', 'lift', 'The part is lifted this far above the platform; the supports fill the gap', 0.5)}
-      <Row label="Support type">
-        <Segmented
-          value={st.style}
-          onChange={(style) => setSup({ style })}
-          options={
-            resin
-              ? [
-                  { value: 'tip', label: 'Tip (cone)', title: 'A cone tip touching the part on a rod, wide foot on the raft' },
-                  { value: 'bar', label: 'Bar', title: 'Plain pins' },
-                ]
-              : [
-                  { value: 'volume', label: 'Volume', title: 'A grid of thin walls under each area (block support)' },
-                  { value: 'bar', label: 'Bar', title: 'Pins at every grid point' },
-                ]
-          }
-        />
-      </Row>
-      <Check checked={st.auto} onChange={(auto) => setSup({ auto })}>
-        Automatic supports (from the overhang analysis)
-      </Check>
-      {mm('Spacing X', 'spacing', 'Distance between neighbouring walls / supports along the grid', 0.25, 0.2)}
-      <Row label="Spacing Y">
-        <NumberField
-          value={st.spacingY > 0 ? st.spacingY : st.spacing}
-          min={0.2}
-          step={0.25}
-          suffix="mm"
-          title="Distance between neighbouring walls / supports across the grid"
-          onChange={(v) => setSup({ spacingY: Math.max(0.2, v) })}
-        />
-      </Row>
-      <Row label="Grid angle">
-        <NumberField value={st.gridAngle} min={-90} max={90} step={5} suffix="°" title="Turn of the support grid about the vertical axis" onChange={(v) => setSup({ gridAngle: Math.max(-90, Math.min(90, v)) })} />
-      </Row>
-      {resin && mm('Outline spacing', 'perimeter', 'Extra supports along the outline of every overhang area, this far apart (0 = none)', 0.25, 0)}
-      <Check checked={st.lowest} onChange={(lowest) => setSup({ lowest })}>
-        Support the lowest surfaces too (a lifted part that overhangs nowhere)
-      </Check>
-      {st.style === 'volume' && mm('Wall thickness', 'wall', 'Thickness of the support walls', 0.05, 0.05)}
-      {st.style === 'bar' && mm('Bar diameter', 'wall', 'Diameter of the pins', 0.1, 0.1)}
-      {st.style === 'tip' && (
-        <>
-          {mm('Contact diameter', 'tipDiameter', 'Diameter where the tip touches the part (smaller = easier to remove, weaker)', 0.05, 0.05)}
-          {mm('Tip length', 'tipLength', 'Length of the cone tip', 0.1, 0.1)}
-          {mm('Rod diameter', 'bodyDiameter', 'Diameter of the support rod', 0.1, 0.1)}
-          {mm('Foot diameter', 'baseDiameter', 'Diameter of the foot on the platform / raft', 0.1, 0.1)}
-        </>
-      )}
-      <Row label={st.penetration >= 0 ? 'Penetration' : 'Gap to part'}>
-        <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the supports reach into the part (negative: a gap left below it)" onChange={(penetration) => setSup({ penetration })} />
-      </Row>
-      <Check checked={st.onPart} onChange={(onPart) => setSup({ onPart })}>
-        Supports may stand on the part
-      </Check>
-      {!st.onPart && (
-        <>
+    <>
+      <Section title={`Supports (${tech.toUpperCase()})`}>
+        {supported.length > 0 ? <SupportHandEdits /> : <Hint>Set the supports up below, then Apply. Afterwards they can be edited by hand here.</Hint>}
+      </Section>
+      <Section title="Support type">
+        {resin && (
+          <Row label="Shape">
+            <Segmented
+              value={st.style}
+              onChange={(style) => setSup({ style })}
+              options={[
+                { value: 'tip', label: 'Cone tip', title: 'A cone tip touching the part on a rod, a foot on the platform / raft' },
+                { value: 'bar', label: 'Plain bar', title: 'Plain pins' },
+              ]}
+            />
+          </Row>
+        )}
+        {!resin && (
+          <Row label="Shape">
+            <Segmented
+              value={st.style}
+              onChange={(style) => setSup({ style })}
+              options={[
+                { value: 'volume', label: 'Volume', title: 'A grid of thin walls under each area (block support)' },
+                { value: 'bar', label: 'Bar', title: 'Pins at every grid point' },
+              ]}
+            />
+          </Row>
+        )}
+        {st.style === 'tip' ? (
+          <>
+            <div className="support-tabs" role="tablist">
+              <button role="tab" className={kind === 'regular' ? 'active' : ''} onClick={() => setSup({ kind: 'regular' })} title="Supports for the part as a whole">
+                Regular support
+              </button>
+              <button role="tab" className={kind === 'pillar' ? 'active' : ''} onClick={() => setSup({ kind: 'pillar' })} title="Thin supports for small, delicate features">
+                Small pillar
+              </button>
+            </div>
+            <SupportDiagram kind={kind} st={st} />
+          </>
+        ) : (
+          <>
+            {st.style === 'volume' && mm('Wall thickness', 'wall', 'Thickness of the support walls', 0.05, 0.05)}
+            {st.style === 'bar' && mm('Bar diameter', 'wall', 'Diameter of the pins', 0.1, 0.1)}
+            <Row label={st.penetration >= 0 ? 'Penetration' : 'Gap to part'}>
+              <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the supports reach into the part (negative: a gap left below it)" onChange={(penetration) => setSup({ penetration })} />
+            </Row>
+          </>
+        )}
+      </Section>
+      <Section title="Placement">
+        <Check checked={st.auto} onChange={(auto) => setSup({ auto })}>
+          Automatic supports (from the overhang analysis)
+        </Check>
+        <Row label="Critical angle">
+          <NumberField value={st.criticalAngle} min={0} max={89} step={1} suffix="°" title="Surfaces making less than this angle with the platform get supports" onChange={(criticalAngle) => setSup({ criticalAngle: Math.max(0, Math.min(89, criticalAngle)) })} />
+        </Row>
+        <Row label="Minimal area">
+          <NumberField value={st.minArea} min={0} step={0.1} suffix="mm²" title="Overhang areas smaller than this are left without supports" onChange={(minArea) => setSup({ minArea: Math.max(0, minArea) })} />
+        </Row>
+        {mm('Distance from platform', 'lift', 'The part is lifted this far above the platform; the supports fill the gap', 0.5)}
+        {mm('Spacing X', 'spacing', 'Distance between neighbouring walls / supports along the grid', 0.25, 0.2)}
+        <Row label="Spacing Y">
+          <NumberField
+            value={st.spacingY > 0 ? st.spacingY : st.spacing}
+            min={0.2}
+            step={0.25}
+            suffix="mm"
+            title="Distance between neighbouring walls / supports across the grid"
+            onChange={(v) => setSup({ spacingY: Math.max(0.2, v) })}
+          />
+        </Row>
+        <Row label="Grid angle">
+          <NumberField value={st.gridAngle} min={-90} max={90} step={5} suffix="°" title="Turn of the support grid about the vertical axis" onChange={(v) => setSup({ gridAngle: Math.max(-90, Math.min(90, v)) })} />
+        </Row>
+        {resin && mm('Outline spacing', 'perimeter', 'Extra supports along the outline of every overhang area, this far apart (0 = none)', 0.25, 0)}
+        <Check checked={st.lowest} onChange={(lowest) => setSup({ lowest })}>
+          Support the lowest surfaces too (a lifted part that overhangs nowhere)
+        </Check>
+        <Check checked={st.onPart} onChange={(onPart) => setSup({ onPart })}>
+          Supports may stand on the part
+        </Check>
+        {!st.onPart && (
           <Row label="Branch angle">
             <NumberField
               value={st.branchAngle}
@@ -111,52 +149,139 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               max={80}
               step={5}
               suffix="°"
-              title="Overhangs above the part are still supported: their support branches sideways at this angle (from horizontal) to a neighbouring support, or to a new one put up beside the part"
+              title="Where a support would land on the part, it branches sideways at this angle (from horizontal) to a support beside it, or to a new one on the platform"
               onChange={(v) => setSup({ branchAngle: Math.max(20, Math.min(80, v)) })}
             />
           </Row>
-          <Hint>Where a support would land on the part, it branches sideways at this angle and joins a support beside it (or a new one on the platform).</Hint>
-        </>
-      )}
+        )}
+        {resin && (
+          <>
+            <Check checked={st.braces} onChange={(braces) => setSup({ braces })}>
+              Cross braces between tall supports
+            </Check>
+            {st.braces && mm('Brace supports taller than', 'braceHeight', 'Neighbouring supports at least this tall are joined by zigzag braces', 0.5, 0)}
+          </>
+        )}
+      </Section>
       {resin && (
-        <>
-          <Check checked={st.raft} onChange={(raft) => setSup({ raft })}>
-            Raft (base plate)
-          </Check>
-          {st.raft && mm('Raft thickness', 'raftThickness', 'Thickness of the base plate under the supports', 0.1, 0.1)}
-          {st.raft && mm('Raft margin', 'raftMargin', 'How far the raft reaches past the outermost feet', 0.25, 0)}
-          <Check checked={st.braces} onChange={(braces) => setSup({ braces })}>
-            Cross braces between tall supports
-          </Check>
-          {st.braces && mm('Brace supports taller than', 'braceHeight', 'Neighbouring supports at least this tall are joined by zigzag braces', 0.5, 0)}
-        </>
+        <Section title="Raft setting">
+          <label className="switch-row" title="A raft under the supports, holding them together on the platform">
+            <span>Automatically add raft</span>
+            <input type="checkbox" className="switch" checked={st.raft} onChange={(e) => setSup({ raft: e.target.checked })} />
+          </label>
+          {st.raft && (
+            <>
+              <Row label="Raft type">
+                <select className="select" value={st.raftType ?? 'solid'} onChange={(e) => setSup({ raftType: e.target.value as RaftType })} title={RAFT_TYPES.find((r) => r.value === (st.raftType ?? 'solid'))?.title}>
+                  {RAFT_TYPES.map((r) => (
+                    <option key={r.value} value={r.value} title={r.title}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <Hint>{RAFT_TYPES.find((r) => r.value === (st.raftType ?? 'solid'))?.title}</Hint>
+              {(st.raftType ?? 'solid') !== 'none' && (
+                <>
+                  {mm('Raft thickness', 'raftThickness', 'Thickness of the raft', 0.1, 0.1)}
+                  {(st.raftType ?? 'solid') !== 'skate' && (st.raftType ?? 'solid') !== 'cross' && mm('Raft margin', 'raftMargin', 'How far the raft reaches past the outermost feet', 0.25, 0)}
+                  {st.raftType === 'case' && mm('Case height', 'caseHeight', 'Height of the wall round the raft (0 = up to the part)', 0.5, 0)}
+                </>
+              )}
+            </>
+          )}
+        </Section>
       )}
-      <div className="btn-grid two">
-        <button className="btn primary" disabled={busy || !parts.length} onClick={() => supportBuildParts(sel.length ? sel : undefined)}>
-          {sel.length ? `Support ${sel.length} selected` : 'Support all parts'}
+      <Section title="Apply">
+        <Row label="Mode">
+          <select className="select" value={mode} onChange={(e) => setMode(e.target.value as 'all' | 'selected')}>
+            <option value="all">+ All parts</option>
+            <option value="selected">+ Selected parts{sel.length ? ` (${sel.length})` : ''}</option>
+          </select>
+        </Row>
+        <button className="btn primary wide" disabled={busy || !parts.length || (mode === 'selected' && !sel.length)} onClick={apply} title="Make the supports with these settings">
+          Apply
         </button>
-        <button className="btn" onClick={() => setSup({ ...SUPPORT_PRESETS[tech] })} title={`Back to the standard ${tech.toUpperCase()} script`}>
-          Standard values
-        </button>
-      </div>
-      {supported.length > 0 && (
-        <div className="pick-row">
-          <span className="muted small">
-            {supported.length} part{supported.length > 1 ? 's' : ''} with supports
-            {pending ? ` · updating ${pending}…` : totals.copies ? ` · this build: ${totals.count} ${st.style === 'volume' ? 'walls' : 'supports'}, ${(totals.volume / 1000).toFixed(2)} cm³` : ''}
-          </span>
-          <button className="mini" onClick={() => removeBuildSupports(sel.length ? sel : undefined)}>
-            {sel.length ? 'Remove from selected' : 'Remove all'}
+        <div className="btn-grid two">
+          <button className="btn" onClick={cancel} title="Back to the settings of the last Apply, and stop editing by hand (Esc)">
+            Cancel <span className="muted small">Esc</span>
+          </button>
+          <button className="btn" disabled={!supported.length} onClick={clearAll} title={mode === 'selected' ? 'Remove the supports of the selected parts' : 'Remove every support'}>
+            Clear all
           </button>
         </div>
-      )}
-      <Hint>
-        Every copy gets its own supports for the orientation it has: it is lifted by the distance from the platform and every surface facing down at less
-        than the critical angle is supported straight down (perpendicular to the platform), onto the platform or onto the part below. When a copy is
-        turned (nesting, hand edits) or a setting changes, its supports are made again automatically. They are exported with the build. Supports added, moved or deleted by hand belong to the part: every copy gets them and they
-        follow later turns (Ctrl+Z undoes the last one).
-      </Hint>
-    </Section>
+        <button className="btn wide" onClick={() => setSup({ ...SUPPORT_PRESETS[tech], kind: 'regular', pillar: undefined })} title={`Back to the standard ${tech.toUpperCase()} script`}>
+          Standard values
+        </button>
+        {supported.length > 0 && (
+          <p className="muted small">
+            {supported.length} part{supported.length > 1 ? 's' : ''} with supports
+            {pending ? ` · updating ${pending}…` : totals.copies ? ` · this build: ${totals.count} ${st.style === 'volume' ? 'walls' : 'supports'}, ${(totals.volume / 1000).toFixed(2)} cm³` : ''}
+          </p>
+        )}
+        <Hint>
+          Every copy gets its own supports for its orientation, straight down (perpendicular to the platform), made again automatically when a copy turns
+          or a setting changes, and exported with the build. Supports added, moved or deleted by hand belong to the part (Ctrl+Z undoes).
+        </Hint>
+      </Section>
+    </>
+  );
+}
+
+/** One value on the support drawing: a small labelled field placed at (x, y) of the drawing. */
+function DiagramField({ x, y, label, value, onChange, title, min = 0, step = 0.05 }: { x: number; y: number; label: string; value: number; onChange: (v: number) => void; title: string; min?: number; step?: number }) {
+  return (
+    <div className="diagram-field" style={{ left: x, top: y }} title={title}>
+      <span>{label}</span>
+      <NumberField value={value} min={min} step={step} precision={2} width={70} title={title} onChange={(v) => onChange(Math.max(min, v))} />
+    </div>
+  );
+}
+
+/**
+ * The support drawn with its sizes on it (like the support parameter sheets of
+ * resin slicers): a regular support on the platform at the left, one standing
+ * on the part below at the right. Regular supports and small pillars have their
+ * own values.
+ */
+function SupportDiagram({ kind, st }: { kind: SupportKind; st: SupportParams & { pillar?: SupportShape } }) {
+  const v: SupportShape = kind === 'pillar' ? { ...SMALL_PILLAR, ...st.pillar } : st;
+  const set = (patch: Partial<SupportShape>) => (kind === 'pillar' ? setSup({ pillar: { ...SMALL_PILLAR, ...st.pillar, ...patch } }) : setSup(patch));
+  const line = 'var(--muted)';
+  return (
+    <div className="support-diagram">
+      <svg viewBox="0 0 288 340" width="288" height="340" aria-hidden>
+        {/* the part */}
+        <polygon points="78,8 210,8 192,60 96,60" fill="#3fa7ff" opacity="0.9" />
+        {/* left: a support on the platform / raft: tip cone, rod, foot */}
+        <polygon points="108,60 112,60 118,105 102,105" fill="#9aa3b0" />
+        <rect x="102" y="105" width="16" height="145" fill="#9aa3b0" />
+        <polygon points="102,250 118,250 130,280 90,280" fill="#9aa3b0" />
+        <rect x="76" y="280" width="140" height="10" rx="2" fill="#6b7480" />
+        {/* right: a support standing on the part below */}
+        <polygon points="178,60 182,60 188,100 172,100" fill="#9aa3b0" />
+        <rect x="172" y="100" width="16" height="105" fill="#9aa3b0" />
+        <polygon points="172,205 188,205 182,232 178,232" fill="#9aa3b0" />
+        <polygon points="150,232 214,232 214,290 150,290" fill="#3fa7ff" opacity="0.55" />
+        {/* leader lines from the values to what they size */}
+        <g stroke={line} strokeWidth="1" fill="none" strokeDasharray="3 2">
+          <path d="M72 70 L106 62" />
+          <path d="M216 70 L184 62" />
+          <path d="M72 117 L101 88" />
+          <path d="M72 187 L101 180" />
+          <path d="M72 257 L96 266" />
+          <path d="M72 310 L90 286" />
+          <path d="M216 222 L182 230" />
+        </g>
+      </svg>
+      <DiagramField x={0} y={48} label="Contact Ø" value={v.tipDiameter} onChange={(tipDiameter) => set({ tipDiameter })} title="Diameter where the tip touches the part (smaller: easier to remove, weaker)" min={0.05} />
+      <DiagramField x={218} y={48} label="Depth" value={v.penetration} onChange={(penetration) => set({ penetration })} title="How far the tip reaches into the part" min={-2} />
+      <DiagramField x={0} y={96} label="Tip length" value={v.tipLength} onChange={(tipLength) => set({ tipLength })} title="Length of the cone tip" min={0.1} step={0.1} />
+      <DiagramField x={0} y={166} label="Rod Ø" value={v.bodyDiameter} onChange={(bodyDiameter) => set({ bodyDiameter })} title="Diameter of the support rod" min={0.1} step={0.1} />
+      <DiagramField x={0} y={236} label="Foot height" value={v.footHeight} onChange={(footHeight) => set({ footHeight })} title="Height of the foot cone on the platform / raft" min={0.1} step={0.1} />
+      <DiagramField x={0} y={290} label="Foot Ø" value={v.baseDiameter} onChange={(baseDiameter) => set({ baseDiameter })} title="Diameter of the foot on the platform / raft" min={0.1} step={0.1} />
+      <DiagramField x={218} y={200} label="On part Ø" value={v.bottomDiameter} onChange={(bottomDiameter) => set({ bottomDiameter })} title="Contact diameter where a support stands on the part below" min={0.05} />
+    </div>
   );
 }
 

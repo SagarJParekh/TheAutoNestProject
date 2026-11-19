@@ -70,7 +70,26 @@ export interface SupportParams {
   braceHeight: number;
   /** supports not allowed to stand on the part: slope of the branch to the support beside them, degrees from horizontal */
   branchAngle: number;
+  /** tip: height of the foot (cone onto the platform / raft), mm; 0 = from the diameters */
+  footHeight: number;
+  /** tip: contact diameter where a support stands on the part below, mm; 0 = the tip's */
+  bottomDiameter: number;
+  /** raft shape under the supports (when `raft` is on) */
+  raftType: RaftType;
+  /** protection case: height of the wall round the raft, mm; 0 = up to the part's bottom (the lift) */
+  caseHeight: number;
 }
+
+/** Raft shapes: none, rails (skate), a grid of bars, a plate with hexagonal holes, a solid plate, a solid plate walled round (protection case). */
+export type RaftType = 'none' | 'skate' | 'cross' | 'hex' | 'solid' | 'case';
+export const RAFT_TYPES: { value: RaftType; label: string; title: string }[] = [
+  { value: 'none', label: 'None', title: 'No raft: the supports stand on the platform' },
+  { value: 'skate', label: 'Skate', title: 'Rails under each row of supports' },
+  { value: 'cross', label: 'Cross grid', title: 'Bars joining every support to its neighbours in both directions' },
+  { value: 'hex', label: 'Hexagonal grid', title: 'A plate with hexagonal holes: light, peels off easily' },
+  { value: 'solid', label: 'Bottom connected', title: 'A solid plate joining the bottoms of all supports' },
+  { value: 'case', label: 'Protection case', title: 'A solid plate with a wall round it, protecting the supports' },
+];
 
 /** Supports changed by hand, in the frame the supports are made in (the turned part, before lifting). */
 export interface SupportEdits {
@@ -80,22 +99,28 @@ export interface SupportEdits {
   remove: [number, number, number, number][];
 }
 
+/** The values that differ between the two support types (Regular support, Small pillar). */
+export type SupportShape = Pick<SupportParams, 'tipDiameter' | 'penetration' | 'tipLength' | 'bodyDiameter' | 'bottomDiameter' | 'footHeight' | 'baseDiameter'>;
+export type SupportKind = 'regular' | 'pillar';
+/** Small pillars: thin supports for small, delicate features (less to remove, fewer marks). */
+export const SMALL_PILLAR: SupportShape = { tipDiameter: 0.25, penetration: 0.15, tipLength: 1, bodyDiameter: 0.5, bottomDiameter: 0.3, footHeight: 0.5, baseDiameter: 1 };
+
 /** The standard support scripts. */
 export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
-    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
-    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0,
   },
   dmls: {
     tech: 'dmls', style: 'volume', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
-    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0,
   },
 };
 
@@ -498,8 +523,8 @@ function branchSupports(
   const tip = p.style === 'tip';
   const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
   const r = tip ? rb : p.style === 'bar' ? Math.max(0.1, p.wall / 2) : Math.max(0.3, p.wall);
-  const floor = tip && p.raft ? Math.max(0, p.raftThickness) : 0;
-  const footL = tip ? Math.max(0.6, rf - rb) : 0;
+  const floor = tip && raftOn(p) ? Math.max(0, p.raftThickness) : 0;
+  const footL = tip ? footOf(p) : 0;
   const slope = Math.tan((Math.max(20, Math.min(80, p.branchAngle ?? 45)) * Math.PI) / 180);
   const lowest = floor + footL + 0.5;
   // targets: free-standing supports (the rod between its foot and its tip), and the new ones put up here
@@ -570,6 +595,94 @@ function branchSupports(
   }
 }
 
+/** A raft is made (on, and a shape other than none). */
+const raftOn = (p: SupportParams) => p.raft && (p.raftType ?? 'solid') !== 'none' && p.raftThickness > 0;
+
+/** Height of a support's foot on the platform / raft. */
+const footOf = (p: SupportParams) => {
+  const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
+  return p.footHeight > 0 ? p.footHeight : Math.max(0.6, rf - rb);
+};
+/** Radius where a support stands on the part below. */
+const bottomOf = (p: SupportParams) => (p.bottomDiameter > 0 ? p.bottomDiameter / 2 : Math.max(0.05, p.tipDiameter / 2));
+
+/**
+ * The raft under the supports' feet (z = 0 up to the raft thickness), in the
+ * chosen shape: rails along the grid rows (skate), bars to the neighbours in
+ * both directions (cross grid), a plate with hexagonal holes, a solid plate
+ * (bottom connected), or a solid plate with a wall round it (protection case).
+ */
+function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, number][], p: SupportParams, g: Grid, rf: number): Manifold[] {
+  const CS = w.CrossSection;
+  const t = Math.max(0.05, p.raftThickness) + 0.02;
+  const type = p.raftType ?? 'solid';
+  const margin = Math.max(0, p.raftMargin ?? 1);
+  const circle = (x: number, y: number, r: number, n = 24) => Array.from({ length: n }, (_, k) => [x + r * Math.cos((2 * Math.PI * k) / n), y + r * Math.sin((2 * Math.PI * k) / n)] as [number, number]);
+  const parts: InstanceType<typeof CS>[] = [];
+  const out: Manifold[] = [];
+  try {
+    if (type === 'skate' || type === 'cross') {
+      // a pad under every foot, joined to the next foot along the grid rows (and columns: cross grid)
+      const bw = Math.max(0.6, rf * 0.8);
+      const uv = feet.map(([x, y]) => [x * g.cos + y * g.sin, -x * g.sin + y * g.cos]);
+      for (const [x, y] of feet) parts.push(CS.hull([circle(x, y, rf + 0.2, 16)]));
+      const dirs: [number, number, number][] = type === 'cross' ? [[0, g.su, g.sv], [1, g.sv, g.su]] : [[0, g.su, g.sv]];
+      for (const [axis, along, across] of dirs)
+        feet.forEach((f, i) => {
+          let best = -1, bd = Infinity;
+          uv.forEach((q, j) => {
+            const da = axis === 0 ? q[0] - uv[i][0] : q[1] - uv[i][1];
+            const dc = axis === 0 ? q[1] - uv[i][1] : q[0] - uv[i][0];
+            if (da > 1e-6 && da < along * 1.8 && Math.abs(dc) < across * 0.5 && da < bd) (bd = da), (best = j);
+          });
+          if (best >= 0) parts.push(CS.hull([[...circle(f[0], f[1], bw / 2, 12), ...circle(feet[best][0], feet[best][1], bw / 2, 12)]]));
+        });
+      const all = CS.union(parts);
+      out.push(all.extrude(t));
+      all.delete();
+      return out;
+    }
+    // plate: the outline round all feet, the foot's radius plus the margin wider
+    const ring: [number, number][] = [];
+    for (const [x, y] of feet) ring.push(...circle(x, y, rf + margin));
+    let plate = CS.hull([ring]);
+    if (type === 'hex') {
+      // hexagonal holes all over, a rim left round the edge and a solid pad under every foot
+      const hr = Math.max(1, Math.min(3, Math.min(g.su, g.sv) * 0.6)), wall = Math.max(0.6, rf * 0.5);
+      const pitch = hr * Math.sqrt(3) + wall;
+      const inner = plate.offset(-wall, 'Miter');
+      const b = inner.bounds();
+      const holes: InstanceType<typeof CS>[] = [];
+      for (let j = 0, y = b.min[1]; y <= b.max[1] + pitch; j++, y += (pitch * Math.sqrt(3)) / 2)
+        for (let x = b.min[0] + (j % 2 ? pitch / 2 : 0); x <= b.max[0] + pitch; x += pitch) holes.push(CS.hull([circle(x, y, hr, 6)]));
+      const pads = CS.union(feet.map(([x, y]) => CS.hull([circle(x, y, rf + 0.3, 16)])));
+      if (holes.length) {
+        const all = CS.union(holes);
+        const inside = all.intersect(inner);
+        const cut = inside.subtract(pads);
+        const next = plate.subtract(cut);
+        [all, inside, cut, plate].forEach((x) => x.delete());
+        plate = next;
+        holes.forEach((h) => h.delete());
+      }
+      [inner, pads].forEach((x) => x.delete());
+    }
+    out.push(plate.extrude(t));
+    if (type === 'case') {
+      // a wall round the plate, up to the part's bottom (or the height given)
+      const wall = Math.max(0.6, rf);
+      const outer = plate.offset(wall, 'Round', 2, 24);
+      const band = outer.subtract(plate);
+      out.push(band.extrude(p.caseHeight > 0 ? p.caseHeight : Math.max(t, p.lift)));
+      [outer, band].forEach((x) => x.delete());
+    }
+    plate.delete();
+    return out;
+  } finally {
+    parts.forEach((x) => x.delete());
+  }
+}
+
 /** Support solids below the areas of the lifted part (and under the points added by hand, minus the ones removed). */
 async function buildSupports(
   mesh: MeshData,
@@ -610,7 +723,7 @@ async function buildSupports(
     };
     if (p.style === 'tip') {
       const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
-      const floor = p.raft ? Math.max(0, p.raftThickness) : 0;
+      const floor = raftOn(p) ? Math.max(0, p.raftThickness) : 0;
       for (const c of cols) {
         const top = c.top + pen;
         const base = c.onPart ? c.bottom - pen : floor;
@@ -619,17 +732,20 @@ async function buildSupports(
         // tip cone (contact Ø → rod Ø), its length cut down on short supports
         const tipL = Math.min(p.tipLength, len * (c.onPart ? 0.45 : 0.6));
         // a cone onto the part below, or a foot on the platform / raft
-        const footL = c.onPart ? Math.min(p.tipLength, len * 0.45) : Math.min(Math.max(0.6, rf - rb), len - tipL);
+        const footL = c.onPart ? Math.min(p.tipLength, len * 0.45) : Math.min(footOf(p), len - tipL);
         const rodL = len - tipL - footL;
         solids.push(M.cylinder(tipL, rb, rt, 16).translate([c.x, c.y, top - tipL]));
         if (rodL > 1e-3) solids.push(M.cylinder(rodL + 0.02, rb, rb, 16).translate([c.x, c.y, base + footL - 0.01]));
-        solids.push(M.cylinder(footL, c.onPart ? rt : rf, rb, 16).translate([c.x, c.y, base]));
+        solids.push(M.cylinder(footL, c.onPart ? bottomOf(p) : rf, rb, 16).translate([c.x, c.y, base]));
         if (!c.onPart) feet.push([c.x, c.y]);
         made.push(c);
       }
     } else if (p.style === 'bar') {
       const r = Math.max(0.1, p.wall / 2);
-      for (const c of cols) pin(c, r);
+      for (const c of cols) {
+        pin(c, r);
+        if (!c.onPart) feet.push([c.x, c.y]);
+      }
     } else {
       // volume: thin walls along the grid lines in both directions, following the surface above and below
       const t = Math.max(0.05, p.wall);
@@ -689,27 +805,17 @@ async function buildSupports(
     }
     // branches: supports that may not stand on the part hang from a neighbouring support (or a new one beside the part)
     if (blocked.length) branchSupports(M, bvh, blocked, made, p, g, solids, made, feet);
-    if (p.style === 'tip') {
-      const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
-      void rt;
-      void rb;
-      const floor = p.raft ? Math.max(0, p.raftThickness) : 0;
-      if (p.raft && feet.length && floor > 0) {
-        // raft: the outline round all feet, the foot's radius plus the margin wider
-        // (circles round the feet, so one or two feet in a row still give a plate)
-        const R = rf + Math.max(0, p.raftMargin ?? 1);
-        const ring: [number, number][] = [];
-        for (const [x, y] of feet) for (let k = 0; k < 24; k++) ring.push([x + R * Math.cos((k * Math.PI) / 12), y + R * Math.sin((k * Math.PI) / 12)]);
-        const plate = w.CrossSection.hull([ring]);
-        solids.push(plate.extrude(floor + 0.02));
-        plate.delete();
-      }
+    // the raft under the feet
+    if (resin && raftOn(p) && feet.length) {
+      const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2);
+      const rf = p.style === 'tip' ? Math.max(rb, p.baseDiameter / 2) : Math.max(0.1, p.wall / 2);
+      solids.push(...raftSolids(w, feet, p, g, rf));
     }
     // braces: zigzag rods between neighbouring free-standing supports, on tall ones
     if (resin && p.braces) {
       const rt = Math.max(0.05, p.tipDiameter / 2), rb = Math.max(rt, p.bodyDiameter / 2), rf = Math.max(rb, p.baseDiameter / 2);
       const r = p.style === 'tip' ? Math.max(0.2, rb * 0.6) : Math.max(0.15, (p.wall / 2) * 0.8);
-      const floor = p.style === 'tip' && p.raft ? Math.max(0, p.raftThickness) : 0;
+      const floor = p.style === 'tip' && raftOn(p) ? Math.max(0, p.raftThickness) : 0;
       const low = floor + (p.style === 'tip' ? Math.max(0.6, rf - rb) + 0.3 : 0.5);
       const at = new Map<string, Column>();
       for (const c of made) if (!c.onPart && Number.isFinite(c.gi)) at.set(`${c.area}:${c.gi}:${c.gj}`, c);

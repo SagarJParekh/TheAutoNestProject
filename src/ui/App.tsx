@@ -6,6 +6,7 @@ import { ViewerCanvas } from './ViewerCanvas';
 import { StatusBar, Notices, ProgressOverlay } from './StatusBar';
 import { ClipWidget } from './panels/ClipCutPanel';
 import { MarkRow } from './panels/MarkWidget';
+import { BuildToolRow } from './build/BuildToolRow';
 import { ExportDialog, ShortcutsDialog } from './Dialogs';
 import { CommandPalette } from './CommandPalette';
 import { HoverHelp } from './HoverHelp';
@@ -89,6 +90,7 @@ export function App() {
       <main className="center">
         {/* triangle marking, usable with every function (Mesh prep) */}
         <MarkRow />
+        <BuildToolRow />
         <div className="center-view">
           <ViewerCanvas />
           <ProgressOverlay />

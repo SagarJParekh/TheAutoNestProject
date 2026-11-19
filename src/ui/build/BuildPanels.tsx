@@ -8,7 +8,7 @@ import { importFiles } from '../../state/actions';
 import { BuildSupports } from '../panels/SupportPanel';
 import { acceptSavedSession } from '../../state/buildSession';
 import {
-  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, hideBuildSelection, showAllBuildParts, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
+  addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
   setSlcLayer,
 } from '../../state/buildActions';
@@ -117,39 +117,20 @@ function StartNesting() {
   );
 }
 
-/** Move / rotate / drag parts of the active build by hand. */
+/** Move / rotate / drag parts of the active build by hand: the tools are in the row above the view; here the options. */
 function EditBox() {
   const edit = useStore((s) => s.buildEdit ?? 'select');
   const pickCopies = useStore((s) => s.buildPickCopies);
-  const hidden = useStore((s) => s.buildGen.hidden?.length ?? 0);
-  const selCount = useStore((s) => s.selection.length);
   return (
     <div className="density-box">
       <h4>Select & edit by hand</h4>
       <Check checked={pickCopies || edit !== 'select'} onChange={(buildPickCopies) => setState({ buildPickCopies, selection: [] })}>
         Pick single copies (not all of a part's quantity)
       </Check>
-      <div className="btn-grid two">
-        <button className="btn" disabled={!selCount} onClick={hideBuildSelection} title="Hide the selected parts (or copies) in the view">
-          Hide selected
-        </button>
-        <button className="btn" disabled={!hidden} onClick={showAllBuildParts}>
-          Show all{hidden ? ` (${hidden} hidden)` : ''}
-        </button>
-      </div>
-      <Segmented
-        value={edit}
-        onChange={(buildEdit) => setState({ buildEdit, selection: [] })}
-        options={[
-          { value: 'select', label: 'Select' },
-          { value: 'move', label: 'Move' },
-          { value: 'rotate', label: 'Rotate' },
-          { value: 'drag', label: 'Drag' },
-        ]}
-      />
       <SnapControls />
       <Hint>
-        Click a part, then use the Move / Rotate handles, or Drag it across the platform (Shift-drag moves it up / down). Run Check collisions afterwards.
+        Move, Rotate, Drag, quarter turns, Duplicate, Array, Delete, To platform, Hide and Lock are in the tool row above the view. Run Check collisions
+        afterwards.
       </Hint>
     </div>
   );

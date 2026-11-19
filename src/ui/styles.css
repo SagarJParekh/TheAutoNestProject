@@ -553,3 +553,39 @@ table.report tr:last-child td { border-bottom: none; }
 .mark-check { display: flex; align-items: center; gap: 4px; color: var(--muted); }
 .mark-count { color: var(--muted); white-space: nowrap; }
 .mark-sep { width: 1px; height: 18px; background: var(--line-2); }
+
+/* Supports: type tabs, the drawing with its sizes, the raft switch */
+.support-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; margin: 6px 0 8px; }
+.support-tabs button { padding: 6px 8px; border-radius: 6px; border: 0; background: transparent; color: var(--muted); font-weight: 600; cursor: pointer; }
+.support-tabs button.active { background: var(--panel-2); color: var(--text); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+.support-diagram { position: relative; width: 288px; height: 340px; margin: 0 auto 6px; }
+.support-diagram svg { position: absolute; inset: 0; }
+.diagram-field { position: absolute; width: 70px; display: flex; flex-direction: column; gap: 1px; font-size: 10px; color: var(--muted); }
+.diagram-field .field { height: 24px; background: var(--panel); }
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0 8px; font-weight: 600; cursor: pointer; }
+.switch { appearance: none; width: 38px; height: 22px; border-radius: 11px; background: var(--line-2); position: relative; cursor: pointer; transition: background 0.15s; flex: none; }
+.switch::after { content: ''; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left 0.15s; }
+.switch:checked { background: var(--accent-2, #3fa7ff); }
+.switch:checked::after { left: 19px; }
+/* drop-down in the side panels */
+.select { flex: 1; min-width: 0; height: 28px; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 6px; }
+.select:focus { outline: none; border-color: var(--accent-2); }
+
+/* Build generation: tool row above the view */
+.build-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 2px; padding: 4px 8px 2px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.bt-group { display: flex; flex-direction: column; align-items: center; padding: 0 4px; border-right: 1px solid var(--line); }
+.bt-group:last-of-type { border-right: 0; }
+.bt-tools { display: flex; gap: 2px; }
+.bt-caption { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 0 2px; }
+.bt-tool { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 40px; padding: 4px 4px; background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-size: 11px; color: var(--text); }
+.bt-tool svg { width: 18px; height: 18px; }
+.bt-tool:hover:not(:disabled):not(.active) { background: var(--panel-2); border-color: var(--line); }
+.bt-tool.active { background: var(--accent); color: #111; border-color: var(--accent); }
+.bt-tool:disabled { opacity: 0.4; cursor: default; }
+.bt-tool.danger:not(:disabled) span { color: #ff6b6b; }
+.bt-axis { position: relative; display: inline-flex; }
+.bt-axis b { position: absolute; right: -6px; bottom: -4px; font-size: 9px; }
+.bt-status { margin-left: auto; align-self: center; color: var(--muted); font-size: 12px; padding: 0 6px; }
+.bt-pop-host { position: relative; display: flex; }
+.bt-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: 250px; padding: 10px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 8px; }
+.bt-pop-row { display: flex; gap: 6px; }

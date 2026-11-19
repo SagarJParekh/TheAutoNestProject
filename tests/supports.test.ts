@@ -133,5 +133,34 @@ describe('a lifted part always stands on supports', () => {
     const inter = await booleanMeshes('intersect', off.part, [off.supports]);
     expect(meshVolume(inter)).toBeLessThan(off.contacts.length * 0.05);
   }, 60000);
-});
 
+  it('raft types: none, skate, cross grid, hexagonal grid, bottom connected, protection case', async () => {
+    const t = await tShape();
+    // feet well apart, so the raft shapes differ
+    const base = { ...SUPPORT_PRESETS.sla, braces: false, spacing: 4, spacingY: 4, baseDiameter: 1.4 };
+    const vol: Record<string, number> = {};
+    for (const raftType of ['none', 'skate', 'cross', 'hex', 'solid', 'case'] as const) {
+      const r = await generateSupports(t, { ...base, raftType });
+      expect(isWatertight(r.supports)).toBe(true);
+      vol[raftType] = r.supportVolume;
+      const b = computeBounds(r.supports.positions);
+      expect(b.min[2]).toBeCloseTo(0, 3);
+    }
+    // more raft, more volume: none < skate < cross < hex < solid < case
+    expect(vol.none).toBeLessThan(vol.skate);
+    expect(vol.skate).toBeLessThan(vol.cross);
+    expect(vol.cross).toBeLessThan(vol.hex);
+    expect(vol.hex).toBeLessThan(vol.solid);
+    expect(vol.solid).toBeLessThan(vol.case);
+  }, 120000);
+
+  it('foot height and the contact on the part below', async () => {
+    const t = await tShape();
+    const base = { ...SUPPORT_PRESETS.sla, braces: false, raft: false };
+    const a = await generateSupports(t, { ...base, footHeight: 0.5 });
+    const b = await generateSupports(t, { ...base, footHeight: 3 });
+    // a taller foot cone (wider than the rod) adds volume
+    expect(b.supportVolume).toBeGreaterThan(a.supportVolume);
+    expect(isWatertight(b.supports)).toBe(true);
+  });
+});

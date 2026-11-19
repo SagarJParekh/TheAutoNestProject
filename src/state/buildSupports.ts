@@ -7,7 +7,7 @@
  * are cached per part, orientation and settings.
  */
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import { applyMatrix, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
+import { applyMatrix, SMALL_PILLAR, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
 import { getState, setState, useStore } from './store';
 import { printerById } from './printers';
 import { pool, CancelledError } from '../workers/client';
@@ -41,10 +41,11 @@ const failed = new Set<string>();
 export function supportParams(g: BuildGenState = getState().buildGen): SupportParams | null {
   const tech = printerById(g.printerId).tech;
   if (tech === 'powder') return null;
-  const { skip: _skip, ...st } = getState().settings.supports;
+  const { skip: _skip, kind, pillar, ...st } = getState().settings.supports;
   void _skip;
-  // settings from older sessions lack the newer variables: the standard values fill them in
-  return { ...SUPPORT_PRESETS[tech], ...st, tech };
+  // settings from older sessions lack the newer variables: the standard values fill them in;
+  // small pillars take their own shape values
+  return { ...SUPPORT_PRESETS[tech], ...st, ...(kind === 'pillar' ? { ...SMALL_PILLAR, ...pillar } : {}), tech };
 }
 
 const qKey = (q: readonly number[]) => q.map((v) => Math.round(v * 1e4)).join(',');

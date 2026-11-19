@@ -70,11 +70,17 @@ export interface AppState {
   workspace: 'prep' | 'build';
   buildGen: BuildGenState;
   /** set only on the view state handed to the viewer in the build workspace */
-  buildView?: { volume: [number, number, number]; margin: number; zOffset: number };
+  buildView?: { volume: [number, number, number]; margin: number; zOffset: number; hidePlatform?: boolean };
   /** set only on the view state: red markers (collision locations) */
   markers?: [number, number, number][] | null;
   /** set only on the view state: support touch points while editing supports (world positions, RGB colours) and a dragged one's new place */
-  supportPoints?: { pos: Float32Array; col: Float32Array; ghost: [number, number, number] | null } | null;
+  supportPoints?: {
+    pos: Float32Array;
+    col: Float32Array;
+    ghost: [number, number, number] | null;
+    /** adding supports: the point under the mouse and where its support would stand */
+    hover?: { at: [number, number, number]; foot: [number, number, number] } | null;
+  } | null;
   /** Build generation: how the mouse edits parts (select only, move gizmo, rotate gizmo, drag on the platform) */
   buildEdit: 'select' | 'move' | 'rotate' | 'drag';
   /** Build generation view: cut the build at a height (show what is below, or above with `above`) */
@@ -89,6 +95,8 @@ export interface AppState {
   snap: { on: boolean; move: number; rotate: number };
   /** view only (Build generation): locked axes of the copy under the gizmo, and per part id for pick & place */
   gizmoLocks?: { t: [boolean, boolean, boolean]; r: [boolean, boolean, boolean] } | null;
+  /** set only on the view state: objects whose id ends with this are not picked (supports while adding supports) */
+  pickSkipSuffix?: string;
   /** set only on the view state: the move / rotate gizmo may carry several selected objects together */
   multiGizmo?: boolean;
   placeLocks?: Record<string, [boolean, boolean, boolean]> | null;
@@ -109,6 +117,8 @@ export interface AppState {
   supportSel: { key: string; i: number }[];
   /** where a touch point being dragged would go (world) */
   supportGhost: [number, number, number] | null;
+  /** adding supports: the reference point under the mouse and the foot of its support (world) */
+  supportHover: { at: [number, number, number]; foot: [number, number, number] } | null;
   perfPoints: PointPick[];
   measurements: Measurement[];
   measurePending: MeasurePending;
@@ -206,6 +216,7 @@ export const useStore = create<AppState>(() => ({
   supportEdit: null,
   supportSel: [],
   supportGhost: null,
+  supportHover: null,
   perfPoints: [],
   measurements: [],
   measurePending: { entities: [], points: [] },

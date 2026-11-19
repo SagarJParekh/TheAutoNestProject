@@ -1690,3 +1690,167 @@ export function supportEditCounts(parts: BuildPart[]) {
   return { add, remove, skip };
 }
 
+
+// ---------------------------------------------------------------- copies by hand (Build tool row)
+
+/** World bounds of a copy as placed. */
+function copyBounds(p: BuildPart, pl: BuildPlacement): { min: Vec3; max: Vec3 } {
+  const m = new Matrix4().compose(new Vector3(...pl.position), new Quaternion(...pl.quaternion), new Vector3(1, 1, 1)).elements;
+  const pos = p.mesh.positions;
+  const min: Vec3 = [Infinity, Infinity, Infinity], max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let k = 0; k < pos.length; k += 3)
+    for (let a = 0; a < 3; a++) {
+      const v = m[a] * pos[k] + m[4 + a] * pos[k + 1] + m[8 + a] * pos[k + 2] + m[12 + a];
+      if (v < min[a]) min[a] = v;
+      if (v > max[a]) max[a] = v;
+    }
+  return { min, max };
+}
+
+/** The copies a build tool acts on: the selected copies, or every copy of the selected parts (active build). */
+export function toolTargets(onePerPart = false): BuildPlacement[] {
+  const s = bg();
+  const keys = new Set(lockTargets());
+  const all = (s.builds[s.active]?.placements ?? []).filter((pl) => keys.has(pl.key));
+  // whole parts selected (not single copies): copying makes one more of the part, not one more of each copy
+  if (!onePerPart || pickingCopies()) return all;
+  // (its last copy, usually the one placed last, so new copies go beside the others)
+  const last = new Map<string, BuildPlacement>();
+  for (const pl of all) if ((last.get(pl.partId)?.copy ?? -1) < pl.copy) last.set(pl.partId, pl);
+  return [...last.values()];
+}
+
+/**
+ * Add copies of the target copies by hand: for each, a `nx` × `ny` grid of
+ * copies `dx` / `dy` apart (centre to centre: the copy's size plus the gap),
+ * in the same orientation. The original is the first of the grid. New copies
+ * are numbered after the part's last copy; the build counts as edited by hand.
+ */
+export function arrayCopies(nx: number, ny: number, gapX: number, gapY: number) {
+  const s = bg();
+  const targets = toolTargets(true);
+  if (!targets.length) return notify('info', 'Select the parts (or copies) to copy first');
+  nx = Math.max(1, Math.round(nx));
+  ny = Math.max(1, Math.round(ny));
+  if (nx * ny < 2) return;
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  const qty = new Map(s.parts.map((p) => [p.id, p.quantity]));
+  const added: BuildPlacement[] = [];
+  for (const pl of targets) {
+    const p = byId.get(pl.partId);
+    if (!p) continue;
+    const b = copyBounds(p, pl);
+    const dx = b.max[0] - b.min[0] + Math.max(0, gapX), dy = b.max[1] - b.min[1] + Math.max(0, gapY);
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        if (!i && !j) continue;
+        const copy = qty.get(p.id)!;
+        qty.set(p.id, copy + 1);
+        added.push({ key: `${p.id}#${copy}`, partId: p.id, copy, position: [pl.position[0] + i * dx, pl.position[1] + j * dy, pl.position[2]], quaternion: pl.quaternion });
+      }
+  }
+  if (!added.length) return;
+  const builds = s.builds.map((x, i) => (i === s.active ? { ...x, placements: [...x.placements, ...added] } : x));
+  commitBuild(nx * ny === 2 && targets.length === 1 ? 'Duplicate' : `Array ${nx} × ${ny}`, {
+    parts: s.parts.map((p) => (qty.get(p.id) !== p.quantity ? { ...p, quantity: qty.get(p.id)! } : p)),
+    builds,
+    manual: true,
+    checks: null,
+  });
+  // the new copies are selected one by one, so the next move / turn / delete acts on just them
+  setState({ selection: added.map((a) => a.key), buildPickCopies: true });
+  const out = added.filter((a) => {
+    const p = byId.get(a.partId)!;
+    const b = copyBounds(p, a);
+    const [vx, vy] = printerById(s.printerId).volume;
+    return b.min[0] < -vx / 2 || b.max[0] > vx / 2 || b.min[1] < -vy / 2 || b.max[1] > vy / 2;
+  }).length;
+  if (out) notify('warning', `${out} new cop${out > 1 ? 'ies are' : 'y is'} outside the build volume: move them, or Start nesting to arrange everything`);
+}
+
+/** One more copy of each target copy, right beside it. */
+export function duplicateCopies(gap = 3) {
+  arrayCopies(2, 1, gap, gap);
+}
+
+/**
+ * Delete the target copies (a part whose last copy goes is removed). The
+ * part's other copies are numbered again so they stay 0 … quantity − 1.
+ */
+export function deleteCopies() {
+  const s = bg();
+  const targets = toolTargets();
+  if (!targets.length) return notify('info', 'Select the copies to delete first');
+  const gone = new Set(targets.map((t) => t.key));
+  // new copy numbers per part: the kept copies (in every build and the unplaced list) numbered again in order
+  const renum = new Map<string, string>();
+  const parts: BuildPart[] = [];
+  for (const p of s.parts) {
+    const kept: number[] = [];
+    for (let c = 0; c < p.quantity; c++) if (!gone.has(`${p.id}#${c}`)) kept.push(c);
+    if (!kept.length) continue;
+    kept.forEach((c, i) => renum.set(`${p.id}#${c}`, `${p.id}#${i}`));
+    parts.push(kept.length === p.quantity ? p : { ...p, quantity: kept.length });
+  }
+  const re = (key: string) => renum.get(key);
+  const builds = s.builds
+    .map((b) => ({
+      ...b,
+      placements: b.placements.filter((pl) => re(pl.key)).map((pl) => {
+        const key = re(pl.key)!;
+        return key === pl.key ? pl : { ...pl, key, copy: Number(key.split('#')[1]) };
+      }),
+    }))
+    .filter((b) => b.placements.length || b.preview);
+  const unplaced = s.unplaced.filter((u) => re(`${u.partId}#${u.copy}`)).map((u) => ({ ...u, copy: Number(re(`${u.partId}#${u.copy}`)!.split('#')[1]) }));
+  const locks = Object.fromEntries(Object.entries(s.locks ?? {}).filter(([k]) => re(k)).map(([k, v]) => [re(k)!, v]));
+  const hidden = (s.hidden ?? []).filter((k) => !k.includes('#') || re(k)).map((k) => (k.includes('#') ? re(k)! : k));
+  commitBuild(gone.size > 1 ? `Delete ${gone.size} copies` : 'Delete copy', {
+    parts,
+    builds,
+    unplaced,
+    locks,
+    hidden,
+    active: Math.min(s.active, Math.max(0, builds.length - 1)),
+    manual: true,
+    checks: null,
+  });
+  setState({ selection: [] });
+}
+
+/** Turn the target copies by 90° (or `deg`) about a world axis, each about its own middle. */
+export function rotateCopies(axis: 0 | 1 | 2, deg = 90) {
+  const s = bg();
+  const targets = toolTargets();
+  if (!targets.length) return notify('info', 'Select the parts (or copies) to turn first');
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  const r = new Quaternion().setFromAxisAngle(new Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0), (deg * Math.PI) / 180);
+  const changes = targets.flatMap((pl) => {
+    const p = byId.get(pl.partId);
+    if (!p || p.lockRotation) return [];
+    const b = copyBounds(p, pl);
+    const c = new Vector3((b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2);
+    // about the copy's middle: the origin moves round it too
+    const pos = new Vector3(...pl.position).sub(c).applyQuaternion(r).add(c);
+    const q = r.clone().multiply(new Quaternion(...pl.quaternion));
+    return [{ key: pl.key, position: [pos.x, pos.y, pos.z] as Vec3, quaternion: [q.x, q.y, q.z, q.w] as [number, number, number, number] }];
+  });
+  if (!changes.length) return notify('info', 'Their orientation is locked');
+  editPlacements(changes);
+}
+
+/** Put the target copies down on the platform (their lowest point at the distance from the platform). */
+export function dropCopies() {
+  const s = bg();
+  const targets = toolTargets();
+  if (!targets.length) return notify('info', 'Select the parts (or copies) to drop first');
+  const byId = new Map(s.parts.map((p) => [p.id, p]));
+  editPlacements(
+    targets.flatMap((pl) => {
+      const p = byId.get(pl.partId);
+      if (!p) return [];
+      const b = copyBounds(p, pl);
+      return [{ key: pl.key, position: [pl.position[0], pl.position[1], pl.position[2] - (b.min[2] - s.zOffset)] as Vec3 }];
+    }),
+  );
+}

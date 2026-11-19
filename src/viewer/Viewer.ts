@@ -1362,7 +1362,11 @@ export class Viewer {
     const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
     const ghosted = new Set(this.state?.preview?.replaces ?? []);
-    const meshes = [...this.objects.values()].filter((o) => o.part.visible && !ghosted.has(o.part.id) && (!onlyPart || o.part.id === onlyPart)).map((o) => o.mesh);
+    // adding supports by hand: clicks go through the supports to the part
+    const skip = this.state?.pickSkipSuffix;
+    const meshes = [...this.objects.values()]
+      .filter((o) => o.part.visible && !ghosted.has(o.part.id) && (!onlyPart || o.part.id === onlyPart) && !(skip && o.part.id.endsWith(skip)))
+      .map((o) => o.mesh);
     // parts drawn in groups (hidden shells): hits on hidden triangles do not count
     const grouped = meshes.some((m) => m.geometry.groups.length > 0);
     (this.raycaster as unknown as { firstHitOnly: boolean }).firstHitOnly = !this.clipPlanes.length && !grouped;
@@ -2491,9 +2495,11 @@ export class Viewer {
     this.supportGroup.clear();
     if (sp && sp.pos.length) {
       const g = new BufferGeometry().setAttribute('position', new BufferAttribute(sp.pos, 3));
-      const rim = new Points(g, new PointsMaterial({ color: 0x0b0e13, size: 13, sizeAttenuation: false, depthTest: false }));
+      // round dots (a disc texture; plain points are drawn as squares)
+      const disc = discTexture();
+      const rim = new Points(g, new PointsMaterial({ color: 0x0b0e13, size: 13, sizeAttenuation: false, depthTest: false, map: disc, alphaTest: 0.5, transparent: true }));
       const g2 = g.clone().setAttribute('color', new BufferAttribute(sp.col, 3));
-      const dot = new Points(g2, new PointsMaterial({ vertexColors: true, size: 9, sizeAttenuation: false, depthTest: false }));
+      const dot = new Points(g2, new PointsMaterial({ vertexColors: true, size: 9, sizeAttenuation: false, depthTest: false, map: disc, alphaTest: 0.5, transparent: true }));
       rim.renderOrder = 1007;
       dot.renderOrder = 1008;
       rim.raycast = dot.raycast = () => {};
@@ -2501,10 +2507,23 @@ export class Viewer {
     }
     if (sp?.ghost) {
       const g = new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(sp.ghost), 3));
-      const ring = new Points(g, new PointsMaterial({ color: 0xffd23f, size: 20, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.55 }));
+      const ring = new Points(g, new PointsMaterial({ color: 0xffd23f, size: 20, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.55, map: discTexture(), alphaTest: 0.1 }));
       ring.renderOrder = 1009;
       ring.raycast = () => {};
       this.supportGroup.add(ring);
+    }
+    if (sp?.hover) {
+      // adding supports: where the support would touch the part, and its line down to where it stands
+      const { at, foot } = sp.hover;
+      const line = new LineSegments(
+        new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array([...at, ...foot]), 3)),
+        new LineBasicMaterial({ color: 0x4deb73, depthTest: false, transparent: true, opacity: 0.85 }),
+      );
+      const g = new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array([...at, ...foot]), 3));
+      const pts = new Points(g, new PointsMaterial({ color: 0x4deb73, size: 12, sizeAttenuation: false, depthTest: false, map: discTexture(), alphaTest: 0.5, transparent: true }));
+      line.renderOrder = pts.renderOrder = 1010;
+      line.raycast = pts.raycast = () => {};
+      this.supportGroup.add(line, pts);
     }
     this.requestRender();
   }
@@ -2588,6 +2607,11 @@ export class Viewer {
     for (const [i, j] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) box.push(...c[i], ...c[j]);
     const lineCol = this.gridLight ? 0x5a6475 : 0x6b7a90;
     this.volumeGroup.add(lines(new Float32Array(box), lineCol, false));
+    // editing supports by hand: no platform or grid in the way when looking at the part from below
+    if (bv.hidePlatform) {
+      this.requestRender();
+      return;
+    }
     // platform plate
     const plate = new Mesh(
       new PlaneGeometry(X, Y),
@@ -2700,4 +2724,19 @@ function disposeChildren(o: Object3D) {
     disposeChildren(c);
     o.remove(c);
   }
+}
+
+let discTex: CanvasTexture | null = null;
+/** A white disc on transparent: makes points round. */
+function discTexture(): CanvasTexture {
+  if (discTex) return discTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(32, 32, 30, 0, Math.PI * 2);
+  ctx.fill();
+  discTex = new CanvasTexture(c);
+  return discTex;
 }
