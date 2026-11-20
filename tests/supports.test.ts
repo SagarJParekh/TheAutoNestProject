@@ -232,5 +232,12 @@ describe('a lifted part always stands on supports', () => {
     // border: one more wall round each area
     const border = await gen({ teeth: false, fragment: false, perforate: false, blockBorder: true });
     expect(border.supportArea).toBeGreaterThan(plain.supportArea);
+    // the cross grid runs round the border wall too: the border with the grid on adds less wall than without it
+    // (at a close spacing, where the outline is sampled finely)
+    const fine = { spacing: 1, spacingY: 1, teeth: false, fragment: false };
+    const solidRing = (await gen({ ...fine, perforate: false, blockBorder: true })).supportArea - (await gen({ ...fine, perforate: false, blockBorder: false })).supportArea;
+    const gridRing = (await gen({ ...fine, perforate: true, blockBorder: true })).supportArea - (await gen({ ...fine, perforate: true, blockBorder: false })).supportArea;
+    expect(solidRing).toBeGreaterThan(5);
+    expect(gridRing).toBeLessThan(solidRing * 0.85);
   }, 240000);
 });

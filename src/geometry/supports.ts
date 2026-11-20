@@ -875,7 +875,12 @@ function blockSupports(
     return contours;
   };
   /** Lay a wall outline (in s along the wall, z up) into place as a surface: `at(s, z)` gives the 3D point. */
-  const addSurface = (contours: [number, number][][], at: (s: number, z: number) => [number, number, number]) => {
+  /**
+   * Lay a wall outline (in s along the wall, z up) into place as a surface: `at(s, z)` gives the 3D point.
+   * `cuts` (sorted s values) are where a wall that follows a polyline bends: triangles are split there,
+   * so every piece lies flat on its own straight stretch.
+   */
+  const addSurface = (contours: [number, number][][], at: (s: number, z: number, hint?: number) => [number, number, number], cuts: number[] = []) => {
     const clean = contours.map((c) => {
       const out: [number, number][] = [];
       for (const q of c) {
@@ -890,8 +895,49 @@ function blockSupports(
     const outer = clean[0].map(([x, y]) => new Vector2(x, y));
     const holes = clean.slice(1).filter((h) => h.length >= 3).map((h) => h.map(([x, y]) => new Vector2(x, y)));
     const all = [outer, ...holes].flat();
-    for (const [a, b, c] of ShapeUtils.triangulateShape(outer, holes))
-      for (const k of [a, b, c]) surf.push(...at(all[k].x, all[k].y));
+    for (const [a, b, c] of ShapeUtils.triangulateShape(outer, holes)) {
+      const tri = [all[a], all[b], all[c]];
+      const lo = Math.min(tri[0].x, tri[1].x, tri[2].x), hi = Math.max(tri[0].x, tri[1].x, tri[2].x);
+      // the bends strictly inside the triangle's span
+      let i0 = 0, i1 = cuts.length;
+      while (i0 < i1) {
+        const m = (i0 + i1) >> 1;
+        if (cuts[m] <= lo + 1e-9) i0 = m + 1;
+        else i1 = m;
+      }
+      const inner: number[] = [];
+      for (let i = i0; i < cuts.length && cuts[i] < hi - 1e-9; i++) inner.push(cuts[i]);
+      if (!inner.length) {
+        for (const v of tri) surf.push(...at(v.x, v.y));
+        continue;
+      }
+      // one slab per straight stretch: clip the triangle to it and fan the (convex) piece
+      const edges = [-Infinity, ...inner, Infinity];
+      for (let k = 0; k + 1 < edges.length; k++) {
+        let poly: [number, number][] = tri.map((v) => [v.x, v.y]);
+        for (const [x0, keepAbove] of [[edges[k], true], [edges[k + 1], false]] as [number, boolean][]) {
+          if (!Number.isFinite(x0)) continue;
+          const inside = (q: [number, number]) => (keepAbove ? q[0] >= x0 : q[0] <= x0);
+          const out: [number, number][] = [];
+          for (let j = 0; j < poly.length; j++) {
+            const P0 = poly[j], P1 = poly[(j + 1) % poly.length];
+            const in0 = inside(P0), in1 = inside(P1);
+            if (in0) out.push(P0);
+            if (in0 !== in1) {
+              const f = (x0 - P0[0]) / (P1[0] - P0[0]);
+              out.push([x0, P0[1] + (P1[1] - P0[1]) * f]);
+            }
+          }
+          poly = out;
+          if (poly.length < 3) break;
+        }
+        if (poly.length < 3) continue;
+        // the stretch's own bend for points on a cut, so neighbours meet exactly
+        const mid = (Math.max(edges[k], lo) + Math.min(edges[k + 1], hi)) / 2;
+        for (let j = 1; j + 1 < poly.length; j++)
+          for (const q of [poly[0], poly[j], poly[j + 1]]) surf.push(...at(q[0], q[1], mid));
+      }
+    }
   };
   /** A hatching wall: s along the line, at the other grid coordinate `at`, turned by the grid angle. */
   const place = (contours: [number, number][][], dir: 0 | 1, atc: number) =>
@@ -1015,17 +1061,44 @@ function blockSupports(
           a = b;
         }
         if (loop.length > 2) loop.push(loop[0]);
-        for (let i = 0; i + 1 < loop.length; i++) {
-          const q0 = loop[i], q1 = loop[i + 1];
-          const d = Math.hypot(q1.x - q0.x, q1.y - q0.y);
-          if (d < 1e-3 || d > step * 2.5 || q0.onPart !== q1.onPart) continue;
-          // a straight wall from q0 to q1: in its own (s, z) frame, then turned and moved into place
-          const top = lerp([0, d], [q0.top + pen, q1.top + pen]);
-          const bot = lerp([0, d], [q0.onPart ? q0.bottom - pen : 0, q1.onPart ? q1.bottom - pen : 0]);
-          const c = piece(0, d + t / 2, bot, top, () => q0.onPart, []);
+        // runs of samples close together on the same footing: each one continuous wall along the outline,
+        // so the cross grid (and the teeth) run on unbroken round the bends
+        const runs: (typeof loop)[] = [];
+        let run: typeof loop = [];
+        for (const q of loop) {
+          const last = run[run.length - 1];
+          if (last) {
+            const d = Math.hypot(q.x - last.x, q.y - last.y);
+            if (d < 1e-3) continue;
+            if (d > step * 2.5 || q.onPart !== last.onPart) {
+              if (run.length > 1) runs.push(run);
+              run = [];
+            }
+          }
+          run.push(q);
+        }
+        if (run.length > 1) runs.push(run);
+        for (const r of runs) {
+          const S = [0];
+          for (let i = 1; i < r.length; i++) S.push(S[i - 1] + Math.hypot(r[i].x - r[i - 1].x, r[i].y - r[i - 1].y));
+          const L = S[S.length - 1];
+          const top = lerp(S, r.map((q) => q.top + pen));
+          const bot = lerp(S, r.map((q) => (q.onPart ? q.bottom - pen : 0)));
+          const c = piece(0, L, bot, top, () => r[0].onPart, S);
           if (!c) continue;
-          const cx = (q1.x - q0.x) / d, cy = (q1.y - q0.y) / d;
-          addSurface(c, (sv, z) => [q0.x + cx * sv, q0.y + cy * sv, z]);
+          const bends = S.slice(1, -1);
+          // a point at s along the outline (on a bend, the stretch `hint` lies in decides which side)
+          const at = (sv: number, z: number, hint = sv): [number, number, number] => {
+            let i = 1, j = S.length - 1;
+            while (i < j) {
+              const m = (i + j) >> 1;
+              if (S[m] < hint) i = m + 1;
+              else j = m;
+            }
+            const f = (sv - S[i - 1]) / (S[i] - S[i - 1] || 1);
+            return [r[i - 1].x + (r[i].x - r[i - 1].x) * f, r[i - 1].y + (r[i].y - r[i - 1].y) * f, z];
+          };
+          addSurface(c, at, bends);
         }
       }
     });
