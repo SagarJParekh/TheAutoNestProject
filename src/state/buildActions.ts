@@ -856,7 +856,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
 
 /**
  * Colours of a copy's supports and raft, never like the part's own colour:
- * neutral greys (no part colour is grey), or amber under a greyish part.
+ * blue (no colour of the part palette is blue), or amber under a blue part.
  */
 export function supportColors(partColor: string): { supports: string; raft: string } {
   const m = /^#?([0-9a-f]{6})$/i.exec(partColor.trim());
@@ -864,10 +864,12 @@ export function supportColors(partColor: string): { supports: string; raft: stri
     const n = parseInt(m[1], 16);
     const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    // a greyish part (little colour): its supports in amber instead
-    if (max - min < 0.18) return { supports: '#f0b429', raft: '#a87a14' };
+    const d = max - min;
+    const hue = d === 0 ? 0 : max === r ? (60 * ((g - b) / d) + 360) % 360 : max === g ? 60 * ((b - r) / d) + 120 : 60 * ((r - g) / d) + 240;
+    // a blue part (a colour picked by hand, or from an older project): its supports in amber, so the two never match
+    if (d >= 0.18 && hue >= 180 && hue <= 250) return { supports: '#f0b429', raft: '#a87a14' };
   }
-  return { supports: '#c8cdd4', raft: '#7c8592' };
+  return { supports: '#2f80ed', raft: '#1b4f99' };
 }
 
 /** The height a copy is shown at: on supports the supports stand on the platform and the part sits the lift above it, whatever height the copy had. */
