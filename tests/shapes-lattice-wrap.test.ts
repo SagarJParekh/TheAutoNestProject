@@ -88,6 +88,26 @@ describe('lattice lightweighting', () => {
     expect(bodies.length).toBe(1);
   }, 60000);
 
+  it('memory: with a skin the lattice is added as cavities (no boolean), an open one is cut exactly or rebuilt from voxels', async () => {
+    const cube = boxMesh([0, 0, 0], [40, 40, 40]);
+    const base = { ...DEFAULT_LATTICE, type: 'gyroid' as const, cell: 10, thickness: 1.5, quality: 'draft' as const };
+    const skinned = await latticeMesh(cube, { ...base, skin: 2 });
+    expect(skinned.method).toBe('exact');
+    // the outer surface is the original one, untouched
+    expect(skinned.mesh.positions.slice(0, cube.positions.length)).toEqual(cube.positions);
+    expect(isWatertight(skinned.mesh)).toBe(true);
+    const small = await latticeMesh(boxMesh([0, 0, 0], [15, 15, 15]), { ...base, skin: 0 });
+    expect(small.method).toBe('boolean');
+    const big = await latticeMesh(boxMesh([0, 0, 0], [80, 80, 80]), { ...base, skin: 0 });
+    expect(big.method).toBe('voxel');
+    expect(isWatertight(big.mesh)).toBe(true);
+    expect(big.after).toBeLessThan(big.before * 0.5);
+    const b = computeBounds(big.mesh.positions);
+    expect(b.min[0]).toBeGreaterThan(-0.5);
+    expect(b.max[2]).toBeLessThan(80.5);
+    expect(b.max[2]).toBeGreaterThan(79);
+  }, 120000);
+
   it('dropLooseBits: drops a small body floating in a cavity, keeps the cavity and separate parts', () => {
     const shell = mergeMeshes([boxMesh([0, 0, 0], [20, 20, 20]), flipMesh(boxMesh([2, 2, 2], [18, 18, 18]))]);
     const loose = boxMesh([9, 9, 9], [10, 10, 10]);

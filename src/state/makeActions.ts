@@ -85,6 +85,7 @@ export async function previewLattice() {
       `Voxel size: ${mm(r.voxelSize)}`,
       ...(r.coarse ? ['⚠ The part is large for this cell size: the voxels are coarser than the walls, so they may come out lumpy or broken. Use larger cells, thicker walls or a smaller part.'] : []),
       `Triangles: ${tris(r.mesh)}`,
+      ...(r.method === 'voxel' ? ['An open lattice this size is too big to cut out exactly, so the part was rebuilt from voxels: sharp edges come out slightly rounded. Add a skin to keep the outer surface exact.'] : []),
       ...(params.skin > 0 ? ['The lattice is closed inside the skin: add drain holes (Hollow / Perforate) to get powder or resin out.'] : []),
     ],
     apply: () => replaceWithWorldMeshes(`${type} lattice`, part.id, [{ name: withSuffix(part.name, SUFFIX.lattice), mesh: r.mesh, color: part.color }]),

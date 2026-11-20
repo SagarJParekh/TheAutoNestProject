@@ -2,11 +2,14 @@
  * Lattice lightweighting: keep a solid skin of the part and fill the inside
  * with a lattice (gyroid, diamond or Schwarz-P walls, or cubic struts).
  *
- * The part's own outer surface is kept exactly: the empty space between the
- * lattice walls (inside the skin) is built as a closed mesh from a distance
- * field and subtracted with an exact boolean.
+ * The empty space between the lattice walls (inside the skin) is built as a
+ * closed mesh from a distance field. With a skin it lies clear of the surface
+ * and is simply added to the part as cavities, so the outer surface stays
+ * exact and no boolean (the memory hog) is needed. An open lattice (no skin)
+ * is cut out with an exact boolean while that fits in memory, and otherwise
+ * built in one piece from the distance field.
  */
-import { MeshData, computeBounds, flipMesh, ProgressFn, noProgress, subsetTriangles } from './mesh';
+import { MeshData, computeBounds, flipMesh, mergeMeshes, ProgressFn, noProgress, subsetTriangles } from './mesh';
 import { findShells } from './topology';
 import { signedDistanceGrid, Grid } from './sdf';
 import { marchingTetrahedra } from './marching';
@@ -47,10 +50,11 @@ export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickn
 
 const BUDGET = { draft: 2e6, normal: 6e6, fine: 16e6 };
 /**
- * Triangles the lattice surface may have: the boolean that cuts it out of the
- * part runs out of memory (WebAssembly is limited to 4 GB) on much more.
+ * Triangles the lattice surface may have: the finished part is shown, kept for
+ * undo and saved in the browser, and much more than this makes the page run
+ * out of memory.
  */
-const TRIANGLES = { draft: 2.5e6, normal: 5e6, fine: 8e6 };
+const TRIANGLES = { draft: 1.5e6, normal: 3e6, fine: 5e6 };
 
 /** Lattice wall area per mm³ of filled volume, roughly (both faces of the walls). */
 function areaDensity(p: Pick<LatticeParams, 'type' | 'cell' | 'thickness'>): number {
@@ -199,20 +203,36 @@ export interface LatticeResult {
   after: number;
   /** the voxels had to be coarser than the walls need (the walls come out lumpy or may break up) */
   coarse: boolean;
+  /**
+   * exact: the lattice added inside the untouched outer surface; boolean: an open lattice cut out exactly;
+   * voxel: an open lattice too big to cut exactly, the whole part rebuilt from the distance field (edges slightly rounded)
+   */
+  method: 'exact' | 'boolean' | 'voxel';
 }
 
-/** Closed mesh of the empty space between the lattice walls, inside the skin. */
-export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: ProgressFn = noProgress): { voids: MeshData; voxelSize: number } {
+function checkParams(p: LatticeParams) {
   if (!(p.cell > 0) || !(p.thickness > 0)) throw new Error('Cell size and wall thickness must be positive');
   if (p.thickness >= p.cell * 0.8) throw new Error('The walls are too thick for the cell size: nothing would be removed');
-  const h = latticeVoxel(mesh, p);
+}
+
+/**
+ * Surface from the distance field on a grid of voxel size h:
+ * - 'voids': closed mesh of the empty space between the lattice walls, inside the skin
+ *   (with no skin the voids run out past the surface, for a boolean to trim, closed at the grid edge);
+ * - 'solid': the whole lightened part (skin and lattice) in one piece, its outer surface
+ *   rebuilt from the distance field too (no boolean needed, but edges come out slightly rounded).
+ */
+function latticeSurface(mesh: MeshData, p: LatticeParams, h: number, what: 'voids' | 'solid', onProgress: ProgressFn): MeshData {
   const skin = Math.max(0, p.skin);
-  const grid = signedDistanceGrid(mesh, h, { pad: 2, bandCenter: skin, bandWidth: 2.5 * h, onProgress: (f, m) => onProgress(f * 0.6, m) });
+  const grid = signedDistanceGrid(mesh, h, {
+    pad: 2,
+    bandCenter: what === 'solid' ? skin / 2 : skin,
+    bandWidth: what === 'solid' ? skin / 2 + 2.5 * h : 2.5 * h,
+    onProgress: (f, m) => onProgress(f * 0.6, m),
+  });
   const { nx, ny, nz, origin, data } = grid;
   const L = p.layout === 'contour' ? contourField(grid, mesh, p, skin) : latticeField(p.type, p.cell, p.thickness, p.axis ?? 'z');
   onProgress(0.62, 'Building the lattice');
-  // void = inside the skin and outside the lattice walls; with no skin the voids run out past the surface
-  // (the boolean trims them) and are closed at the edge of the grid
   const tiny = h * 1.234e-3;
   for (let k = 0; k < nz; k++) {
     const z = origin[2] + k * h;
@@ -221,15 +241,25 @@ export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: Progr
       for (let i = 0; i < nx; i++) {
         const n = i + nx * (j + ny * k);
         const border = i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1;
-        const inside = skin > 0 ? data[n] - skin : data[n] + 2 * h;
-        data[n] = border ? -h : Math.min(inside, -L(origin[0] + i * h, y, z)) - tiny;
+        const d = data[n], l = L(origin[0] + i * h, y, z);
+        let v: number;
+        if (what === 'solid') v = Math.min(d, Math.max(skin - d, l)); // material: inside the part, and in the skin or a lattice wall
+        else v = Math.min(skin > 0 ? d - skin : d + 2 * h, -l); // void: inside the skin and outside the walls
+        data[n] = border ? -h : v - tiny;
       }
     }
   }
-  let voids = marchingTetrahedra(grid, (f, m) => onProgress(0.65 + f * 0.15, m));
-  if (!voids.indices.length) throw new Error('No room for a lattice: use a thinner skin, thinner walls or a larger part');
-  if (meshVolume(voids) < 0) voids = flipMesh(voids);
-  return { voids, voxelSize: h };
+  let out = marchingTetrahedra(grid, (f, m) => onProgress(0.65 + f * 0.15, m));
+  if (!out.indices.length) throw new Error('No room for a lattice: use a thinner skin, thinner walls or a larger part');
+  if (meshVolume(out) < 0) out = flipMesh(out);
+  return out;
+}
+
+/** Closed mesh of the empty space between the lattice walls, inside the skin. */
+export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: ProgressFn = noProgress): { voids: MeshData; voxelSize: number } {
+  checkParams(p);
+  const h = latticeVoxel(mesh, p);
+  return { voids: latticeSurface(mesh, p, h, 'voids', onProgress), voxelSize: h };
 }
 
 /**
@@ -267,12 +297,48 @@ export function dropLooseBits(mesh: MeshData): MeshData {
   return any ? subsetTriangles(mesh, (t) => !drop[shellOfTri[t]]) : mesh;
 }
 
+/**
+ * Lattice triangles the exact boolean may cut out of the part with no skin: it
+ * needs roughly 600 bytes per triangle (1.7 GB for 2.7 million), and a browser
+ * worker runs out of memory well before WebAssembly's 4 GB. Bigger open
+ * lattices are built in one piece from the distance field instead.
+ */
+const BOOLEAN_TRIANGLES = { draft: 0.6e6, normal: 1.2e6, fine: 2e6 };
+
 export async function latticeMesh(input: MeshData, p: LatticeParams, onProgress: ProgressFn = noProgress): Promise<LatticeResult> {
+  checkParams(p);
   // an inside-out part (all triangles facing in) is turned right way out first
   const mesh = meshVolume(input) < 0 ? flipMesh(input) : input;
-  const { voids, voxelSize } = latticeVoids(mesh, p, onProgress);
-  onProgress(0.82, 'Cutting the lattice out of the part');
-  const out = dropLooseBits(await subtractMeshes(mesh, [voids]));
+  const h = latticeVoxel(mesh, p);
+  const skin = Math.max(0, p.skin);
+  let out: MeshData | null = null;
+  let method: LatticeResult['method'];
+  if (skin >= 1.2 * h) {
+    // the voids lie inside the skin, clear of the surface: they are simply added to the part as
+    // cavities (exact outer surface, no boolean, little memory)
+    const voids = latticeSurface(mesh, p, h, 'voids', onProgress);
+    onProgress(0.85, 'Adding the lattice to the part');
+    out = mergeMeshes([mesh, flipMesh(voids)]);
+    method = 'exact';
+  } else {
+    // open lattice (no skin): cut it out of the part with an exact boolean while that fits in memory
+    const area = areaDensity(p) * Math.abs(meshVolume(mesh)) + meshArea(mesh);
+    if ((7 * area) / (h * h) <= BOOLEAN_TRIANGLES[p.quality] * 1.2) {
+      const voids = latticeSurface(mesh, p, h, 'voids', onProgress);
+      if (voids.indices.length / 3 <= BOOLEAN_TRIANGLES[p.quality] * 1.5) {
+        onProgress(0.82, 'Cutting the lattice out of the part');
+        try {
+          out = await subtractMeshes(mesh, [voids]);
+        } catch {
+          out = null; // out of memory, or a part that is not a closed solid: build it from the distance field
+        }
+      }
+    }
+    method = out ? 'boolean' : 'voxel';
+    if (!out) out = latticeSurface(mesh, p, h, 'solid', (f, m) => onProgress(f * 0.97, m));
+  }
+  onProgress(0.97, 'Removing loose pieces');
+  out = dropLooseBits(out);
   onProgress(1);
-  return { mesh: out, voxelSize, before: Math.abs(meshVolume(mesh)), after: Math.abs(meshVolume(out)), coarse: voxelSize > p.thickness / 1.5 };
+  return { mesh: out, voxelSize: h, before: Math.abs(meshVolume(mesh)), after: Math.abs(meshVolume(out)), coarse: h > p.thickness / 1.5, method };
 }
