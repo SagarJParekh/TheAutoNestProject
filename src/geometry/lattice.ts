@@ -6,8 +6,9 @@
  * lattice walls (inside the skin) is built as a closed mesh from a distance
  * field and subtracted with an exact boolean.
  */
-import { MeshData, computeBounds, flipMesh, ProgressFn, noProgress } from './mesh';
-import { signedDistanceGrid } from './sdf';
+import { MeshData, computeBounds, flipMesh, ProgressFn, noProgress, subsetTriangles } from './mesh';
+import { findShells } from './topology';
+import { signedDistanceGrid, Grid } from './sdf';
 import { marchingTetrahedra } from './marching';
 import { meshArea, meshVolume } from './measure';
 import { subtractMeshes } from './manifold';
@@ -33,9 +34,16 @@ export interface LatticeParams {
   quality: 'draft' | 'normal' | 'fine';
   /** honeycomb: direction the hexagonal cells run along */
   axis: 'x' | 'y' | 'z';
+  /**
+   * projected: one straight lattice across the whole part (cut off wherever the surface happens to be);
+   * contour: the cells are laid out in layers measured from the skin inward, so they follow the outer shape
+   */
+  layout?: LatticeLayout;
 }
 
-export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickness: 1.2, skin: 1.5, quality: 'normal', axis: 'z' };
+export type LatticeLayout = 'projected' | 'contour';
+
+export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickness: 1.2, skin: 1.5, quality: 'normal', axis: 'z', layout: 'projected' };
 
 const BUDGET = { draft: 2e6, normal: 6e6, fine: 16e6 };
 /**
@@ -127,6 +135,62 @@ export function latticeField(type: LatticeType, cell: number, thickness: number,
   }
 }
 
+/**
+ * Contour layout: the lattice is laid out from the surface inward instead of on
+ * one straight grid. Each point takes its depth below the skin as the lattice
+ * coordinate along the axis closest to the surface normal (the other two stay as
+ * they are), so every face of the part meets the lattice at the same place in
+ * the cell, and the layers of cells bend round with the outer shape. Where the
+ * normal turns from one axis to another the two layouts are blended smoothly.
+ * The pattern is anchored to the middle of the part, so moving the part does
+ * not change it.
+ */
+function contourField(grid: Grid, mesh: MeshData, p: LatticeParams, skin: number) {
+  const { nx, ny, nz, origin, h } = grid;
+  const D = grid.data.slice();
+  const L = latticeField(p.type, p.cell, p.thickness, p.axis ?? 'z');
+  const b = computeBounds(mesh.positions);
+  const c = [0, 1, 2].map((i) => (b.min[i] + b.max[i]) / 2);
+  const cl = (v: number, n: number) => (v < 0 ? 0 : v > n - 1 ? n - 1 : v);
+  // depth (trilinear, so the layers come out smooth, not in voxel steps)
+  const S = (x: number, y: number, z: number) => {
+    const fx = cl((x - origin[0]) / h, nx), fy = cl((y - origin[1]) / h, ny), fz = cl((z - origin[2]) / h, nz);
+    const i = Math.min(nx - 2, Math.floor(fx)), j = Math.min(ny - 2, Math.floor(fy)), k = Math.min(nz - 2, Math.floor(fz));
+    const u = fx - i, v = fy - j, w = fz - k;
+    const n = i + nx * (j + ny * k), sy = nx, sz = nx * ny;
+    const l = (a: number, b2: number, t: number) => a + (b2 - a) * t;
+    return l(
+      l(l(D[n], D[n + 1], u), l(D[n + sy], D[n + sy + 1], u), v),
+      l(l(D[n + sz], D[n + sz + 1], u), l(D[n + sz + sy], D[n + sz + sy + 1], u), v),
+      w,
+    );
+  };
+  const e = 1.5 * h;
+  const q = [0, 0, 0];
+  return (x: number, y: number, z: number) => {
+    const d = S(x, y, z);
+    const t = d - skin;
+    const gx = Math.abs(S(x + e, y, z) - S(x - e, y, z));
+    const gy = Math.abs(S(x, y + e, z) - S(x, y - e, z));
+    const gz = Math.abs(S(x, y, z + e) - S(x, y, z - e));
+    const X = x - c[0], Y = y - c[1], Z = z - c[2];
+    let wx = gx ** 4, wy = gy ** 4, wz = gz ** 4;
+    const sum = wx + wy + wz;
+    if (sum > 1e-12) (wx /= sum), (wy /= sum), (wz /= sum);
+    else wx = wy = wz = 1 / 3;
+    let f = 0, wsum = 0;
+    const w = [wx, wy, wz];
+    for (let a2 = 0; a2 < 3; a2++) {
+      if (w[a2] < 0.02) continue;
+      q[0] = X; q[1] = Y; q[2] = Z;
+      q[a2] = t;
+      f += w[a2] * L(q[0], q[1], q[2]);
+      wsum += w[a2];
+    }
+    return f / wsum;
+  };
+}
+
 export interface LatticeResult {
   mesh: MeshData;
   voxelSize: number;
@@ -145,7 +209,7 @@ export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: Progr
   const skin = Math.max(0, p.skin);
   const grid = signedDistanceGrid(mesh, h, { pad: 2, bandCenter: skin, bandWidth: 2.5 * h, onProgress: (f, m) => onProgress(f * 0.6, m) });
   const { nx, ny, nz, origin, data } = grid;
-  const L = latticeField(p.type, p.cell, p.thickness, p.axis ?? 'z');
+  const L = p.layout === 'contour' ? contourField(grid, mesh, p, skin) : latticeField(p.type, p.cell, p.thickness, p.axis ?? 'z');
   onProgress(0.62, 'Building the lattice');
   // void = inside the skin and outside the lattice walls; with no skin the voids run out past the surface
   // (the boolean trims them) and are closed at the edge of the grid
@@ -168,12 +232,47 @@ export function latticeVoids(mesh: MeshData, p: LatticeParams, onProgress: Progr
   return { voids, voxelSize: h };
 }
 
+/**
+ * Small loose pieces of lattice left floating inside the part (where the walls
+ * of two layers of cells only just miss each other) cannot be printed and would
+ * rattle around inside: drop every closed body (positive volume) under 0.5 % of
+ * the largest one that sits inside that body's bounds. Cavities are kept.
+ */
+export function dropLooseBits(mesh: MeshData): MeshData {
+  const { shellOfTri, shellCount } = findShells(mesh);
+  if (shellCount < 2) return mesh;
+  const p = mesh.positions, idx = mesh.indices;
+  const vol = new Float64Array(shellCount);
+  const lo = new Float64Array(shellCount * 3).fill(Infinity), hi = new Float64Array(shellCount * 3).fill(-Infinity);
+  for (let t = 0; t < idx.length / 3; t++) {
+    const s = shellOfTri[t];
+    const a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+    vol[s] += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    for (const v of [a, b, c])
+      for (let k = 0; k < 3; k++) {
+        lo[s * 3 + k] = Math.min(lo[s * 3 + k], p[v + k]);
+        hi[s * 3 + k] = Math.max(hi[s * 3 + k], p[v + k]);
+      }
+  }
+  let big = 0;
+  for (let s = 1; s < shellCount; s++) if (vol[s] > vol[big]) big = s;
+  const drop = new Uint8Array(shellCount);
+  let any = false;
+  for (let s = 0; s < shellCount; s++) {
+    if (s === big || !(vol[s] > 0) || vol[s] >= 0.005 * vol[big]) continue;
+    let inside = true;
+    for (let k = 0; k < 3; k++) if (lo[s * 3 + k] < lo[big * 3 + k] || hi[s * 3 + k] > hi[big * 3 + k]) inside = false;
+    if (inside) (drop[s] = 1), (any = true);
+  }
+  return any ? subsetTriangles(mesh, (t) => !drop[shellOfTri[t]]) : mesh;
+}
+
 export async function latticeMesh(input: MeshData, p: LatticeParams, onProgress: ProgressFn = noProgress): Promise<LatticeResult> {
   // an inside-out part (all triangles facing in) is turned right way out first
   const mesh = meshVolume(input) < 0 ? flipMesh(input) : input;
   const { voids, voxelSize } = latticeVoids(mesh, p, onProgress);
   onProgress(0.82, 'Cutting the lattice out of the part');
-  const out = await subtractMeshes(mesh, [voids]);
+  const out = dropLooseBits(await subtractMeshes(mesh, [voids]));
   onProgress(1);
   return { mesh: out, voxelSize, before: Math.abs(meshVolume(mesh)), after: Math.abs(meshVolume(out)), coarse: voxelSize > p.thickness / 1.5 };
 }

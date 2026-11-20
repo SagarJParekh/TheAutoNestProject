@@ -72,7 +72,7 @@ export async function previewLattice() {
   const r = await runJob(`Lattice for ${part.name}`, 'lattice', { mesh: worldMesh(part), params });
   if (!r) return;
   const saved = r.before > 0 ? (1 - r.after / r.before) * 100 : 0;
-  const type = LATTICES.find((l) => l.value === params.type)?.label ?? params.type;
+  const type = (params.layout === 'contour' ? 'Contour ' : '') + (LATTICES.find((l) => l.value === params.type)?.label ?? params.type).replace(/^./, (c) => (params.layout === 'contour' ? c.toLowerCase() : c));
   setPreview({
     tool: 'lattice',
     label: `${type} lattice`,

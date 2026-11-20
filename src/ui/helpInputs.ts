@@ -27,6 +27,8 @@ export const INPUT_HELP: Record<string, string> = {
     'How many flat segments make up a full circle on round shapes. More segments look smoother but make bigger files; 64 is plenty for most parts, 128–256 for large or precise round parts.',
   // ---------------------------------------------------------------- lattice
   'lattice:lattice': 'Type of lattice: gyroid, diamond and Schwarz P are smooth self-supporting walls (good for resin and powder), cubic is a grid of round struts, honeycomb is hexagonal cells running straight through the part.',
+  'lattice:layout':
+    'Projected: one straight lattice runs through the whole part and is cut off wherever the surface happens to be, so the cells at the skin come out whole on some faces and as slivers on others. Contour: the cells are laid out in layers measured from the skin inward, so they follow the outer shape and every face meets the lattice the same way; moving the part does not change it.',
   'lattice:cell size':
     'Size of one repeating lattice cell, in mm (for honeycomb: the width of one hexagon across its flats). Bigger cells remove more material and make the part lighter but weaker; smaller cells are stiffer and heavier.',
   'lattice:wall thickness': 'Thickness of the lattice walls, in mm. Thicker walls are stronger and heavier. Keep it well above your printer’s minimum wall thickness.',

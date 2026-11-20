@@ -134,6 +134,16 @@ export function LatticePanel({ parts }: { parts: Part[] }) {
           ))}
         </select>
       </Row>
+      <Row label="Layout">
+        <Segmented
+          value={lat.layout ?? 'projected'}
+          onChange={(layout) => setLat({ layout })}
+          options={[
+            { value: 'projected', label: 'Projected' },
+            { value: 'contour', label: 'Contour' },
+          ]}
+        />
+      </Row>
       <Row label="Cell size">
         <NumberField value={lat.cell} min={1} step={1} suffix="mm" title={lat.type === 'honeycomb' ? 'Width of one hexagon, across its flats' : 'Size of one repeating lattice cell'} onChange={(cell) => setLat({ cell: Math.max(1, cell) })} />
       </Row>
@@ -177,7 +187,7 @@ export function LatticePanel({ parts }: { parts: Part[] }) {
       </div>
       <Hint>
         Keeps the outer surface and a solid skin, and fills the inside with the lattice. Gyroid, diamond and Schwarz P are smooth self-supporting walls, good for
-        powder and resin printing; cubic is a grid of struts; honeycomb is hexagonal cells running straight through the part along X, Y or Z (Z = the build direction, self-supporting walls). The preview shows how much lighter the part gets; use Clip to look inside.
+        powder and resin printing; cubic is a grid of struts; honeycomb is hexagonal cells running straight through the part along X, Y or Z (Z = the build direction, self-supporting walls). Projected lays one straight lattice through the part; Contour lays the cells in layers that follow the outer shape, so every face meets the lattice the same way. The preview shows how much lighter the part gets; use Clip to look inside.
       </Hint>
     </Section>
   );

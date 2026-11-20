@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   boxMesh, computeBounds, latticeField, isWatertight, makeShape, meshVolume, mergeMeshes, latticeMesh, shrinkwrapMesh, SHAPES, DEFAULT_SHAPE, DEFAULT_LATTICE, DEFAULT_WRAP,
+  translateMesh, flipMesh, dropLooseBits, shellInfo, keepShells,
   type ShapeKind,
 } from '../src/geometry';
 
@@ -67,6 +68,33 @@ describe('lattice lightweighting', () => {
       expect(b.max[2]).toBeCloseTo(30, 4);
     }, 30000);
   }
+
+  it('contour layout: the cells follow the surface, so moving the part does not change the lattice (projected does)', async () => {
+    const params = { ...DEFAULT_LATTICE, type: 'cubic' as const, cell: 10, thickness: 1.5, skin: 2, quality: 'draft' as const };
+    const vol = async (layout: 'projected' | 'contour', off: number) =>
+      (await latticeMesh(translateMesh(boxMesh([0, 0, 0], [30, 30, 30]), [off, off * 0.7, off * 1.3]), { ...params, layout })).after;
+    const [p0, p1, c0, c1] = await Promise.all([vol('projected', 0), vol('projected', 3.3), vol('contour', 0), vol('contour', 3.3)]);
+    expect(Math.abs(p1 - p0) / p0).toBeGreaterThan(0.02);
+    expect(Math.abs(c1 - c0) / c0).toBeLessThan(0.002);
+  }, 60000);
+
+  it('contour layout on a round part: watertight, lighter, no loose pieces left inside', async () => {
+    const cyl = await makeShape({ ...DEFAULT_SHAPE, kind: 'cylinder', d: 40, h: 16, segments: 48 });
+    const r = await latticeMesh(cyl, { ...DEFAULT_LATTICE, type: 'cubic', layout: 'contour', cell: 6, thickness: 1.2, skin: 1.5, quality: 'draft' });
+    expect(isWatertight(r.mesh)).toBe(true);
+    expect(r.after).toBeLessThan(r.before * 0.6);
+    const { shells, shellOfTri } = shellInfo(r.mesh);
+    const bodies = shells.filter((_s, i) => meshVolume(keepShells(r.mesh, shellOfTri, new Set([i]))) > 0);
+    expect(bodies.length).toBe(1);
+  }, 60000);
+
+  it('dropLooseBits: drops a small body floating in a cavity, keeps the cavity and separate parts', () => {
+    const shell = mergeMeshes([boxMesh([0, 0, 0], [20, 20, 20]), flipMesh(boxMesh([2, 2, 2], [18, 18, 18]))]);
+    const loose = boxMesh([9, 9, 9], [10, 10, 10]);
+    const apart = boxMesh([30, 0, 0], [31, 1, 1]);
+    const out = dropLooseBits(mergeMeshes([shell, loose, apart]));
+    expect(meshVolume(out)).toBeCloseTo(8000 - 16 ** 3 + 1, 3);
+  });
 });
 
 describe('shrinkwrap', () => {
