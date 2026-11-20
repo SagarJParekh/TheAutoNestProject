@@ -15,6 +15,10 @@ export function RepairPanel({ parts }: { parts: Part[] }) {
   const part = parts.length === 1 ? parts[0] : null;
   const hasReport = useStore((s) => !!(part && s.analysis[part.id]?.mesh === part.mesh));
   useEffect(() => {
+    // the only part, shown here with nothing selected: select it, so the repair buttons act on it
+    if (part && !getState().selection.length) setState({ selection: [part.id] });
+  }, [part]);
+  useEffect(() => {
     // analyse automatically (in every tab, so problems stay highlighted while editing)
     if (part && !hasReport && part.mesh.indices.length / 3 < 3_000_000) analyzePart(part.id);
   }, [part, hasReport]);
@@ -59,7 +63,11 @@ function FixTab({ parts }: { parts: Part[] }) {
       <>
         <RepairManySection />
         <Section title="Repair">
-          <Hint>Select one part to analyse it and see its problems in detail.</Hint>
+          <Hint>
+            {parts.length > 1
+              ? `${parts.length} parts are selected: select just one (click it in the view or the parts list) to analyse it and see its problems in detail.`
+              : 'Click a part (in the view or the parts list) to analyse it and see its problems in detail.'}
+          </Hint>
         </Section>
       </>
     );

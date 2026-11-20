@@ -68,7 +68,7 @@ export function PropertiesPanel() {
         <PreviewBar />
         {tool === 'transform' && <TransformPanel parts={parts} />}
         {(tool === 'clip' || tool === 'cut') && <ClipCutPanel parts={parts} />}
-        {tool === 'repair' && <RepairPanel parts={parts} />}
+        {tool === 'repair' && <RepairPanel parts={parts.length ? parts : allParts.length === 1 ? allParts : parts} />}
         {tool === 'hollow' && <HollowPanel parts={parts} />}
         {tool === 'perforate' && <PerforatePanel />}
         {tool === 'extrude' && <ExtrudePanel />}
