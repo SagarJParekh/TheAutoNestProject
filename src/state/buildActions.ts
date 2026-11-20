@@ -1001,7 +1001,8 @@ function uniqueNames() {
 
 /**
  * Export one build (index) or every build ('all') as 3MF, STL, SLC (sliced
- * contours) or CLS (Concept Laser slices), parts in their build positions. With separate files (the default)
+ * contours) or CLS (Concept Laser slices), parts in their build positions.
+ * CLS is always a zip of one file per part and one per part's supports. With separate files (the default)
  * the export is a zip holding the whole build as one file plus a file for every
  * part and one for every part's supports (s_<part> or <part>_s); with only
  * selected parts, just those copies and their supports go in.
@@ -1021,27 +1022,33 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
     indices = indices.filter((i) => s.builds[i].placements.some((pl) => only!.has(pl.key)));
   }
   const buildName = (i: number) => `${safe(printer.name)}_${safe(s.builds[i].name)}`;
-  const zipped = separate || indices.length > 1 || which === 'all';
+  // CLS: always one file per part and one per part's supports (as Concept Laser's build software loads them), no file with
+  // everything, and the supports written as ordinary contours so they show wherever the file is opened
+  const cls = format === 'cls';
+  const zipped = separate || cls || indices.length > 1 || which === 'all';
   const outName = which === 'all' ? `${safe(printer.name)}_builds.zip` : `${buildName(which)}${s.exportOnly === 'selected' ? '_selected' : ''}.${zipped ? 'zip' : format}`;
   // pick the location before the slow part (pickers only open straight after a click)
   const target = await pickSaveTarget(outName);
   if (!target) return;
-  // slices: layer thickness; CLS: in platform coordinates (corner at 0, 0), supports in their own section
+  // slices: layer thickness; CLS: in platform coordinates (corner at 0, 0)
   const options = { layer: s.slcLayer ?? 0.05, plate: [printer.volume[0], printer.volume[1]] as [number, number] };
   const files: Record<string, Uint8Array> = {};
   let single: Uint8Array | undefined;
   let count = 0;
+  const verb = format === 'slc' || cls ? 'Slicing' : 'Exporting';
   for (const i of indices) {
     const { parts, supports } = exportItems(s, i, only);
-    const verb = format === 'slc' || format === 'cls' ? 'Slicing' : 'Exporting';
-    const r = await runJob(`${verb} ${s.builds[i].name}`, 'export', { format, items: [...parts, ...supports], zip: false, options });
-    if (!r) return;
     const dir = which === 'all' ? `${safe(s.builds[i].name)}/` : '';
-    files[`${dir}${buildName(i)}.${format}`] = single = r.bytes;
-    if (!separate) continue;
+    if (!cls) {
+      const r = await runJob(`${verb} ${s.builds[i].name}`, 'export', { format, items: [...parts, ...supports], zip: false, options });
+      if (!r) return;
+      files[`${dir}${buildName(i)}.${format}`] = single = r.bytes;
+      if (!separate) continue;
+    }
     const name = uniqueNames();
-    for (const [k, it] of [...parts, ...supports].entries()) {
-      const f = await runJob(`${verb} ${it.name} (${k + 1}/${parts.length + supports.length})`, 'export', { format, items: [it], zip: false, options });
+    const all = [...parts, ...supports];
+    for (const [k, it] of all.entries()) {
+      const f = await runJob(`${verb} ${it.name} (${k + 1}/${all.length})`, 'export', { format, items: [{ name: it.name, mesh: it.mesh }], zip: false, options });
       if (!f) return;
       files[`${dir}${name(it.name, format)}`] = f.bytes;
       count++;
@@ -1049,7 +1056,8 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
   }
   const where = await writeSaveTarget(target, (zipped ? zipSync(files, { level: 0 }) : single!) as BlobPart);
   const what = which === 'all' ? `${indices.length} builds` : s.builds[which].name;
-  notify('success', `Exported ${what}${separate ? ` and ${count} separate part and support files` : ''} to ${where}`);
+  if (cls) notify('success', `Exported ${what} as ${count} CLS files (each part and each part\u2019s supports apart) to ${where}`);
+  else notify('success', `Exported ${what}${separate ? ` and ${count} separate part and support files` : ''} to ${where}`);
 }
 
 /** Copy a build into the Prep workspace (parts at their build positions) for further editing. */

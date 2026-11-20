@@ -855,7 +855,7 @@ export function BuildsPanel() {
                 SLC
               </button>
               {currentPrinter(g).tech === 'dmls' && (
-                <button className="btn" onClick={() => exportBuilds(g.active, 'cls')} title={`Concept Laser slice file (CLS) every ${g.slcLayer ?? 0.05} mm, supports in their own section`}>
+                <button className="btn" onClick={() => exportBuilds(g.active, 'cls')} title={`Concept Laser slice files (CLS) every ${g.slcLayer ?? 0.05} mm: a zip with one file per part and one per part\u2019s supports`}>
                   CLS
                 </button>
               )}
