@@ -140,6 +140,37 @@ describe('a lifted part always stands on supports', () => {
     expect(meshVolume(inter)).toBeLessThan(off.contacts.length * 0.05);
   }, 60000);
 
+  it('touch points: bar supports (and the bars block supports branch out with) narrow to the touch point Ø at the part', async () => {
+    /** the widest a support gets (from its touch point's centre) in the top 0.05 mm under each contact */
+    const widthAtContacts = (r: { supports: { positions: Float32Array }; contacts: Float32Array }) => {
+      const P = r.supports.positions, C = r.contacts;
+      let worst = 0;
+      for (let k = 0; k < C.length; k += 3) {
+        const [cx, cy, cz] = [C[k], C[k + 1], C[k + 2]];
+        for (let i = 0; i < P.length; i += 3) {
+          const d = Math.hypot(P[i] - cx, P[i + 1] - cy);
+          if (d < 1.5 && P[i + 2] > cz - 0.05 && P[i + 2] < cz + 1) worst = Math.max(worst, d);
+        }
+      }
+      return worst;
+    };
+    const t = await tShape();
+    const bar = { ...SUPPORT_PRESETS.sla, style: 'bar' as const, wall: 0.8, braces: false, raft: false, spacing: 4, spacingY: 4 };
+    const thin = await generateSupports(t, { ...bar, touchDiameter: 0.3, touchLength: 0.6 });
+    const plain = await generateSupports(t, { ...bar, touchDiameter: 0 });
+    expect(isWatertight(thin.supports)).toBe(true);
+    expect(widthAtContacts(plain)).toBeGreaterThan(0.38);
+    expect(widthAtContacts(thin)).toBeLessThan(0.2);
+    expect(thin.supportVolume).toBeLessThan(plain.supportVolume);
+    // block supports not standing on the part: the branch bars get the touch point too
+    const shape = await booleanMeshes('union', boxMesh([0, 0, 0], [30, 30, 4]), [boxMesh([12, 12, 4], [18, 18, 20]), boxMesh([-6, -6, 20], [36, 36, 23])]);
+    const block = { ...SUPPORT_PRESETS.dmls, onPart: false, lowest: false };
+    const fat = await generateSupports(shape, { ...block, touchDiameter: 0 });
+    const fine = await generateSupports(shape, { ...block, touchDiameter: 0.2, touchLength: 0.5 });
+    expect(fine.supportVolume).toBeGreaterThan(0);
+    expect(fine.supportVolume).toBeLessThan(fat.supportVolume);
+  }, 120000);
+
   it('raft types: none, skate, cross grid, hexagonal grid, bottom connected, protection case', async () => {
     const t = await tShape();
     // feet well apart, so the raft shapes differ

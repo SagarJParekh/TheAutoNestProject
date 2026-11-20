@@ -40,6 +40,10 @@ export interface SupportParams {
   wall: number;
   /** tip: contact diameter at the part, mm */
   tipDiameter: number;
+  /** bar (and the branch bars of block supports): diameter of the touch point on the part, mm; 0 = as thick as the bar */
+  touchDiameter: number;
+  /** bar: length of the taper from the bar down to the touch point, mm */
+  touchLength: number;
   /** tip: length of the cone tip, mm */
   tipLength: number;
   /** tip: rod diameter, mm */
@@ -118,6 +122,16 @@ export interface SupportParams {
   perfZone: number;
 }
 
+/** Touch points of bar supports (and of the bars block supports branch out with): a short taper onto the part. */
+export const TOUCH_DEFAULTS = { touchDiameter: 0.3, touchLength: 0.6 };
+
+/** Radius and taper length of a bar's touch point (bar radius `r`, support `len` long). */
+export function touchOf(p: Pick<SupportParams, 'touchDiameter' | 'touchLength'>, r: number, len: number): { rt: number; l: number } {
+  const d = p.touchDiameter ?? 0;
+  if (!(d > 0) || d / 2 >= r - 1e-6) return { rt: r, l: 0 };
+  return { rt: Math.max(0.025, d / 2), l: Math.min(Math.max(0, p.touchLength ?? 0), len * 0.4) };
+}
+
 /** The block support defaults (as in the usual block support profiles); the hatching uses spacing / spacing Y / grid angle. */
 export const BLOCK_DEFAULTS = {
   spot: 0,
@@ -168,17 +182,17 @@ export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
-    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...TOUCH_DEFAULTS, ...BLOCK_DEFAULTS,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
-    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...TOUCH_DEFAULTS, ...BLOCK_DEFAULTS,
   },
   dmls: {
     tech: 'dmls', style: 'block', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
-    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...TOUCH_DEFAULTS, ...BLOCK_DEFAULTS,
   },
 };
 
@@ -609,8 +623,12 @@ function branchSupports(
     const room = c.top - c.bottom;
     if (room < 0.6) continue;
     // the tip, then straight down a little (never as far as the part below)
-    const tipL = tip ? Math.min(p.tipLength, room * 0.35) : 0;
+    // (bars: a taper onto the touch point)
+    const touch = tip ? null : touchOf(p, r, room);
+    let tipL = tip ? Math.min(p.tipLength, room * 0.35) : 0;
     const drop = Math.min(tipL + Math.max(0.5, step * 0.5), room * 0.5);
+    // a bar's taper fits in the drop (the joint stays where it is)
+    if (!tip) tipL = Math.min(touch!.l, drop * 0.8);
     const zc = top - drop;
     let to: [number, number, number] | null = null;
     // the nearest support it can reach at the branch angle
@@ -649,6 +667,7 @@ function branchSupports(
     if (!to) continue;
     // tip, drop and branch
     if (tip) solids.push(M.cylinder(tipL, rb, rt, 16).translate([c.x, c.y, top - tipL]));
+    else if (tipL > 0) solids.push(M.cylinder(tipL, r, touch!.rt, 12).translate([c.x, c.y, top - tipL]));
     solids.push(M.cylinder(top - tipL - zc + 0.02, r, r, 12).translate([c.x, c.y, zc - 0.01]));
     solids.push(M.sphere(r, 12).translate([c.x, c.y, zc]));
     solids.push(rodBetween(M, [c.x, c.y, zc], to, r));
@@ -1185,7 +1204,16 @@ async function buildSupports(
     } else if (p.style === 'bar') {
       const r = Math.max(0.1, p.wall / 2);
       for (const c of cols) {
-        pin(c, r);
+        const top = c.top + pen, base = c.onPart ? c.bottom - pen : 0;
+        const len = top - base;
+        if (len < 0.2) continue;
+        // a taper onto the part at the top (and onto the part below, where it stands on it)
+        const { rt, l } = touchOf(p, r, len);
+        const lb = c.onPart ? l : 0;
+        if (l > 0) solids.push(M.cylinder(l, r, rt, 12).translate([c.x, c.y, top - l]));
+        if (lb > 0) solids.push(M.cylinder(lb, rt, r, 12).translate([c.x, c.y, base]));
+        solids.push(M.cylinder(len - l - lb + (l > 0 ? 0.02 : 0) + (lb > 0 ? 0.02 : 0), r, r, 12).translate([c.x, c.y, base + lb - (lb > 0 ? 0.01 : 0)]));
+        made.push(c);
         if (!c.onPart) feet.push([c.x, c.y]);
       }
     } else if (p.style === 'block') {

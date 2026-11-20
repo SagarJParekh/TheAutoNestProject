@@ -3,7 +3,7 @@ import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
 import { supportTotals } from '../../state/buildSupports';
-import { RAFT_TYPES, SUPPORT_PRESETS, type RaftType, type SupportParams, type SupportShape, type SupportTech } from '../../geometry/supports';
+import { RAFT_TYPES, SUPPORT_PRESETS, TOUCH_DEFAULTS, type RaftType, type SupportParams, type SupportShape, type SupportTech } from '../../geometry/supports';
 
 const setSup = (patch: Partial<SupportParams>) => {
   const s = getState().settings;
@@ -100,6 +100,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           <>
             {st.style === 'volume' && mm('Wall thickness', 'wall', 'Thickness of the support walls', 0.05, 0.05)}
             {st.style === 'bar' && mm('Bar diameter', 'wall', 'Diameter of the pins', 0.1, 0.1)}
+            {st.style === 'bar' && <TouchPointRows st={st} />}
             <Row label={st.penetration >= 0 ? 'Penetration' : 'Gap to part'}>
               <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the supports reach into the part (negative: a gap left below it)" onChange={(penetration) => setSup({ penetration })} />
             </Row>
@@ -155,6 +156,12 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               onChange={(v) => setSup({ branchAngle: Math.max(20, Math.min(80, v)) })}
             />
           </Row>
+        )}
+        {!st.onPart && st.style === 'block' && (
+          <>
+            <Hint>Where a block wall would stand on the part, a bar branches out instead: its touch point on the part is set here.</Hint>
+            <TouchPointRows st={st} />
+          </>
         )}
         {resin && st.style !== 'block' && (
           <>
@@ -556,6 +563,34 @@ function SupportHandEdits() {
           {sel.length ? 'Reset selected' : 'Reset all'}
         </button>
       </div>
+    </>
+  );
+}
+
+/** Touch point of bar supports (and of the bars block supports branch out with): its diameter on the part and the taper onto it. */
+function TouchPointRows({ st }: { st: SupportParams }) {
+  return (
+    <>
+      <Row label="Touch point Ø">
+        <NumberField
+          value={st.touchDiameter ?? TOUCH_DEFAULTS.touchDiameter}
+          min={0}
+          step={0.05}
+          suffix="mm"
+          title="Diameter where the bar touches the part (a small touch point breaks off cleanly and leaves a small mark); 0 = as thick as the bar"
+          onChange={(v) => setSup({ touchDiameter: Math.max(0, v) })}
+        />
+      </Row>
+      <Row label="Touch point length">
+        <NumberField
+          value={st.touchLength ?? TOUCH_DEFAULTS.touchLength}
+          min={0}
+          step={0.1}
+          suffix="mm"
+          title="Length of the taper from the bar down to the touch point"
+          onChange={(v) => setSup({ touchLength: Math.max(0, v) })}
+        />
+      </Row>
     </>
   );
 }

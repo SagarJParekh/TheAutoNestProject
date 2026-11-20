@@ -856,7 +856,7 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
 
 /**
  * Colours of a copy's supports and raft, never like the part's own colour:
- * blue (no colour of the part palette is blue), or amber under a blue part.
+ * light blue #86c3ea (no colour of the part palette is blue), or amber under a blue part.
  */
 export function supportColors(partColor: string): { supports: string; raft: string } {
   const m = /^#?([0-9a-f]{6})$/i.exec(partColor.trim());
@@ -869,7 +869,7 @@ export function supportColors(partColor: string): { supports: string; raft: stri
     // a blue part (a colour picked by hand, or from an older project): its supports in amber, so the two never match
     if (d >= 0.18 && hue >= 180 && hue <= 250) return { supports: '#f0b429', raft: '#a87a14' };
   }
-  return { supports: '#2f80ed', raft: '#1b4f99' };
+  return { supports: '#86c3ea', raft: '#4f8fb8' };
 }
 
 /** The height a copy is shown at: on supports the supports stand on the platform and the part sits the lift above it, whatever height the copy had. */
