@@ -43,13 +43,23 @@ class WorkerPool {
 
   private create(): PooledWorker {
     const pw: PooledWorker = { worker: spawn(), busy: 0 };
-    pw.worker.onmessage = (ev) => this.onMessage(ev.data);
+    let answered = false;
+    pw.worker.onmessage = (ev) => {
+      answered = true;
+      this.onMessage(ev.data);
+    };
     pw.worker.onerror = (ev) => {
+      // a worker that never answered could not even load its code: usually a tab older than the version online
+      const startup = !answered && !ev.message;
+      if (startup) void import('../state/updateCheck').then((m) => m.handleMissingCode());
+      const why = startup
+        ? 'The geometry worker could not be loaded (the app was probably updated since this tab was opened): reload the page'
+        : ev.message || 'Worker crashed';
       // fail all jobs on this worker
       for (const [id, p] of this.pending) {
         if (p.worker === pw) {
           this.pending.delete(id);
-          p.reject(new Error(ev.message || 'Worker crashed'));
+          p.reject(new Error(why));
         }
       }
       this.replace(pw);
@@ -84,7 +94,12 @@ class WorkerPool {
     this.pending.delete(msg.id);
     p.worker.busy--;
     if (msg.type === 'done') p.resolve(msg.result);
-    else p.reject(new Error(msg.message));
+    else {
+      // code loaded on demand (a file format reader, the geometry engine) missing: the app was updated since this tab opened
+      const missing = /dynamically imported module|Importing a module script failed|error loading dynamically|Failed to fetch|wasm.*(404|not found)|expected magic word/i.test(msg.message ?? '');
+      if (missing) void import('../state/updateCheck').then((m) => m.handleMissingCode());
+      p.reject(new Error(missing ? `${msg.message} — the app was probably updated since this tab was opened: reload the page` : msg.message));
+    }
     if (msg.fatal) {
       // the worker's geometry engine is broken: its other jobs fail too, and it is replaced
       for (const [oid, o] of this.pending)

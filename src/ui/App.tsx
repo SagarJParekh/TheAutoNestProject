@@ -103,6 +103,7 @@ export function App() {
       onDrop={onDrop}
     >
       <Toolbar />
+      <UpdateBanner />
       {workspace === 'build' ? <BuildSetupPanel /> : <PartsPanel />}
       <main className="center">
         {/* triangle marking, usable with every function (Mesh prep) */}
@@ -136,6 +137,30 @@ export function App() {
             <span>Everything is processed locally in your browser — nothing is uploaded.</span>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** A newer version of the app is online: reload when convenient (or now, when something failed to load). */
+function UpdateBanner() {
+  const update = useStore((s) => s.updateAvailable);
+  if (!update) return null;
+  return (
+    <div className={`update-banner ${update}`} role="alert">
+      <span>
+        {update === 'required'
+          ? 'AutoNest was updated since this page was opened, and this page can no longer load what it needs (e.g. to import files). Reload to use the new version.'
+          : 'A new version of AutoNest is available.'}{' '}
+        <span className="muted">Your Build generation session is kept; export or save Mesh prep work you need first.</span>
+      </span>
+      <button className="btn primary" onClick={() => location.reload()}>
+        Reload now
+      </button>
+      {update === 'available' && (
+        <button className="btn" onClick={() => setState({ updateAvailable: null })}>
+          Later
+        </button>
       )}
     </div>
   );

@@ -116,6 +116,8 @@ export interface AppState {
   /** Build generation: the tab open in the left and right panels */
   buildLeftTab: 'parts' | 'printer' | 'nesting';
   buildRightTab: 'builds' | 'parts' | 'supports' | 'edit';
+  /** a newer version of the app is online: 'available' (reload when convenient) or 'required' (something failed to load) */
+  updateAvailable: 'available' | 'required' | null;
   /** Build generation: the platform (plate and grid) hidden in the view */
   buildHidePlatform: boolean;
   /** side panels collapsed to a thin bar */
@@ -222,6 +224,7 @@ export const useStore = create<AppState>(() => ({
   supportPending: 0,
   supportEdit: null,
   buildHidePlatform: false,
+  updateAvailable: null,
   buildLeftTab: 'parts',
   buildRightTab: 'builds',
   panelsCollapsed: (() => {
