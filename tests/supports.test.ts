@@ -111,7 +111,11 @@ describe('a lifted part always stands on supports', () => {
 
   it('DMLS: a block added by hand is a patch of walls with one touch point', async () => {
     const t = await tShape();
-    const p = { ...SUPPORT_PRESETS.dmls, auto: false, spacing: 1.5, spacingY: 1.5 };
+    const p = { ...SUPPORT_PRESETS.dmls, style: 'volume' as const, auto: false, spacing: 1.5, spacingY: 1.5 };
+    // block style: the same hand-made patch as one-spot walls (closed, one touch point)
+    const blk = await generateSupports(t, { ...p, style: 'block' }, [], { add: [[6, 6, 20]], remove: [] });
+    expect(blk.contacts.length).toBe(3);
+    expect(isWatertight(blk.supports)).toBe(true);
     const r = await generateSupports(t, p, [], { add: [[6, 6, 20]], remove: [] });
     expect(r.contacts.length).toBe(3);
     expect(r.manual[0]).toBe(0);
@@ -188,4 +192,37 @@ describe('a lifted part always stands on supports', () => {
     expect(await raftVol({ raftType: 'case', caseHeight: 8 })).toBeGreaterThan(await raftVol({ raftType: 'case', caseHeight: 2 }));
     expect(await raftVol({ raftType: 'solid', raftThickness: 2 })).toBeGreaterThan(await raftVol({ raftType: 'solid', raftThickness: 1 }));
   }, 120000);
+
+  it('block supports: walls one spot thick along the hatching, teeth, fragmentation, perforations, border', async () => {
+    const t = await tShape();
+    const base = { ...SUPPORT_PRESETS.dmls, style: 'block' as const, spot: 0.1, spacing: 1.5, spacingY: 1.5, raft: false };
+    const vol = async (patch: Partial<typeof base>) => {
+      const r = await generateSupports(t, { ...base, ...patch });
+      expect(isWatertight(r.supports)).toBe(true);
+      // standing on the platform, reaching the underside of the plate (lifted) plus the penetration
+      const b = computeBounds(r.supports.positions);
+      expect(b.min[2]).toBeCloseTo(0, 3);
+      expect(b.max[2]).toBeLessThan(base.lift + 20 + base.penetration + 0.01);
+      return r;
+    };
+    const plain = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: false });
+    // walls only: their volume is about spot × total wall area (thin)
+    expect(plain.count).toBeGreaterThan(20);
+    const thick = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: false, spot: 0.2 });
+    expect(thick.supportVolume / plain.supportVolume).toBeGreaterThan(1.9);
+    expect(thick.supportVolume / plain.supportVolume).toBeLessThan(2.1);
+    // teeth: less material at the top (gaps between the teeth, narrow tips)
+    const teeth = await vol({ teeth: true, fragment: false, perforate: false, blockBorder: false });
+    expect(teeth.supportVolume).toBeLessThan(plain.supportVolume);
+    // fragmentation: gaps across the walls, so more pieces and less material
+    const frag = await vol({ teeth: false, fragment: true, fragX: 4, fragY: 4, fragWidth: 1, perforate: false, blockBorder: false });
+    expect(frag.count).toBeGreaterThan(plain.count);
+    expect(frag.supportVolume).toBeLessThan(plain.supportVolume);
+    // perforations: holes, less material
+    const perf = await vol({ teeth: false, fragment: false, perforate: true, blockBorder: false });
+    expect(perf.supportVolume).toBeLessThan(plain.supportVolume * 0.85);
+    // border: one more wall round each area
+    const border = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: true });
+    expect(border.supportVolume).toBeGreaterThan(plain.supportVolume);
+  }, 240000);
 });

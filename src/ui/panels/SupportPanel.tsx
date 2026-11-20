@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { printerById, spotSizeOf } from '../../state/printers';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
@@ -41,6 +42,8 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
     </Row>
   );
   const resin = tech !== 'dmls';
+  const printerSpot = spotSizeOf(printerById(g.printerId));
+  const spotText = `${st.spot > 0 ? st.spot : printerSpot} mm`;
   const targets = mode === 'selected' ? sel : undefined;
   const apply = () => {
     if (mode === 'selected' && !sel.length) return;
@@ -69,6 +72,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               options={[
                 { value: 'tip', label: 'Cone tip', title: 'A cone tip touching the part on a rod, a foot on the platform / raft' },
                 { value: 'bar', label: 'Plain bar', title: 'Plain pins' },
+                { value: 'block', label: 'Block', title: 'Thin walls along a hatching, one laser spot thick (traced as single paths), with teeth, fragmentation and perforations' },
               ]}
             />
           </Row>
@@ -81,6 +85,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               options={[
                 { value: 'volume', label: 'Volume', title: 'A grid of thin walls under each area (block support)' },
                 { value: 'bar', label: 'Bar', title: 'Pins at every grid point' },
+                { value: 'block', label: 'Block', title: 'Thin walls along a hatching, one laser spot thick (traced as single paths), with teeth, fragmentation and perforations' },
               ]}
             />
           </Row>
@@ -89,6 +94,11 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           <>
             <SupportDiagram st={st} />
           </>
+        ) : st.style === 'block' ? (
+          <Hint>
+            Block supports: walls along a hatching under every overhang area, each one laser spot ({spotText}) thick, so the printer traces it as a
+            single path. Set them up in the Block walls, Teeth, Fragmentation and Perforations tabs.
+          </Hint>
         ) : (
           <>
             {st.style === 'volume' && mm('Wall thickness', 'wall', 'Thickness of the support walls', 0.05, 0.05)}
@@ -99,6 +109,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           </>
         )}
       </Section>
+      {st.style === 'block' && <BlockSections st={st} printerSpot={printerSpot} />}
       <Section title="Placement">
         <Check checked={st.auto} onChange={(auto) => setSup({ auto })}>
           Automatic supports (from the overhang analysis)
@@ -110,7 +121,8 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           <NumberField value={st.minArea} min={0} step={0.1} suffix="mm²" title="Overhang areas smaller than this are left without supports" onChange={(minArea) => setSup({ minArea: Math.max(0, minArea) })} />
         </Row>
         {mm('Distance from platform', 'lift', 'The part is lifted this far above the platform; the supports fill the gap', 0.5)}
-        {mm('Spacing X', 'spacing', 'Distance between neighbouring walls / supports along the grid', 0.25, 0.2)}
+        {st.style !== 'block' && mm('Spacing X', 'spacing', 'Distance between neighbouring walls / supports along the grid', 0.25, 0.2)}
+        {st.style !== 'block' && (
         <Row label="Spacing Y">
           <NumberField
             value={st.spacingY > 0 ? st.spacingY : st.spacing}
@@ -121,10 +133,13 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
             onChange={(v) => setSup({ spacingY: Math.max(0.2, v) })}
           />
         </Row>
+        )}
+        {st.style !== 'block' && (
         <Row label="Grid angle">
           <NumberField value={st.gridAngle} min={-90} max={90} step={5} suffix="°" title="Turn of the support grid about the vertical axis" onChange={(v) => setSup({ gridAngle: Math.max(-90, Math.min(90, v)) })} />
         </Row>
-        {resin && mm('Outline spacing', 'perimeter', 'Extra supports along the outline of every overhang area, this far apart (0 = none)', 0.25, 0)}
+        )}
+        {resin && st.style !== 'block' && mm('Outline spacing', 'perimeter', 'Extra supports along the outline of every overhang area, this far apart (0 = none)', 0.25, 0)}
         <Check checked={st.lowest} onChange={(lowest) => setSup({ lowest })}>
           Support the lowest surfaces too (a lifted part that overhangs nowhere)
         </Check>
@@ -144,7 +159,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
             />
           </Row>
         )}
-        {resin && (
+        {resin && st.style !== 'block' && (
           <>
             <Check checked={st.braces} onChange={(braces) => setSup({ braces })}>
               Cross braces between tall supports
@@ -153,7 +168,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           </>
         )}
       </Section>
-      {resin && (
+      {resin && st.style !== 'block' && (
         <Section title="Raft setting">
           <label className="switch-row" title="A raft under the supports, holding them together on the platform">
             <span>Automatically add raft</span>
@@ -209,6 +224,133 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         </Hint>
       </Section>
     </>
+  );
+}
+
+/**
+ * Block support settings, as tabs: the walls (thickness = the laser spot,
+ * hatching, offsets, border), the teeth on them, fragmentation and
+ * perforations.
+ */
+function BlockSections({ st, printerSpot }: { st: SupportParams; printerSpot: number }) {
+  const f = (label: string, key: keyof SupportParams, title: string, opts: { step?: number; min?: number; max?: number; suffix?: string } = {}) => (
+    <Row label={label}>
+      <NumberField
+        value={st[key] as number}
+        min={opts.min ?? 0}
+        max={opts.max}
+        step={opts.step ?? 0.1}
+        suffix={opts.suffix ?? 'mm'}
+        title={title}
+        onChange={(v) => setSup({ [key]: Math.max(opts.min ?? 0, opts.max !== undefined ? Math.min(opts.max, v) : v) })}
+      />
+    </Row>
+  );
+  const check = (label: string, key: keyof SupportParams, title: string) => (
+    <label className="switch-row" title={title}>
+      <span>{label}</span>
+      <input type="checkbox" className="switch" checked={!!st[key]} onChange={(e) => setSup({ [key]: e.target.checked })} />
+    </label>
+  );
+  return (
+    <>
+      <Section title="Block walls">
+        <Row label="Wall thickness">
+          <NumberField
+            value={st.spot > 0 ? st.spot : printerSpot}
+            min={0.01}
+            step={0.01}
+            precision={3}
+            suffix="mm"
+            title="The laser spot (or pixel) size of the printer: each wall is one path of the laser"
+            onChange={(v) => setSup({ spot: Math.abs(v - printerSpot) < 1e-6 ? 0 : Math.max(0.01, v) })}
+          />
+          {st.spot > 0 ? (
+            <button className="mini" onClick={() => setSup({ spot: 0 })} title={`Back to the printer's spot size (${printerSpot} mm)`}>
+              Printer
+            </button>
+          ) : (
+            <span className="muted small">laser spot</span>
+          )}
+        </Row>
+        {f('X hatching', 'spacing', 'Distance between the walls in the first direction', { step: 0.1, min: 0.2 })}
+        <Row label="Y hatching">
+          <NumberField
+            value={st.spacingY > 0 ? st.spacingY : st.spacing}
+            min={0.2}
+            step={0.1}
+            suffix="mm"
+            title="Distance between the walls in the second direction"
+            onChange={(v) => setSup({ spacingY: Math.max(0.2, v) })}
+          />
+        </Row>
+        {f('Rotation angle', 'gridAngle', 'Turn of the hatching about the vertical axis', { step: 1, min: -90, max: 90, suffix: '°' })}
+        {f('XY offset', 'blockInset', 'The walls stay this far inside the outline of each area')}
+        <Row label="Z offset (into the part)">
+          <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the walls reach into the part above (and below) them" onChange={(penetration) => setSup({ penetration })} />
+        </Row>
+        {check('Border wall', 'blockBorder', 'A wall along the outline of each area')}
+      </Section>
+      <Section title="Teeth">
+        {check('Upper teeth', 'teeth', 'Teeth on top of the walls: small contacts that break off easily and leave little marks')}
+        {st.teeth && (
+          <>
+            <TeethDrawing />
+            {f('Height (a)', 'teethHeight', 'Height of the teeth')}
+            {f('Top length (b)', 'teethTop', 'Length of each tooth where it touches the part', { step: 0.05 })}
+            {f('Base length (c)', 'teethBase', 'Length of each tooth at its base', { step: 0.05 })}
+            {f('Base interval (d)', 'teethGap', 'Gap between the bases of neighbouring teeth', { step: 0.05 })}
+            {check('Lower teeth', 'lowerTeeth', 'The same teeth, upside down, where a wall stands on the part below')}
+          </>
+        )}
+      </Section>
+      <Section title="Fragmentation">
+        {check('Fragment the walls', 'fragment', 'Cut gaps across the walls at regular intervals: smaller pieces, easier to remove')}
+        {st.fragment && (
+          <>
+            {f('X interval', 'fragX', 'Distance between the gaps along the walls of the first direction', { step: 0.2, min: 0.5 })}
+            {f('Y interval', 'fragY', 'Distance between the gaps along the walls of the second direction', { step: 0.2, min: 0.5 })}
+            {f('Separation width', 'fragWidth', 'Width of each gap', { step: 0.1 })}
+          </>
+        )}
+      </Section>
+      <Section title="Perforations">
+        {check('Perforate the walls', 'perforate', 'Diamond holes through the walls: less material, faster to print, powder / resin drains out')}
+        {st.perforate && (
+          <>
+            {f('Beam (a)', 'perfBeam', 'Width of the material between the holes', { step: 0.05 })}
+            {f('Angle (b)', 'perfAngle', 'Angle of the diamond sides (from horizontal)', { step: 1, min: 15, max: 80, suffix: '°' })}
+            {f('Height (c)', 'perfHeight', 'Height of each hole', { step: 0.05 })}
+            {f('Solid height (d)', 'perfSolid', 'Solid band without holes at the top and bottom of the walls')}
+            {f('Non-perforated zone', 'perfZone', 'Solid zone at the ends of each wall piece')}
+          </>
+        )}
+      </Section>
+    </>
+  );
+}
+
+/** The teeth on a wall with their sizes a–d. */
+function TeethDrawing() {
+  const fill = '#e8b923';
+  return (
+    <svg className="raft-preview" viewBox="0 0 280 92" width="280" height="92" aria-hidden>
+      <rect x="10" y="58" width="260" height="30" fill={fill} opacity="0.9" />
+      {[0, 1, 2, 3, 4].map((k) => {
+        const x = 22 + k * 50;
+        return <polygon key={k} points={`${x},58 ${x + 40},58 ${x + 27},14 ${x + 13},14`} fill={fill} />;
+      })}
+      <g stroke="var(--muted)" strokeWidth="1" fontSize="11" fill="var(--muted)">
+        <line x1="128" y1="14" x2="128" y2="58" />
+        <text x="132" y="40" stroke="none">a</text>
+        <line x1="85" y1="8" x2="99" y2="8" />
+        <text x="88" y="7" stroke="none" dy="-2">b</text>
+        <line x1="72" y1="64" x2="112" y2="64" />
+        <text x="88" y="78" stroke="none">c</text>
+        <line x1="112" y1="52" x2="122" y2="52" />
+        <text x="113" y="49" stroke="none">d</text>
+      </g>
+    </svg>
   );
 }
 

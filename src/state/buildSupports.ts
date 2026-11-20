@@ -9,7 +9,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { applyMatrix, SUPPORT_PRESETS, type MeshData, type SupportParams, type Vec3 } from '../geometry';
 import { getState, setState, useStore } from './store';
-import { printerById } from './printers';
+import { printerById, spotSizeOf } from './printers';
 import { pool, CancelledError } from '../workers/client';
 import type { BuildGenState, BuildPart } from './types';
 
@@ -48,7 +48,10 @@ export function supportParams(g: BuildGenState = getState().buildGen): SupportPa
   // settings from older sessions lack the newer variables (the standard values fill them in), or carry the old small-pillar choice (dropped)
   delete st.kind;
   delete st.pillar;
-  return { ...SUPPORT_PRESETS[tech], ...st, tech };
+  const out = { ...SUPPORT_PRESETS[tech], ...st, tech };
+  // block supports: walls one laser spot (or pixel) thick, from the printer unless set by hand
+  if (!(out.spot > 0)) out.spot = spotSizeOf(printerById(g.printerId));
+  return out;
 }
 
 const qKey = (q: readonly number[]) => q.map((v) => Math.round(v * 1e4)).join(',');

@@ -23,7 +23,7 @@ import { buildTopology } from './topology';
 import { fromManifold, getManifold } from './manifold';
 
 export type SupportTech = 'sla' | 'dlp' | 'dmls';
-export type SupportStyle = 'volume' | 'bar' | 'tip';
+export type SupportStyle = 'volume' | 'bar' | 'tip' | 'block';
 
 export interface SupportParams {
   tech: SupportTech;
@@ -86,7 +86,60 @@ export interface SupportParams {
   raftBar: number;
   /** skate / cross grid: diameter of the pad under each foot, mm; 0 = the foot's diameter */
   raftPad: number;
+  /**
+   * block supports: thickness of the walls, mm: the printer's laser spot size
+   * (or pixel size), so each wall is one path of the laser (filled in from the
+   * printer when 0)
+   */
+  spot: number;
+  /** block: walls kept this far inside the outline of each area (XY offset), mm */
+  blockInset: number;
+  /** block: a wall along the outline of each area */
+  blockBorder: boolean;
+  /** block: teeth on top of the walls (small contacts, easy to break off): height, top length, base length, gap between teeth bases, mm */
+  teeth: boolean;
+  teethHeight: number;
+  teethTop: number;
+  teethBase: number;
+  teethGap: number;
+  /** block: the same teeth at the bottom where a wall stands on the part */
+  lowerTeeth: boolean;
+  /** block: walls cut into pieces (easier removal): interval along X / Y hatching, gap width, mm */
+  fragment: boolean;
+  fragX: number;
+  fragY: number;
+  fragWidth: number;
+  /** block: diamond holes in the walls (less material, powder / resin drains): beam between holes, side angle, hole height, solid band at top and bottom, solid zone at the wall ends */
+  perforate: boolean;
+  perfBeam: number;
+  perfAngle: number;
+  perfHeight: number;
+  perfSolid: number;
+  perfZone: number;
 }
+
+/** The block support defaults (as in the usual block support profiles); the hatching uses spacing / spacing Y / grid angle. */
+export const BLOCK_DEFAULTS = {
+  spot: 0,
+  blockInset: 0.5,
+  blockBorder: true,
+  teeth: true,
+  teethHeight: 1.2,
+  teethTop: 0.3,
+  teethBase: 0.6,
+  teethGap: 0.1,
+  lowerTeeth: true,
+  fragment: true,
+  fragX: 4.8,
+  fragY: 4.8,
+  fragWidth: 1.2,
+  perforate: false,
+  perfBeam: 0.5,
+  perfAngle: 50,
+  perfHeight: 0.6,
+  perfSolid: 1,
+  perfZone: 0,
+};
 
 /** Raft shapes: none, rails (skate), a grid of bars, a plate with hexagonal holes, a solid plate, a solid plate walled round (protection case). */
 export type RaftType = 'none' | 'skate' | 'cross' | 'hex' | 'solid' | 'case';
@@ -115,17 +168,17 @@ export const SUPPORT_PRESETS: Record<SupportTech, SupportParams> = {
   sla: {
     tech: 'sla', style: 'tip', criticalAngle: 40, minArea: 0.5, lift: 5, spacing: 2.5, wall: 0.4, tipDiameter: 0.4, tipLength: 1.5,
     bodyDiameter: 1.0, baseDiameter: 2.5, penetration: 0.2, onPart: true, raft: true, raftThickness: 1,
-    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
+    spacingY: 2.5, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
   },
   dlp: {
     tech: 'dlp', style: 'tip', criticalAngle: 40, minArea: 0.3, lift: 5, spacing: 2, wall: 0.4, tipDiameter: 0.35, tipLength: 1.2,
     bodyDiameter: 0.8, baseDiameter: 2, penetration: 0.15, onPart: true, raft: true, raftThickness: 0.8,
-    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
+    spacingY: 2, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 1, braces: true, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'solid', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
   },
   dmls: {
-    tech: 'dmls', style: 'volume', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
+    tech: 'dmls', style: 'block', criticalAngle: 45, minArea: 0.1, lift: 3, spacing: 1, wall: 0.3, tipDiameter: 0.4, tipLength: 1,
     bodyDiameter: 1, baseDiameter: 1, penetration: 0.1, onPart: true, raft: false, raftThickness: 0,
-    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0,
+    spacingY: 1, gridAngle: 0, perimeter: 0, auto: true, lowest: true, raftMargin: 0, braces: false, braceHeight: 10, branchAngle: 45, footHeight: 1, bottomDiameter: 0.5, raftType: 'none', caseHeight: 0, raftHole: 0, raftRib: 0, raftBar: 0, raftPad: 0, ...BLOCK_DEFAULTS,
   },
 };
 
@@ -692,6 +745,279 @@ function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, n
   }
 }
 
+/**
+ * Block supports: thin walls along the hatching (two directions of the
+ * support grid, turned by the grid angle) under each overhang area, plus a
+ * wall along each area's outline. Every wall is one laser spot thick (`spot`),
+ * so the printer traces it as a single path. On top the walls end in teeth
+ * (small contacts that break off easily), and where they stand on the part
+ * below in the same teeth upside down; walls can be cut into pieces
+ * (fragmentation) and pierced with diamond holes (perforations).
+ */
+function blockSupports(
+  w: Awaited<ReturnType<typeof getManifold>>,
+  mesh: MeshData,
+  bvh: MeshBVH,
+  areas: OverhangArea[],
+  cols: Column[],
+  p: SupportParams,
+  g: Grid,
+  solids: Manifold[],
+  made: Column[],
+) {
+  const t = Math.max(0.02, p.spot > 0 ? p.spot : 0.1);
+  const pen = p.penetration;
+  const turn = (Math.atan2(g.sin, g.cos) * 180) / Math.PI;
+  const areaOf = new Int32Array(triangleCount(mesh)).fill(-1);
+  areas.forEach((a, i) => a.tris.forEach((tr) => (areaOf[tr] = i)));
+  // the hatching stays the XY offset inside each area's outline: grid points too close to it are dropped
+  const inset = Math.max(0, p.blockInset);
+  const inside = (c: Column) => {
+    if (inset <= 0 || c.area < 0) return true;
+    for (const [dx, dy] of [[inset, 0], [-inset, 0], [0, inset], [0, -inset]]) {
+      const hit = hitsAt(bvh, c.x + dx, c.y + dy).find((h) => (h.faceIndex ?? -1) >= 0 && areaOf[h.faceIndex!] === c.area && Math.abs(h.point.z - c.top) < 3 * inset + 1);
+      if (!hit) return false;
+    }
+    return true;
+  };
+  const grid = cols.filter((c) => Number.isFinite(c.gi) && inside(c));
+  // anything off the grid (a single support for a small area, hand-made ones) still gets a short cross of walls
+  const loose = cols.filter((c) => !Number.isFinite(c.gi));
+
+  /** A wall piece in (s, z) from s0 to s1 along a line: bottom and top heights by interpolation; teeth and holes. */
+  const piece = (s0: number, s1: number, bot: (s: number) => number, top: (s: number) => number, onPart: (s: number) => boolean, samples: number[]): [number, number][][] | null => {
+    if (s1 - s0 < Math.max(t, 0.15)) return null;
+    const inner = samples.filter((s) => s > s0 + 1e-6 && s < s1 - 1e-6);
+    const at = [s0, ...inner, s1];
+    // the wall must be taller than its teeth to carry them
+    const tall = (h: number) => at.every((s) => top(s) - bot(s) > h + 0.3);
+    const upper = p.teeth && p.teethHeight > 0 && tall(p.teethHeight * (p.lowerTeeth ? 2 : 1));
+    const lower = upper && p.lowerTeeth && at.some((s) => onPart(s));
+    const th = p.teethHeight, base = Math.max(t, p.teethBase), tip = Math.min(base, Math.max(t, p.teethTop)), gap = Math.max(0, p.teethGap);
+    const teethAlong = (): number[] => {
+      const pitch = base + gap, len = s1 - s0;
+      const n = Math.max(1, Math.floor((len + gap) / pitch));
+      const off = (len - (n * pitch - gap)) / 2;
+      return Array.from({ length: n }, (_, k) => s0 + off + k * pitch);
+    };
+    const pts: [number, number][] = [];
+    // bottom, left to right
+    if (lower) {
+      const bodyBot = (s: number) => bot(s) + (onPart(s) ? th : 0);
+      pts.push([s0, bodyBot(s0)]);
+      for (const a of teethAlong()) {
+        const m = a + base / 2;
+        if (!onPart(m)) continue;
+        pts.push([a, bodyBot(a)], [a + (base - tip) / 2, bot(m)], [a + (base + tip) / 2, bot(m)], [a + base, bodyBot(a + base)]);
+      }
+      pts.push([s1, bodyBot(s1)]);
+    } else for (const s of at) pts.push([s, bot(s)]);
+    // top, right to left
+    if (upper) {
+      const bodyTop = (s: number) => top(s) - th;
+      pts.push([s1, bodyTop(s1)]);
+      for (const a of teethAlong().reverse()) {
+        const m = a + base / 2;
+        pts.push([a + base, bodyTop(a + base)], [a + (base + tip) / 2, top(m)], [a + (base - tip) / 2, top(m)], [a, bodyTop(a)]);
+      }
+      pts.push([s0, bodyTop(s0)]);
+    } else for (const s of [...at].reverse()) pts.push([s, top(s)]);
+    const contours: [number, number][][] = [pts];
+    if (p.perforate && p.perfHeight > 0) {
+      // diamond holes in staggered rows, a solid band above and below and a solid zone at the ends
+      const hh = p.perfHeight / 2;
+      const hw = hh / Math.tan((Math.max(15, Math.min(80, p.perfAngle)) * Math.PI) / 180);
+      const beam = Math.max(t, p.perfBeam);
+      const ps = 2 * hw + beam, pz = hh + beam / 2;
+      const lo = s0 + Math.max(0, p.perfZone) + hw, hi = s1 - Math.max(0, p.perfZone) - hw;
+      const solid = Math.max(0, p.perfSolid);
+      const bodyTop = (s: number) => top(s) - (upper ? th : 0);
+      const bodyBot = (s: number) => bot(s) + (lower && onPart(s) ? th : 0);
+      let zMin = Infinity, zMax = -Infinity;
+      for (const s of at) (zMin = Math.min(zMin, bodyBot(s))), (zMax = Math.max(zMax, bodyTop(s)));
+      let holes = 0;
+      for (let row = 0, z = zMin + solid + hh; z <= zMax - solid - hh && holes < 4000; row++, z += pz)
+        for (let s = lo + (row % 2 ? ps / 2 : 0); s <= hi && holes < 4000; s += ps) {
+          // the whole diamond inside the solid bands at its place
+          if (z - hh < Math.max(bodyBot(s - hw), bodyBot(s), bodyBot(s + hw)) + solid) continue;
+          if (z + hh > Math.min(bodyTop(s - hw), bodyTop(s), bodyTop(s + hw)) - solid) continue;
+          // clockwise (holes run the other way round)
+          contours.push([[s, z + hh], [s + hw, z], [s, z - hh], [s - hw, z]]);
+          holes++;
+        }
+    }
+    return contours;
+  };
+  /** Extrude a wall outline (in s along the line, z up) one spot thick and stand it in place. */
+  const place = (contours: [number, number][][], dir: 0 | 1, at: number) => {
+    const cs = new w.CrossSection(contours, 'EvenOdd');
+    if (cs.isEmpty()) return cs.delete();
+    let sol = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
+    if (dir === 0) sol = sol.translate([0, at, 0]);
+    else sol = sol.rotate([0, 0, 90]).translate([at, 0, 0]);
+    if (turn !== 0) sol = sol.rotate([0, 0, turn]);
+    cs.delete();
+    solids.push(sol);
+  };
+  const lerp = (xs: number[], ys: number[]) => (s: number) => {
+    if (s <= xs[0]) return ys[0];
+    for (let i = 1; i < xs.length; i++) if (s <= xs[i]) return ys[i - 1] + ((ys[i] - ys[i - 1]) * (s - xs[i - 1])) / (xs[i] - xs[i - 1] || 1);
+    return ys[ys.length - 1];
+  };
+
+  // ---- hatching walls, in both directions
+  for (const dir of [0, 1] as const) {
+    const lines = new Map<string, Column[]>();
+    for (const c of grid) {
+      const k = `${c.area}:${dir === 0 ? c.gj : c.gi}`;
+      const l = lines.get(k);
+      if (l) l.push(c);
+      else lines.set(k, [c]);
+    }
+    const along = (c: Column) => (dir === 0 ? c.u : c.v);
+    const index = (c: Column) => (dir === 0 ? c.gi : c.gj);
+    const step = dir === 0 ? g.su : g.sv;
+    const interval = dir === 0 ? p.fragX : p.fragY;
+    for (const line of lines.values()) {
+      line.sort((a, b) => index(a) - index(b));
+      const runs: Column[][] = [];
+      for (const c of line) {
+        const r = runs[runs.length - 1];
+        const last = r?.[r.length - 1];
+        if (last && index(c) - index(last) === 1 && Math.abs(c.top - last.top) < step * 3 && last.onPart === c.onPart) r.push(c);
+        else runs.push([c]);
+      }
+      for (const run of runs) {
+        if (run.length < 2) continue;
+        const xs = run.map(along);
+        const top = lerp(xs, run.map((c) => c.top + pen));
+        const bot = lerp(xs, run.map((c) => (c.onPart ? c.bottom - pen : 0)));
+        const onPart = () => run[0].onPart;
+        // fragmentation: gaps across the line at every interval (on the same grid in every wall, so the pieces line up)
+        let pieces: [number, number][] = [[xs[0], xs[xs.length - 1]]];
+        if (p.fragment && interval > 0 && p.fragWidth > 0) {
+          const cut: [number, number][] = [];
+          for (const [a, b] of pieces) {
+            let s = a;
+            for (let k = Math.ceil((a + p.fragWidth / 2) / interval); k * interval - p.fragWidth / 2 < b; k++) {
+              const g0 = k * interval - p.fragWidth / 2, g1 = k * interval + p.fragWidth / 2;
+              if (g0 > s) cut.push([s, g0]);
+              s = Math.max(s, g1);
+            }
+            if (s < b) cut.push([s, b]);
+          }
+          pieces = cut;
+        }
+        const at = dir === 0 ? run[0].v : run[0].u;
+        for (const [s0, s1] of pieces) {
+          const c = piece(s0, s1, bot, top, onPart, xs);
+          if (c) place(c, dir, at);
+        }
+        made.push(...run);
+      }
+    }
+  }
+
+  // ---- border: a wall along the outline of each area (the XY offset inside it), straight between samples
+  if (p.blockBorder) {
+    const step = Math.max(0.3, Math.min(g.su, g.sv) * 0.6);
+    const P = mesh.positions, I = mesh.indices;
+    areas.forEach((ar, ai) => {
+      const inArea = new Set(ar.tris);
+      const next = new Map<number, [number, number]>();
+      for (const tr of ar.tris)
+        for (let e = 0; e < 3; e++) {
+          const o = otherSide(mesh, tr, e);
+          if (o >= 0 && inArea.has(o)) continue;
+          next.set(I[tr * 3 + e], [I[tr * 3 + ((e + 1) % 3)], tr]);
+        }
+      const done = new Set<number>();
+      for (const start of next.keys()) {
+        if (done.has(start)) continue;
+        // the loop's points, every `step`, moved the offset towards the inside
+        const loop: { x: number; y: number; top: number; bottom: number; onPart: boolean }[] = [];
+        let carry = 0, a = start;
+        while (!done.has(a) && next.has(a)) {
+          done.add(a);
+          const [b, tr] = next.get(a)!;
+          const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2], bx = P[b * 3], by = P[b * 3 + 1], bz = P[b * 3 + 2];
+          const len = Math.hypot(bx - ax, by - ay);
+          const c0 = I[tr * 3] * 3, c1 = I[tr * 3 + 1] * 3, c2 = I[tr * 3 + 2] * 3;
+          const mx = (P[c0] + P[c1] + P[c2]) / 3, my = (P[c0 + 1] + P[c1 + 1] + P[c2 + 1]) / 3;
+          while (carry <= len) {
+            const f = len > 0 ? carry / len : 0;
+            let x = ax + (bx - ax) * f, y = ay + (by - ay) * f;
+            const z = az + (bz - az) * f;
+            const ix = mx - x, iy = my - y, il = Math.hypot(ix, iy);
+            if (il > 1e-9 && inset > 0) {
+              // across the edge, towards the inside
+              let nx = -(by - ay), ny = bx - ax;
+              const nl = Math.hypot(nx, ny) || 1;
+              (nx /= nl), (ny /= nl);
+              if (nx * ix + ny * iy < 0) (nx = -nx), (ny = -ny);
+              x += nx * inset;
+              y += ny * inset;
+            }
+            const hits = hitsAt(bvh, x, y);
+            let best = -1;
+            for (let h = 0; h < hits.length; h++) {
+              const fi = hits[h].faceIndex ?? -1;
+              if (fi < 0 || areaOf[fi] !== ai) continue;
+              if (best < 0 || Math.abs(hits[h].point.z - z) < Math.abs(hits[best].point.z - z)) best = h;
+            }
+            if (best >= 0) {
+              const below = best > 0 ? hits[best - 1].point.z : null;
+              if (p.onPart || below === null) loop.push({ x, y, top: hits[best].point.z, bottom: below ?? 0, onPart: below !== null });
+            }
+            carry += step;
+          }
+          carry -= len;
+          a = b;
+        }
+        if (loop.length > 2) loop.push(loop[0]);
+        for (let i = 0; i + 1 < loop.length; i++) {
+          const q0 = loop[i], q1 = loop[i + 1];
+          const d = Math.hypot(q1.x - q0.x, q1.y - q0.y);
+          if (d < 1e-3 || d > step * 2.5 || q0.onPart !== q1.onPart) continue;
+          // a straight wall from q0 to q1: in its own (s, z) frame, then turned and moved into place
+          const top = lerp([0, d], [q0.top + pen, q1.top + pen]);
+          const bot = lerp([0, d], [q0.onPart ? q0.bottom - pen : 0, q1.onPart ? q1.bottom - pen : 0]);
+          const c = piece(0, d + t / 2, bot, top, () => q0.onPart, []);
+          if (!c) continue;
+          const cs = new w.CrossSection(c, 'EvenOdd');
+          if (cs.isEmpty()) {
+            cs.delete();
+            continue;
+          }
+          const ang = (Math.atan2(q1.y - q0.y, q1.x - q0.x) * 180) / Math.PI;
+          solids.push(cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]).rotate([0, 0, ang]).translate([q0.x, q0.y, 0]));
+          cs.delete();
+        }
+      }
+    });
+  }
+
+  // ---- single supports off the grid: a small cross of walls
+  for (const c of loose) {
+    const top = () => c.top + pen, bot = () => (c.onPart ? c.bottom - pen : 0);
+    const half = Math.max(0.3, Math.min(g.su, g.sv) / 2);
+    for (const dir of [0, 1] as const) {
+      const contour = piece(-half, half, bot, top, () => c.onPart, []);
+      if (!contour) continue;
+      const cs = new w.CrossSection(contour, 'EvenOdd');
+      if (cs.isEmpty()) {
+        cs.delete();
+        continue;
+      }
+      let sol = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
+      if (dir === 1) sol = sol.rotate([0, 0, 90]);
+      solids.push(sol.rotate([0, 0, turn]).translate([c.x, c.y, 0]));
+      cs.delete();
+    }
+    made.push(c);
+  }
+}
+
 /** Support solids below the areas of the lifted part (and under the points added by hand, minus the ones removed). */
 async function buildSupports(
   mesh: MeshData,
@@ -704,14 +1030,14 @@ async function buildSupports(
   const pen = p.penetration;
   const g = gridOf(p);
   const bvh = makeBVH(mesh);
-  const resin = p.style !== 'volume';
+  const resin = p.style !== 'volume' && p.style !== 'block';
   let cols = columnsUnder(mesh, bvh, areas, g, resin ? p.perimeter : 0);
   // supports removed by hand: every one whose contact point is within the radius
   if (edits.remove.length)
     // (radius 0: the one support nearest the point, within half a grid step, so it stays removed when the grid moves with a turn)
     cols = cols.filter((c) => !edits.remove.some(([x, y, z, r]) => Math.hypot(c.x - x, c.y - y, c.top - z) <= (r > 0 ? r : 0.45 * Math.min(g.su, g.sv))));
   edits.add.forEach((q, i) => {
-    if (p.style === 'volume') cols.push(...manualBlock(mesh, bvh, q, i, g));
+    if (p.style === 'volume' || p.style === 'block') cols.push(...manualBlock(mesh, bvh, q, i, g));
     else {
       const c = manualColumn(mesh, bvh, q, i);
       if (c) cols.push(c);
@@ -757,6 +1083,9 @@ async function buildSupports(
         pin(c, r);
         if (!c.onPart) feet.push([c.x, c.y]);
       }
+    } else if (p.style === 'block') {
+      // block: walls one laser spot thick along the hatching, with teeth, fragmentation, perforations and a border
+      blockSupports(w, mesh, bvh, areas, cols, p, g, solids, made);
     } else {
       // volume: thin walls along the grid lines in both directions, following the surface above and below
       const t = Math.max(0.05, p.wall);
@@ -867,7 +1196,7 @@ async function buildSupports(
     const volume = all.volume() + raftVolume;
     const mesh2 = fromManifold(all);
     all.delete();
-    const walls = p.style === 'volume' ? solids.length : new Set(made).size;
+    const walls = p.style === 'volume' || p.style === 'block' ? solids.length : new Set(made).size;
     return { mesh: mesh2, raft, count: walls, volume, contacts, manual };
   } finally {
     solids.forEach((s) => s.delete());
