@@ -36,7 +36,7 @@ export const INPUT_HELP: Record<string, string> = {
   'lattice:skin thickness':
     'Solid wall kept under the outer surface, in mm; the lattice fills what is inside it. 0 lets the lattice reach the surface (an open lattice). A closed skin traps powder or resin: add drain holes.',
   'lattice:cells along': 'Direction the honeycomb cells run. Z (the build direction) gives upright walls that need no support.',
-  'lattice:quality': 'Resolution of the lattice: Draft is quick and coarse, Fine follows thin walls best but takes longer and makes more triangles.',
+  'lattice:quality': 'Resolution of the lattice: Draft is quick and coarse (up to 1.5 million triangles), Normal up to 3 million, Fine the smoothest: up to 50 million triangles with a skin (a 100 mm cube full of gyroid takes about two minutes and needs a few GB of memory), up to 3 million for an open lattice (no skin), where the exact cut at the surface limits it.',
   // ---------------------------------------------------------------- surface to solid
   'solidify:surface': 'Picked faces: click the surface on a part (it is taken off the part, the part itself is not changed). Whole part: the selected part is the surface (e.g. an imported open sheet).',
   'solidify:make': 'Thicken: a shell of even thickness following the surface. Fill to base: the surface filled straight down (or up) to a flat base, a fixture or cradle shaped like the part.',

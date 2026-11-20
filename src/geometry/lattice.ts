@@ -52,18 +52,18 @@ export const DEFAULT_LATTICE: LatticeParams = { type: 'gyroid', cell: 10, thickn
 /** grid nodes the distance field may have (about 8 bytes each, twice: the field and a copy) */
 const BUDGET = { draft: 4e6, normal: 12e6, fine: 27e6 };
 /** voxels across one wall: enough samples that the curved walls are traced, not aliased into blocks */
-const PER_WALL = { draft: 2.2, normal: 2.8, fine: 3.5 };
+const PER_WALL = { draft: 2.2, normal: 2.8, fine: 4 };
 /** how far the simplified surface may stray from the exact lattice surface, mm */
 const DEVIATION = { draft: 0.08, normal: 0.04, fine: 0.02 };
 /**
- * Triangles the lattice surface may have: the finished part is shown, kept for
- * undo and saved in the browser, and much more than this makes the page run
- * out of memory.
+ * Triangles the lattice surface may have. Fine keeps up to 50 million (about
+ * 1 GB of mesh, which the page has to show and keep for undo): a 100 mm cube
+ * full of gyroid comes to about 42 million at 0.35 mm voxels.
  */
-const TRIANGLES = { draft: 1.5e6, normal: 3e6, fine: 5e6 };
+const TRIANGLES = { draft: 1.5e6, normal: 3e6, fine: 50e6 };
 
 /** voxels per cell when the void is traced side by side: enough to follow the curves */
-const PER_CELL = { draft: 10, normal: 14, fine: 20 };
+const PER_CELL = { draft: 10, normal: 14, fine: 30 };
 
 /** Lattice wall area per mm³ of filled volume, roughly (both faces of the walls). */
 function areaDensity(p: Pick<LatticeParams, 'type' | 'cell' | 'thickness'>): number {
@@ -575,7 +575,7 @@ export function dropLooseBits(mesh: MeshData): MeshData {
  * worker runs out of memory well before WebAssembly's 4 GB. Bigger open
  * lattices are built in one piece from the distance field instead.
  */
-const BOOLEAN_TRIANGLES = { draft: 0.6e6, normal: 1e6, fine: 1.5e6 };
+const BOOLEAN_TRIANGLES = { draft: 0.6e6, normal: 1e6, fine: 3e6 };
 
 export async function latticeMesh(input: MeshData, p: LatticeParams, onProgress: ProgressFn = noProgress): Promise<LatticeResult> {
   checkParams(p);
