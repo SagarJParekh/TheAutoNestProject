@@ -76,6 +76,8 @@ export interface SimplifyOptions {
    * result can have more triangles than asked for.
    */
   maxDeviation?: number;
+  /** vertices (by index) that must stay exactly where they are (e.g. along a seam shared with another mesh) */
+  locked?: Uint8Array;
 }
 
 /**
@@ -221,6 +223,15 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
     return Math.max(0, best);
   };
 
+  /** Error of collapsing edge (a,b) to the given point (also left in target3). */
+  const errorAt = (a: number, b: number, x: number, y: number, z: number): number => {
+    const oa = a * 10, ob = b * 10;
+    const q = (k: number) => Q[oa + k] + Q[ob + k];
+    target3[0] = x; target3[1] = y; target3[2] = z;
+    return Math.max(0, q(0) * x * x + 2 * q(1) * x * y + 2 * q(2) * x * z + 2 * q(3) * x + q(4) * y * y + 2 * q(5) * y * z + 2 * q(6) * y + q(7) * z * z + 2 * q(8) * z + q(9));
+  };
+  const locked = opts.locked;
+
   const heap = new EdgeHeap(topo.edgeCount + 1024);
   // queue order: quadric error, with a tiny edge-length term so zero-error (flat) areas collapse their
   // shortest edges first instead of piling everything into one huge vertex fan
@@ -267,9 +278,16 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
 
   while (current > target && heap.pop()) {
     const i = heap.size;
-    const a = heap.a[i], b = heap.b[i];
+    let a = heap.a[i], b = heap.b[i];
     if (removedV[a] || removedV[b]) continue;
     if (heap.stamp[i] !== edgeStamp(a, b)) continue; // stale entry
+    if (locked && locked[b]) {
+      if (locked[a]) continue;
+      // b stays where it is: collapse a into b
+      const t = a;
+      a = b;
+      b = t;
+    }
     liveTris(a, ta);
     liveTris(b, tb);
     shared.length = 0;
@@ -282,7 +300,14 @@ export function simplifyMesh(mesh: MeshData, ratio: number, onProgress: Progress
     let common = 0;
     for (const w of nA) if (nB.has(w)) common++;
     if (common !== shared.length) continue;
-    const cost = evaluate(a, b);
+    // onto a locked vertex: never join it to another locked vertex (the seam's edges belong to the other side too)
+    if (locked && locked[a]) {
+      let other = false;
+      for (const w of nB) if (w !== a && locked[w] && !nA.has(w)) other = true;
+      if (other) continue;
+    }
+    let cost = evaluate(a, b);
+    if (locked && locked[a]) cost = errorAt(a, b, pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]);
     // the heap is ordered by cost, but the deviation also depends on area, so test each edge
     if (cost > maxDev2 * (W[a] + W[b])) continue;
     const nx = target3[0], ny = target3[1], nz = target3[2];

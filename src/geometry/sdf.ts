@@ -203,17 +203,23 @@ export function squaredEDT(seed: Uint8Array, nx: number, ny: number, nz: number)
 /**
  * Signed distance field sampled on a grid: positive inside the mesh, negative
  * outside. Exact (BVH) distances are computed for nodes whose estimated
- * |distance - bandCenter| < bandWidth; elsewhere an EDT estimate is used.
+ * |distance - bandCenter| < bandWidth; elsewhere an EDT estimate is used
+ * (outside: -h, unless `outside` asks for exact distances there too).
  */
 export function signedDistanceGrid(
   mesh: MeshData,
   h: number,
-  opts: { pad?: number; bandCenter?: number; bandWidth?: number; onProgress?: ProgressFn } = {},
+  opts: { pad?: number; bandCenter?: number; bandWidth?: number; onProgress?: ProgressFn; outside?: boolean; offset?: number } = {},
 ): Grid {
   const onProgress = opts.onProgress ?? noProgress;
   const pad = opts.pad ?? 2;
   const bounds = computeBounds(mesh.positions);
-  const { origin, nx, ny, nz } = gridFor(bounds, h, pad);
+  let { origin, nx, ny, nz } = gridFor(bounds, h, pad);
+  if (opts.offset) {
+    // shift the nodes off the part's bounding planes (a flat face lying exactly on a layer of nodes is traced a voxel late)
+    origin = [origin[0] - opts.offset * h, origin[1] - opts.offset * h, origin[2] - opts.offset * h];
+    nx++; ny++; nz++;
+  }
   onProgress(0.05, 'Voxelizing');
   const inside = voxelizeInside(mesh, origin, nx, ny, nz, h);
   const N = nx * ny * nz;
@@ -235,11 +241,11 @@ export function signedDistanceGrid(
     for (let j = 0; j < ny; j++) {
       for (let i = 0; i < nx; i++) {
         const n = i + nx * (j + ny * k);
-        if (!inside[n]) continue;
+        if (!inside[n] && !opts.outside) continue;
         if (Math.abs(data[n] - bandCenter) > bandWidth) continue;
         pt.set(origin[0] + i * h, origin[1] + j * h, origin[2] + k * h);
         const r = bvh.closestPointToPoint(pt, target as never);
-        if (r) data[n] = r.distance;
+        if (r) data[n] = inside[n] ? r.distance : -r.distance;
       }
     }
     done += nx * ny;

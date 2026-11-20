@@ -15,8 +15,10 @@ for (const [a, b] of [
  * Triangles face towards increasing values. The result is watertight as long
  * as the surface does not touch the grid border.
  */
-export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgress): MeshData {
+export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgress, layers?: { from: number; to: number }): MeshData {
   const { nx, ny, nz, origin, h, data } = grid;
+  // only the cubes of layers from..to-1 (a slab), when given
+  const k0 = Math.max(0, layers?.from ?? 0), k1 = Math.min(nz - 1, layers?.to ?? nz - 1);
   const sxy = nx * ny;
   const pos = new FloatBuffer(1 << 16);
   const out = new IndexBuffer(1 << 16);
@@ -80,8 +82,8 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
   };
   const cornerPos = (c: number): [number, number, number] => [c & 1, (c >> 1) & 1, (c >> 2) & 1];
 
-  for (let k = 0; k < nz - 1; k++) {
-    if (k > 0) {
+  for (let k = k0; k < k1; k++) {
+    if (k > k0) {
       lowLayer = highLayer;
       highLayer = new Map();
     }
@@ -121,7 +123,7 @@ export function marchingTetrahedra(grid: Grid, onProgress: ProgressFn = noProgre
         }
       }
     }
-    if ((k & 7) === 0) onProgress(k / nz, 'Extracting surface');
+    if ((k & 7) === 0) onProgress((k - k0) / Math.max(1, k1 - k0), 'Extracting surface');
   }
   return { positions: pos.toArray(), indices: out.toArray() };
 }

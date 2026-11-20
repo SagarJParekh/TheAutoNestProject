@@ -88,7 +88,7 @@ describe('lattice lightweighting', () => {
     expect(bodies.length).toBe(1);
   }, 60000);
 
-  it('memory: with a skin the lattice is added as cavities (no boolean), an open one is cut exactly or rebuilt from voxels', async () => {
+  it('memory: with a skin the lattice is added as cavities (no boolean), an open one is cut exactly, or rebuilt from voxels', async () => {
     const cube = boxMesh([0, 0, 0], [40, 40, 40]);
     const base = { ...DEFAULT_LATTICE, type: 'gyroid' as const, cell: 10, thickness: 1.5, quality: 'draft' as const };
     const skinned = await latticeMesh(cube, { ...base, skin: 2 });
@@ -96,17 +96,46 @@ describe('lattice lightweighting', () => {
     // the outer surface is the original one, untouched
     expect(skinned.mesh.positions.slice(0, cube.positions.length)).toEqual(cube.positions);
     expect(isWatertight(skinned.mesh)).toBe(true);
-    const small = await latticeMesh(boxMesh([0, 0, 0], [15, 15, 15]), { ...base, skin: 0 });
-    expect(small.method).toBe('boolean');
+    // open: even a big one is simplified down to what the exact boolean can take
     const big = await latticeMesh(boxMesh([0, 0, 0], [80, 80, 80]), { ...base, skin: 0 });
-    expect(big.method).toBe('voxel');
+    expect(big.method).toBe('boolean');
     expect(isWatertight(big.mesh)).toBe(true);
+    expect(big.mesh.indices.length / 3).toBeLessThan(1e6);
     expect(big.after).toBeLessThan(big.before * 0.5);
     const b = computeBounds(big.mesh.positions);
-    expect(b.min[0]).toBeGreaterThan(-0.5);
-    expect(b.max[2]).toBeLessThan(80.5);
-    expect(b.max[2]).toBeGreaterThan(79);
-  }, 120000);
+    expect(b.min[0]).toBeCloseTo(0, 4);
+    expect(b.max[2]).toBeCloseTo(80, 4);
+    // a part the boolean cannot take (a box with its +X side missing, not closed): rebuilt from voxels
+    const box = boxMesh([0, 0, 0], [20, 20, 20]);
+    const P = box.positions, keep: number[] = [];
+    for (let t = 0; t < box.indices.length; t += 3) {
+      const onSide = [0, 1, 2].every((k) => P[box.indices[t + k] * 3] > 19.99);
+      if (!onSide) keep.push(box.indices[t], box.indices[t + 1], box.indices[t + 2]);
+    }
+    const open = { positions: box.positions, indices: new Uint32Array(keep) };
+    const v = await latticeMesh(open, { ...base, cell: 6, thickness: 1.2, skin: 0 });
+    expect(v.method).toBe('voxel');
+    expect(isWatertight(v.mesh)).toBe(true);
+    expect(v.after).toBeLessThan(8000 * 0.6);
+    expect(v.after).toBeGreaterThan(8000 * 0.3);
+  }, 180000);
+
+  it('TPMS walls are traced side by side: as thick as asked at any voxel size, never broken into blocks', async () => {
+    const cube = boxMesh([0, 0, 0], [30, 30, 30]);
+    const p = { ...DEFAULT_LATTICE, type: 'gyroid' as const, cell: 10, thickness: 1.2, skin: 1.5 };
+    const draft = await latticeMesh(cube, { ...p, quality: 'draft' });
+    const fine = await latticeMesh(cube, { ...p, quality: 'fine' });
+    // a 1.2 mm wall at draft voxels (1 mm) used to drop out between samples: the volumes now agree
+    expect(draft.voxelSize).toBeGreaterThan(0.9);
+    expect(Math.abs(draft.after - fine.after) / fine.after).toBeLessThan(0.03);
+    for (const r of [draft, fine]) {
+      expect(isWatertight(r.mesh)).toBe(true);
+      // one body (the skin with its lattice), cavities inside it, no loose pieces
+      const { shells, shellOfTri } = shellInfo(r.mesh);
+      const bodies = shells.filter((_s, i) => meshVolume(keepShells(r.mesh, shellOfTri, new Set([i]))) > 0);
+      expect(bodies.length).toBe(1);
+    }
+  }, 180000);
 
   it('dropLooseBits: drops a small body floating in a cavity, keeps the cavity and separate parts', () => {
     const shell = mergeMeshes([boxMesh([0, 0, 0], [20, 20, 20]), flipMesh(boxMesh([2, 2, 2], [18, 18, 18]))]);
