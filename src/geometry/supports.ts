@@ -513,10 +513,12 @@ function manualBlock(mesh: MeshData, bvh: MeshBVH, q: Vec3, index: number, g: Gr
   if (!centre) return [];
   const out: Column[] = [];
   const area = -2 - index;
+  // q in the grid's own frame: the walls are laid out (and turned into place) from absolute grid coordinates
+  const qu = q[0] * g.cos + q[1] * g.sin, qv = -q[0] * g.sin + q[1] * g.cos;
   for (let a = -1; a <= 1; a++)
     for (let b = -1; b <= 1; b++) {
-      const u = a * g.su, v = b * g.sv;
-      const x = q[0] + u * g.cos - v * g.sin, y = q[1] + u * g.sin + v * g.cos;
+      const u = qu + a * g.su, v = qv + b * g.sv;
+      const x = u * g.cos - v * g.sin, y = u * g.sin + v * g.cos;
       const c = a === 0 && b === 0 ? { ...centre } : manualColumn(mesh, bvh, [x, y, centre.top], index, centre.top, Math.max(g.su, g.sv) * 2);
       if (!c) continue;
       out.push({ ...c, area, u, v, gi: a, gj: b, noContact: a !== 0 || b !== 0 });

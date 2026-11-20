@@ -117,6 +117,15 @@ describe('a lifted part always stands on supports', () => {
     const blk = await generateSupports(t, { ...p, style: 'block' }, [], { add: [[6, 6, 20]], remove: [] });
     expect(blk.contacts.length).toBe(3);
     expect(blk.supportArea).toBeGreaterThan(0);
+    // ... under the point clicked (not somewhere else on the grid)
+    const bb = computeBounds(blk.supports.positions);
+    expect((bb.min[0] + bb.max[0]) / 2).toBeCloseTo(6, 0);
+    expect((bb.min[1] + bb.max[1]) / 2).toBeCloseTo(6, 0);
+    expect(bb.max[0] - bb.min[0]).toBeLessThan(5);
+    // and with the grid turned
+    const turned = computeBounds((await generateSupports(t, { ...p, style: 'block', gridAngle: 30 }, [], { add: [[6, 6, 20]], remove: [] })).supports.positions);
+    expect((turned.min[0] + turned.max[0]) / 2).toBeCloseTo(6, 0);
+    expect((turned.min[1] + turned.max[1]) / 2).toBeCloseTo(6, 0);
     const r = await generateSupports(t, p, [], { add: [[6, 6, 20]], remove: [] });
     expect(r.contacts.length).toBe(3);
     expect(r.manual[0]).toBe(0);
@@ -124,6 +133,8 @@ describe('a lifted part always stands on supports', () => {
     expect(isWatertight(r.supports)).toBe(true);
     const b = computeBounds(r.supports.positions);
     expect(b.max[0] - b.min[0]).toBeGreaterThan(2.5);
+    expect((b.min[0] + b.max[0]) / 2).toBeCloseTo(6, 0);
+    expect((b.min[1] + b.max[1]) / 2).toBeCloseTo(6, 0);
   });
 
   it('not standing on the part: overhangs above the part branch to supports beside it', async () => {

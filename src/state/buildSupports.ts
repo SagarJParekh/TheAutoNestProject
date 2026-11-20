@@ -136,7 +136,12 @@ export async function updateSupports() {
           const r = await pool.run('supports', { mesh: turned, params, skip, edits }).promise;
           cache.set(k, { mesh: r.supports, raft: r.raft, dz: r.dz, count: r.count, volume: r.supportVolume, area: r.supportArea ?? 0, contacts: r.contacts, manual: r.manual });
         } catch (e) {
-          if (e instanceof CancelledError) return;
+          if (e instanceof CancelledError) {
+            // nothing cancels supports on purpose: the job shared a worker with one that was cancelled (the worker
+            // is replaced and all its jobs dropped), so make it again rather than leave these supports out
+            again = true;
+            break;
+          }
           failed.add(k);
           console.warn('Supports failed', (e as Error).message);
         }
