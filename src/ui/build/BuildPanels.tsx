@@ -854,14 +854,19 @@ export function BuildsPanel() {
               <button className="btn" onClick={() => exportBuilds(g.active, 'slc')} title={`Slice the build into contours every ${g.slcLayer ?? 0.05} mm (SLC)`}>
                 SLC
               </button>
+              {currentPrinter(g).tech === 'dmls' && (
+                <button className="btn" onClick={() => exportBuilds(g.active, 'cls')} title={`Concept Laser slice file (CLS) every ${g.slcLayer ?? 0.05} mm, supports in their own section`}>
+                  CLS
+                </button>
+              )}
               <button className="btn" onClick={() => openBuildInPrep(g.active)} title="Copy this build's parts, placed, into Mesh prep">
                 Open in Mesh prep
               </button>
             </div>
           )}
           {active && !active.preview && (
-            <Row label="SLC layer">
-              <NumberField value={g.slcLayer ?? 0.05} min={0.005} step={0.005} precision={3} suffix="mm" title="Layer thickness of the SLC export" onChange={(v) => setSlcLayer(Math.max(0.005, v))} />
+            <Row label="Slice layer">
+              <NumberField value={g.slcLayer ?? 0.05} min={0.005} step={0.005} precision={3} suffix="mm" title="Layer thickness of the SLC and CLS exports" onChange={(v) => setSlcLayer(Math.max(0.005, v))} />
             </Row>
           )}
           {g.builds.length > 0 && <SaveLocationRow />}

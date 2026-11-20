@@ -531,7 +531,7 @@ export const ops = {
         done += share;
         before += r.trianglesBefore;
         after += r.trianglesAfter;
-        return { name: it.name, mesh: r.mesh };
+        return { ...it, mesh: r.mesh };
       });
     } else {
       for (const it of items) before += it.mesh.indices.length / 3;

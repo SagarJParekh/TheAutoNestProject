@@ -2,22 +2,28 @@ import { zipSync, strToU8 } from 'fflate';
 import type { MeshData } from '../geometry';
 import { exportSTEP } from './step';
 import { exportSLC } from './slc';
+import { exportCLS } from './cls';
 
 export { exportSLC, sliceMesh, readSLC } from './slc';
+export { exportCLS, readCLS } from './cls';
 
 export interface ExportOptions {
   /** write ASCII instead of binary STL */
   stlAscii?: boolean;
   /** decimal places for text formats (OBJ, 3MF, ASCII STL); undefined = full float precision */
   decimals?: number;
-  /** SLC: layer thickness, mm */
+  /** SLC / CLS: layer thickness, mm */
   layer?: number;
+  /** CLS: platform size (x, y), mm; the app's coordinates have the platform centre at 0, 0 */
+  plate?: [number, number];
 }
 
 export interface ExportItem {
   name: string;
   /** world-space mesh (transforms already baked) */
   mesh: MeshData;
+  /** a support (CLS writes it in the support section) */
+  support?: boolean;
 }
 
 /** ASCII STL with one `solid` block per item. */
@@ -154,7 +160,7 @@ export function export3MF(items: ExportItem[], decimals?: number): Uint8Array {
   );
 }
 
-export type ExportFormat = 'stl' | '3mf' | 'obj' | 'slc' | 'step';
+export type ExportFormat = 'stl' | '3mf' | 'obj' | 'slc' | 'cls' | 'step';
 
 export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: ExportOptions = {}): Uint8Array {
   switch (format) {
@@ -166,6 +172,11 @@ export function exportMeshes(format: ExportFormat, items: ExportItem[], opts: Ex
       return export3MF(items, opts.decimals);
     case 'slc':
       return exportSLC(items.map((it) => it.mesh), { layer: opts.layer ?? 0.05 });
+    case 'cls': {
+      const plate = opts.plate ?? [250, 250];
+      const meshes = (sup: boolean) => items.filter((it) => !!it.support === sup).map((it) => it.mesh);
+      return exportCLS(meshes(false), meshes(true), { layer: opts.layer ?? 0.05, plate, shift: [plate[0] / 2, plate[1] / 2] });
+    }
     case 'step':
       return exportSTEP(items);
   }

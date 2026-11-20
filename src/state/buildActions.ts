@@ -969,7 +969,7 @@ function placementSelected(pl: BuildPlacement, selection: string[], copies: bool
 export function exportItems(s: BuildGenState, i: number, only?: Set<string>) {
   const byId = new Map(s.parts.map((p) => [p.id, p]));
   const parts: { name: string; mesh: MeshData }[] = [];
-  const supports: { name: string; mesh: MeshData }[] = [];
+  const supports: { name: string; mesh: MeshData; support: true }[] = [];
   for (const pl of s.builds[i].placements) {
     const p = byId.get(pl.partId);
     if (!p || (only && !only.has(pl.key))) continue;
@@ -982,7 +982,7 @@ export function exportItems(s: BuildGenState, i: number, only?: Set<string>) {
     const m = new Matrix4().makeTranslation(pl.position[0], pl.position[1], s.zOffset);
     // supports and raft together, as one piece
     const both = e.raft?.indices.length ? mergeMeshes([e.mesh, e.raft]) : e.mesh;
-    supports.push({ name: supportName(name, s.supportNaming), mesh: applyMatrix(both, m.elements) });
+    supports.push({ name: supportName(name, s.supportNaming), mesh: applyMatrix(both, m.elements), support: true });
   }
   return { parts, supports };
 }
@@ -1000,13 +1000,13 @@ function uniqueNames() {
 }
 
 /**
- * Export one build (index) or every build ('all') as 3MF, STL or SLC (sliced
- * contours), parts in their build positions. With separate files (the default)
+ * Export one build (index) or every build ('all') as 3MF, STL, SLC (sliced
+ * contours) or CLS (Concept Laser slices), parts in their build positions. With separate files (the default)
  * the export is a zip holding the whole build as one file plus a file for every
  * part and one for every part's supports (s_<part> or <part>_s); with only
  * selected parts, just those copies and their supports go in.
  */
-export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' | 'slc' = '3mf') {
+export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' | 'slc' | 'cls' = '3mf') {
   const s = bg();
   if (!s.builds.length) return notify('warning', 'There are no builds yet');
   const printer = currentPrinter(s);
@@ -1026,13 +1026,14 @@ export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' 
   // pick the location before the slow part (pickers only open straight after a click)
   const target = await pickSaveTarget(outName);
   if (!target) return;
-  const options = { layer: s.slcLayer ?? 0.05 };
+  // slices: layer thickness; CLS: in platform coordinates (corner at 0, 0), supports in their own section
+  const options = { layer: s.slcLayer ?? 0.05, plate: [printer.volume[0], printer.volume[1]] as [number, number] };
   const files: Record<string, Uint8Array> = {};
   let single: Uint8Array | undefined;
   let count = 0;
   for (const i of indices) {
     const { parts, supports } = exportItems(s, i, only);
-    const verb = format === 'slc' ? 'Slicing' : 'Exporting';
+    const verb = format === 'slc' || format === 'cls' ? 'Slicing' : 'Exporting';
     const r = await runJob(`${verb} ${s.builds[i].name}`, 'export', { format, items: [...parts, ...supports], zip: false, options });
     if (!r) return;
     const dir = which === 'all' ? `${safe(s.builds[i].name)}/` : '';
