@@ -62,7 +62,7 @@ export const HELP: Record<string, string> = {
   'test interlocking': 'Test interlocking: check that every part can be taken out of the build (no part trapped inside another).',
   'export all': 'Export all builds as 3MF files in one ZIP.',
   'open in mesh prep': 'Open in Mesh prep: copy this build, with the parts in place, to Mesh prep for editing.',
-  slc: 'SLC: slice the build into contour layers (SLC file) for SLA / DLP printers, at the SLC layer thickness.',
+  slc: 'SLC: slice the build into contour layers (SLC file), at the SLC layer thickness; with Separate files, every part and its supports get an SLC of their own too.',
 };
 
 /** Key of a control for the table above. */

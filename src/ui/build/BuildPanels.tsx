@@ -10,11 +10,11 @@ import { acceptSavedSession } from '../../state/buildSession';
 import {
   addPartsFromPrep, clearBuildParts, setBuildRotationLock, selectAllBuildParts, selectBuildPart, selectedBuildPartIds, setTiltFor, currentPrinter, buildDensity, setDensityAllowance, exportBuilds, checkCollisions, checkInterlocking, clearChecks, setChecksShowOnly, rearrangeBuilds, setBreakaway, cageBuildParts, uncageBuildPart, setCageSettings, DEFAULT_CAGE, stopNesting, setCopyLocks, lockTargets, repairBuildPartsInPrep, toggleBuildPartHidden, isHiddenKey, groupBuildParts, ungroupBuildParts, groupLabels, partOfKey, openBuildInPrep, removeBuildPart, setActiveBuild, setPartQuantity,
   updateBuildSettings,
-  setSlcLayer,
+  setSlcLayer, setExportOptions, pickingCopies,
 } from '../../state/buildActions';
-import { PRINTERS, TECHNOLOGIES, isResin, printerById, type Technology } from '../../state/printers';
+import { PRINTERS, TECHNOLOGIES, printerById, type Technology } from '../../state/printers';
 import { importableExtensions } from '../../loaders/registry';
-import type { BuildPart, Tilt } from '../../state/types';
+import type { BuildGenState, BuildPart, Tilt } from '../../state/types';
 
 const f1 = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 1 });
 const pct = (v: number) => `${(v * 100).toLocaleString(undefined, { maximumFractionDigits: v < 0.1 ? 2 : 1 })}%`;
@@ -683,15 +683,59 @@ function partStatus(p: BuildPart, builds: { name: string; placements: { partId: 
   return { where, missing };
 }
 
+/** How a build is exported: one file or separate part and support files, how supports are named, all or only the selected parts. */
+function ExportOptions({ g, selected }: { g: BuildGenState; selected: number }) {
+  const separate = g.exportSeparate ?? true;
+  const naming = g.supportNaming ?? 'prefix';
+  const only = g.exportOnly ?? 'all';
+  const example = (g.parts[0]?.name ?? 'Part').replace(/[^\w.-]+/g, '_');
+  return (
+    <>
+      <Row label="Export">
+        <Segmented
+          value={only}
+          onChange={(exportOnly) => setExportOptions({ exportOnly })}
+          options={[
+            { value: 'all', label: 'All parts' },
+            { value: 'selected', label: `Selected (${selected})`, title: 'Only the selected parts (and their supports)' },
+          ]}
+        />
+      </Row>
+      <Row label="Files">
+        <Segmented
+          value={separate ? 'separate' : 'one'}
+          onChange={(v) => setExportOptions({ exportSeparate: v === 'separate' })}
+          options={[
+            { value: 'one', label: 'One file', title: 'The whole build in one file' },
+            { value: 'separate', label: 'Separate', title: 'A zip: the whole build in one file, plus a file for every part and one for its supports' },
+          ]}
+        />
+      </Row>
+      <Row label="Support files">
+        <Segmented
+          value={naming}
+          onChange={(supportNaming) => setExportOptions({ supportNaming })}
+          options={[
+            { value: 'prefix', label: `s_${example}`.slice(0, 18), title: 'Supports named s_<part name>' },
+            { value: 'suffix', label: `${example}_s`.slice(-18), title: 'Supports named <part name>_s' },
+          ]}
+        />
+      </Row>
+      {only === 'selected' && selected === 0 && <Hint>Select the parts to export (click them in the view or the parts list).</Hint>}
+    </>
+  );
+}
+
 export function BuildsPanel() {
   const g = useStore((s) => s.buildGen);
   const selection = useStore((s) => s.selection);
   const selIds = selectedBuildPartIds(selection);
   const sel = selIds.length === 1 ? (g.parts.find((p) => p.id === selIds[0]) ?? null) : null;
   const active = g.builds[g.active];
+  const copies = pickingCopies();
+  const selCount = active ? active.placements.filter((pl) => selection.includes(pl.key) || (!copies && selIds.includes(pl.partId))).length : 0;
   const total = g.parts.reduce((a, p) => a + p.quantity, 0);
   const groups = groupLabels(g.parts);
-  const resin = isResin(currentPrinter(g).tech);
   const supportsTab = currentPrinter(g).tech !== 'powder';
   const storedTab = useStore((s) => s.buildRightTab);
   const supportEdit = useStore((s) => s.supportEdit);
@@ -798,6 +842,7 @@ export function BuildsPanel() {
               builds.
             </Hint>
           )}
+          {active && !active.preview && <ExportOptions g={g} selected={selCount} />}
           {active && !active.preview && (
             <div className="btn-grid two">
               <button className="btn primary" onClick={() => exportBuilds(g.active, '3mf')}>
@@ -806,17 +851,15 @@ export function BuildsPanel() {
               <button className="btn" onClick={() => exportBuilds(g.active, 'stl')}>
                 STL
               </button>
-              {resin && (
-                <button className="btn" onClick={() => exportBuilds(g.active, 'slc')} title={`Slice the build into contours every ${g.slcLayer ?? 0.05} mm (SLC, for SLA / DLP)`}>
-                  SLC
-                </button>
-              )}
+              <button className="btn" onClick={() => exportBuilds(g.active, 'slc')} title={`Slice the build into contours every ${g.slcLayer ?? 0.05} mm (SLC)`}>
+                SLC
+              </button>
               <button className="btn" onClick={() => openBuildInPrep(g.active)} title="Copy this build's parts, placed, into Mesh prep">
                 Open in Mesh prep
               </button>
             </div>
           )}
-          {active && !active.preview && resin && (
+          {active && !active.preview && (
             <Row label="SLC layer">
               <NumberField value={g.slcLayer ?? 0.05} min={0.005} step={0.005} precision={3} suffix="mm" title="Layer thickness of the SLC export" onChange={(v) => setSlcLayer(Math.max(0.005, v))} />
             </Row>

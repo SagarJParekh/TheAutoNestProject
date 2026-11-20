@@ -177,6 +177,11 @@ export function setSlcLayer(slcLayer: number) {
   setState((s) => ({ buildGen: { ...s.buildGen, slcLayer } }));
 }
 
+/** Export options (change nothing in the builds). */
+export function setExportOptions(patch: Pick<Partial<BuildGenState>, 'exportSeparate' | 'supportNaming' | 'exportOnly'>) {
+  setState((s) => ({ buildGen: { ...s.buildGen, ...patch } }));
+}
+
 /** defaults, mm: margin at the edges and distance from the platform on powder beds, and on the other printers (SLA / DLP / DMLS: on the platform) */
 const POWDER_SPACING = 1, RESIN_SPACING = 5;
 const POWDER_Z = 1, RESIN_Z = 0;
@@ -945,44 +950,105 @@ function buildItems(s: BuildGenState, i: number) {
   });
 }
 
-/** What is exported for a build: the copies and their supports. */
-function exportItems(s: BuildGenState, i: number) {
+/** Name of a support file for a part: s_<part> or <part>_s. */
+export function supportName(part: string, naming: BuildGenState['supportNaming'] = 'prefix'): string {
+  return naming === 'suffix' ? `${part}_s` : `s_${part}`;
+}
+
+/** Is a placement selected (the copy itself, or, when whole parts are picked, its part)? */
+function placementSelected(pl: BuildPlacement, selection: string[], copies: boolean): boolean {
+  if (selection.includes(pl.key)) return true;
+  return !copies && selection.some((k) => partOfKey(k) === pl.partId);
+}
+
+/**
+ * What is exported for a build: the copies in their places (lifted onto their
+ * supports where they have them) and, apart, each copy's supports and raft.
+ * `only` limits it to these placement keys.
+ */
+export function exportItems(s: BuildGenState, i: number, only?: Set<string>) {
   const byId = new Map(s.parts.map((p) => [p.id, p]));
-  const sup = s.builds[i].placements.flatMap((pl) => {
+  const parts: { name: string; mesh: MeshData }[] = [];
+  const supports: { name: string; mesh: MeshData }[] = [];
+  for (const pl of s.builds[i].placements) {
     const p = byId.get(pl.partId);
-    const e = p ? supportFor(p, pl.quaternion, s) : undefined;
-    if (!p || !e || (!e.mesh.indices.length && !e.raft?.indices.length)) return [];
+    if (!p || (only && !only.has(pl.key))) continue;
+    const name = p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name;
+    const e = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
+    const z = e ? s.zOffset + e.dz : pl.position[2] + supportLift(p, s);
+    const at = z !== pl.position[2] ? { ...pl, position: [pl.position[0], pl.position[1], z] as Vec3 } : pl;
+    parts.push({ name, mesh: placedWorldMesh(p.mesh, at) });
+    if (!e || (!e.mesh.indices.length && !e.raft?.indices.length)) continue;
     const m = new Matrix4().makeTranslation(pl.position[0], pl.position[1], s.zOffset);
     // supports and raft together, as one piece
     const both = e.raft?.indices.length ? mergeMeshes([e.mesh, e.raft]) : e.mesh;
-    return [{ name: `${p.quantity > 1 ? `${p.name}_${pl.copy + 1}` : p.name}_sup`, mesh: applyMatrix(both, m.elements) }];
-  });
-  return [...buildItems(s, i), ...sup];
+    supports.push({ name: supportName(name, s.supportNaming), mesh: applyMatrix(both, m.elements) });
+  }
+  return { parts, supports };
 }
 
+/** File names that are safe on every system and unique within one export. */
+function uniqueNames() {
+  const used = new Set<string>();
+  return (base: string, ext: string) => {
+    const b = base.replace(/[^\w.-]+/g, '_') || 'part';
+    let n = `${b}.${ext}`;
+    for (let k = 2; used.has(n.toLowerCase()); k++) n = `${b}_${k}.${ext}`;
+    used.add(n.toLowerCase());
+    return n;
+  };
+}
 
 /**
- * Export one build (index) or every build ('all', zipped) as 3MF, STL or SLC
- * (sliced contours for SLA / DLP), parts in their build positions.
+ * Export one build (index) or every build ('all') as 3MF, STL or SLC (sliced
+ * contours), parts in their build positions. With separate files (the default)
+ * the export is a zip holding the whole build as one file plus a file for every
+ * part and one for every part's supports (s_<part> or <part>_s); with only
+ * selected parts, just those copies and their supports go in.
  */
 export async function exportBuilds(which: number | 'all', format: '3mf' | 'stl' | 'slc' = '3mf') {
   const s = bg();
   if (!s.builds.length) return notify('warning', 'There are no builds yet');
   const printer = currentPrinter(s);
   const safe = (t: string) => t.replace(/[^\w.-]+/g, '_');
-  const indices = which === 'all' ? s.builds.map((_, i) => i) : [which];
-  const fileName = (i: number) => `${safe(printer.name)}_${safe(s.builds[i].name)}.${format}`;
-  // pick the location before the slow part (pickers only open straight after a click)
-  const target = await pickSaveTarget(which === 'all' ? `${safe(printer.name)}_builds.zip` : fileName(which));
-  if (!target) return;
-  const files: Record<string, Uint8Array> = {};
-  for (const i of indices) {
-    const r = await runJob(`${format === 'slc' ? 'Slicing' : 'Exporting'} ${s.builds[i].name}`, 'export', { format, items: exportItems(s, i), zip: false, options: { layer: s.slcLayer ?? 0.05 } });
-    if (!r) return;
-    files[fileName(i)] = r.bytes;
+  const separate = s.exportSeparate ?? true;
+  let indices = which === 'all' ? s.builds.map((_, i) => i) : [which];
+  let only: Set<string> | undefined;
+  if (s.exportOnly === 'selected') {
+    const sel = getState().selection, copies = pickingCopies();
+    only = new Set(indices.flatMap((i) => s.builds[i].placements.filter((pl) => placementSelected(pl, sel, copies)).map((pl) => pl.key)));
+    if (!only.size) return notify('warning', which === 'all' ? 'No parts are selected' : `No parts of ${s.builds[which].name} are selected`);
+    indices = indices.filter((i) => s.builds[i].placements.some((pl) => only!.has(pl.key)));
   }
-  const where = await writeSaveTarget(target, (which === 'all' ? zipSync(files, { level: 0 }) : Object.values(files)[0]) as BlobPart);
-  notify('success', `${which === 'all' ? `Exported ${indices.length} builds` : `Exported ${s.builds[which].name}`} to ${where}`);
+  const buildName = (i: number) => `${safe(printer.name)}_${safe(s.builds[i].name)}`;
+  const zipped = separate || indices.length > 1 || which === 'all';
+  const outName = which === 'all' ? `${safe(printer.name)}_builds.zip` : `${buildName(which)}${s.exportOnly === 'selected' ? '_selected' : ''}.${zipped ? 'zip' : format}`;
+  // pick the location before the slow part (pickers only open straight after a click)
+  const target = await pickSaveTarget(outName);
+  if (!target) return;
+  const options = { layer: s.slcLayer ?? 0.05 };
+  const files: Record<string, Uint8Array> = {};
+  let single: Uint8Array | undefined;
+  let count = 0;
+  for (const i of indices) {
+    const { parts, supports } = exportItems(s, i, only);
+    const verb = format === 'slc' ? 'Slicing' : 'Exporting';
+    const r = await runJob(`${verb} ${s.builds[i].name}`, 'export', { format, items: [...parts, ...supports], zip: false, options });
+    if (!r) return;
+    const dir = which === 'all' ? `${safe(s.builds[i].name)}/` : '';
+    files[`${dir}${buildName(i)}.${format}`] = single = r.bytes;
+    if (!separate) continue;
+    const name = uniqueNames();
+    for (const [k, it] of [...parts, ...supports].entries()) {
+      const f = await runJob(`${verb} ${it.name} (${k + 1}/${parts.length + supports.length})`, 'export', { format, items: [it], zip: false, options });
+      if (!f) return;
+      files[`${dir}${name(it.name, format)}`] = f.bytes;
+      count++;
+    }
+  }
+  const where = await writeSaveTarget(target, (zipped ? zipSync(files, { level: 0 }) : single!) as BlobPart);
+  const what = which === 'all' ? `${indices.length} builds` : s.builds[which].name;
+  notify('success', `Exported ${what}${separate ? ` and ${count} separate part and support files` : ''} to ${where}`);
 }
 
 /** Copy a build into the Prep workspace (parts at their build positions) for further editing. */

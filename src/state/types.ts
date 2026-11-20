@@ -439,8 +439,14 @@ export interface BuildGenState {
   nestDetail: 'fast' | 'normal' | 'fine';
   /** stop nesting after this many minutes and keep the best builds found (0 = no limit) */
   nestTimeLimit?: number;
-  /** SLA / DLP: layer thickness of SLC exports, mm */
+  /** layer thickness of SLC exports, mm */
   slcLayer?: number;
+  /** export: also write every part and every part's supports as files of their own (default on) */
+  exportSeparate?: boolean;
+  /** export: support files named s_<part> (prefix, default) or <part>_s (suffix) */
+  supportNaming?: 'prefix' | 'suffix';
+  /** export: every part of the build, or only the selected ones */
+  exportOnly?: 'all' | 'selected';
   /** set once the per-technology spacing defaults (1 mm on powder beds) apply; older saved sessions lack it */
   spacingDefaults?: number;
   /** powder printers: orientation by best packing (flat face down or on a side, whichever packs best; default) or by the SLS / MJF rules */
