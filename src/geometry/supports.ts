@@ -627,10 +627,9 @@ function branchSupports(
     // the tip, then straight down a little (never as far as the part below)
     // (bars: a taper onto the touch point)
     const touch = tip ? null : touchOf(p, r, room);
-    let tipL = tip ? Math.min(p.tipLength, room * 0.35) : 0;
+    // (the taper onto a bar's touch point is as long as set, the joint below it, room allowing)
+    const tipL = tip ? Math.min(p.tipLength, room * 0.35) : Math.min(touch!.l, room * 0.35);
     const drop = Math.min(tipL + Math.max(0.5, step * 0.5), room * 0.5);
-    // a bar's taper fits in the drop (the joint stays where it is)
-    if (!tip) tipL = Math.min(touch!.l, drop * 0.8);
     const zc = top - drop;
     let to: [number, number, number] | null = null;
     // the nearest support it can reach at the branch angle

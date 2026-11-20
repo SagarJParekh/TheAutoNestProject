@@ -100,7 +100,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           <>
             {st.style === 'volume' && mm('Wall thickness', 'wall', 'Thickness of the support walls', 0.05, 0.05)}
             {st.style === 'bar' && mm('Bar diameter', 'wall', 'Diameter of the pins', 0.1, 0.1)}
-            {st.style === 'bar' && <TouchPointRows st={st} />}
+            {st.style === 'bar' && <TouchPointRows st={st} bar={Math.max(0.2, st.wall)} />}
             <Row label={st.penetration >= 0 ? 'Penetration' : 'Gap to part'}>
               <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the supports reach into the part (negative: a gap left below it)" onChange={(penetration) => setSup({ penetration })} />
             </Row>
@@ -160,7 +160,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         {!st.onPart && st.style === 'block' && (
           <>
             <Hint>Where a block wall would stand on the part, a bar branches out instead: its touch point on the part is set here.</Hint>
-            <TouchPointRows st={st} />
+            <TouchPointRows st={st} bar={2 * Math.max(0.3, st.wall)} />
           </>
         )}
         {resin && st.style !== 'block' && (
@@ -568,7 +568,10 @@ function SupportHandEdits() {
 }
 
 /** Touch point of bar supports (and of the bars block supports branch out with): its diameter on the part and the taper onto it. */
-function TouchPointRows({ st }: { st: SupportParams }) {
+function TouchPointRows({ st, bar }: { st: SupportParams; bar: number }) {
+  const d = st.touchDiameter ?? TOUCH_DEFAULTS.touchDiameter;
+  // a taper only where the touch point is thinner than the bar
+  const taper = d > 0 && d < bar - 1e-6;
   return (
     <>
       <Row label="Touch point Ø">
@@ -588,9 +591,15 @@ function TouchPointRows({ st }: { st: SupportParams }) {
           step={0.1}
           suffix="mm"
           title="Length of the taper from the bar down to the touch point"
+          disabled={!taper}
           onChange={(v) => setSup({ touchLength: Math.max(0, v) })}
         />
       </Row>
+      {!taper && (
+        <Hint>
+          The bar is {+bar.toFixed(2)} mm thick: make the touch point Ø smaller than that for a taper (the touch point length then sets how long it is).
+        </Hint>
+      )}
     </>
   );
 }

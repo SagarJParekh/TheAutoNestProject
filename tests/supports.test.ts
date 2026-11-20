@@ -176,10 +176,15 @@ describe('a lifted part always stands on supports', () => {
     // block supports not standing on the part: the branch bars get the touch point too
     const shape = await booleanMeshes('union', boxMesh([0, 0, 0], [30, 30, 4]), [boxMesh([12, 12, 4], [18, 18, 20]), boxMesh([-6, -6, 20], [36, 36, 23])]);
     const block = { ...SUPPORT_PRESETS.dmls, onPart: false, lowest: false };
-    const fat = await generateSupports(shape, { ...block, touchDiameter: 0 });
-    const fine = await generateSupports(shape, { ...block, touchDiameter: 0.2, touchLength: 0.5 });
-    expect(fine.supportVolume).toBeGreaterThan(0);
-    expect(fine.supportVolume).toBeLessThan(fat.supportVolume);
+    const short = await generateSupports(shape, { ...block, touchDiameter: 0.2, touchLength: 0.3 });
+    const long = await generateSupports(shape, { ...block, touchDiameter: 0.2, touchLength: 2 });
+    expect(short.supportVolume).toBeGreaterThan(0);
+    // the length is not capped: a longer touch point changes the branches
+    expect(Math.abs(long.supportVolume - short.supportVolume)).toBeGreaterThan(5);
+    expect(long.contacts.length).toBe(short.contacts.length);
+    // and on bars: a longer taper, less bar
+    const barLong = await generateSupports(t, { ...bar, touchDiameter: 0.3, touchLength: 2 });
+    expect(barLong.supportVolume).toBeLessThan(thin.supportVolume - 0.5);
   }, 120000);
 
   it('raft types: none, skate, cross grid, hexagonal grid, bottom connected, protection case', async () => {
