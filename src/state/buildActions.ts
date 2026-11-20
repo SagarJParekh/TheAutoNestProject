@@ -854,6 +854,22 @@ async function generate(run: number, s0: BuildGenState, job: ReturnType<typeof s
 
 // ---------------------------------------------------------------- display / export
 
+/**
+ * Colours of a copy's supports and raft, never like the part's own colour:
+ * neutral greys (no part colour is grey), or amber under a greyish part.
+ */
+export function supportColors(partColor: string): { supports: string; raft: string } {
+  const m = /^#?([0-9a-f]{6})$/i.exec(partColor.trim());
+  if (m) {
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    // a greyish part (little colour): its supports in amber instead
+    if (max - min < 0.18) return { supports: '#f0b429', raft: '#a87a14' };
+  }
+  return { supports: '#c8cdd4', raft: '#7c8592' };
+}
+
 /** The height a copy is shown at: on supports the supports stand on the platform and the part sits the lift above it, whatever height the copy had. */
 function shownZ(p: BuildPart, pl: BuildPlacement, s: BuildGenState): number {
   const sup = p.supportsOn ? supportFor(p, pl.quaternion, s) : undefined;
@@ -887,7 +903,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
       out.push({
         id: `${pl.key}${SUP}`,
         name: `${name} supports`,
-        color: '#3fa7ff',
+        color: supportColors(p.color).supports,
         visible: true,
         locked: true,
         mesh: sup.mesh,
@@ -897,7 +913,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
       out.push({
         id: `${pl.key}${RAFT}`,
         name: `${name} raft`,
-        color: '#5f8fbf',
+        color: supportColors(p.color).raft,
         visible: true,
         locked: true,
         mesh: sup.raft,
