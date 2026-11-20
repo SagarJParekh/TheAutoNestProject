@@ -29,6 +29,8 @@ export interface Part {
   importCenter?: Vec3;
   /** orientation locked: the part can be moved in X / Y / Z but never rotated (Mesh prep and Build generation) */
   lockRotation?: boolean;
+  /** a surface without an inside (zero-thickness support walls): both sides drawn alike, no red back faces */
+  sheet?: boolean;
   /** repaired in Mesh prep: saved (exported) as name_repaired */
   repaired?: boolean;
   /** see-through display: 0.5 (half) or 0.25 (x-ray); none = solid */

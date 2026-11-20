@@ -13,7 +13,7 @@
  * The part is lifted `lift` mm above the platform (z = 0) first; everything is
  * returned in that lifted position.
  */
-import { DoubleSide, Ray, Vector3 } from 'three';
+import { DoubleSide, Ray, ShapeUtils, Vector2, Vector3 } from 'three';
 
 import type { Manifold } from 'manifold-3d';
 import { MeshData, Vec3, computeBounds, triangleCount } from './mesh';
@@ -109,7 +109,7 @@ export interface SupportParams {
   fragX: number;
   fragY: number;
   fragWidth: number;
-  /** block: diamond holes in the walls (less material, powder / resin drains): beam between holes, side angle, hole height, solid band at top and bottom, solid zone at the wall ends */
+  /** block: a cross grid inside the walls (diagonal bars between diamond openings, less material): bar width, bar angle, cell (opening) height, solid band at top and bottom, solid zone at the wall ends */
   perforate: boolean;
   perfBeam: number;
   perfAngle: number;
@@ -133,10 +133,10 @@ export const BLOCK_DEFAULTS = {
   fragX: 4.8,
   fragY: 4.8,
   fragWidth: 1.2,
-  perforate: false,
-  perfBeam: 0.5,
+  perforate: true,
+  perfBeam: 0.4,
   perfAngle: 50,
-  perfHeight: 0.6,
+  perfHeight: 1,
   perfSolid: 1,
   perfZone: 0,
 };
@@ -204,6 +204,8 @@ export interface SupportResult {
   /** bars / tips / walls made */
   count: number;
   supportVolume: number;
+  /** block supports: area of the zero-thickness walls, mm² */
+  supportArea: number;
   /** where each support touches the part (x, y, z in the lifted frame), for picking supports by hand */
   contacts: Float32Array;
   /** for each touch point: the index of the point added by hand it belongs to, −1 for generated ones */
@@ -655,6 +657,27 @@ function branchSupports(
   }
 }
 
+/** Area of zero-thickness support walls (triangles, 9 numbers each), mm². */
+function sheetArea(t: number[]): number {
+  let a = 0;
+  for (let i = 0; i < t.length; i += 9) {
+    const ux = t[i + 3] - t[i], uy = t[i + 4] - t[i + 1], uz = t[i + 5] - t[i + 2], vx = t[i + 6] - t[i], vy = t[i + 7] - t[i + 1], vz = t[i + 8] - t[i + 2];
+    a += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+  }
+  return a;
+}
+/** Two meshes as one (no boolean: open surfaces stay as they are). */
+function mergeSheets(a: MeshData, b: MeshData): MeshData {
+  const nv = a.positions.length / 3;
+  const positions = new Float32Array(a.positions.length + b.positions.length);
+  positions.set(a.positions);
+  positions.set(b.positions, a.positions.length);
+  const indices = new Uint32Array(a.indices.length + b.indices.length);
+  indices.set(a.indices);
+  for (let i = 0; i < b.indices.length; i++) indices[a.indices.length + i] = b.indices[i] + nv;
+  return { positions, indices };
+}
+
 /** A raft is made (on, and a shape other than none). */
 const raftOn = (p: SupportParams) => p.raft && (p.raftType ?? 'solid') !== 'none' && p.raftThickness > 0;
 
@@ -746,13 +769,14 @@ function raftSolids(w: Awaited<ReturnType<typeof getManifold>>, feet: [number, n
 }
 
 /**
- * Block supports: thin walls along the hatching (two directions of the
- * support grid, turned by the grid angle) under each overhang area, plus a
- * wall along each area's outline. Every wall is one laser spot thick (`spot`),
- * so the printer traces it as a single path. On top the walls end in teeth
- * (small contacts that break off easily), and where they stand on the part
- * below in the same teeth upside down; walls can be cut into pieces
- * (fragmentation) and pierced with diamond holes (perforations).
+ * Block supports: walls of zero thickness (surfaces: the printer's software
+ * traces each one as a single laser path) along the hatching (two directions
+ * of the support grid, turned by the grid angle) under each overhang area,
+ * plus a wall along each area's outline. On top the walls end in teeth (small
+ * contacts that break off easily), and where they stand on the part below in
+ * the same teeth upside down; walls can be cut into pieces (fragmentation),
+ * and their inside is a cross grid (diagonal bars between diamond openings)
+ * to save material.
  */
 function blockSupports(
   w: Awaited<ReturnType<typeof getManifold>>,
@@ -762,12 +786,14 @@ function blockSupports(
   cols: Column[],
   p: SupportParams,
   g: Grid,
-  solids: Manifold[],
   made: Column[],
-) {
-  const t = Math.max(0.02, p.spot > 0 ? p.spot : 0.1);
+  surf: number[],
+): number {
+  // zero-thickness walls: only lengths smaller than this are dropped
+  const t = 0.05;
+  let walls = 0;
+  void w;
   const pen = p.penetration;
-  const turn = (Math.atan2(g.sin, g.cos) * 180) / Math.PI;
   const areaOf = new Int32Array(triangleCount(mesh)).fill(-1);
   areas.forEach((a, i) => a.tris.forEach((tr) => (areaOf[tr] = i)));
   // the hatching stays the XY offset inside each area's outline: grid points too close to it are dropped
@@ -848,17 +874,31 @@ function blockSupports(
     }
     return contours;
   };
-  /** Extrude a wall outline (in s along the line, z up) one spot thick and stand it in place. */
-  const place = (contours: [number, number][][], dir: 0 | 1, at: number) => {
-    const cs = new w.CrossSection(contours, 'EvenOdd');
-    if (cs.isEmpty()) return cs.delete();
-    let sol = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
-    if (dir === 0) sol = sol.translate([0, at, 0]);
-    else sol = sol.rotate([0, 0, 90]).translate([at, 0, 0]);
-    if (turn !== 0) sol = sol.rotate([0, 0, turn]);
-    cs.delete();
-    solids.push(sol);
+  /** Lay a wall outline (in s along the wall, z up) into place as a surface: `at(s, z)` gives the 3D point. */
+  const addSurface = (contours: [number, number][][], at: (s: number, z: number) => [number, number, number]) => {
+    const clean = contours.map((c) => {
+      const out: [number, number][] = [];
+      for (const q of c) {
+        const last = out[out.length - 1];
+        if (!last || Math.abs(last[0] - q[0]) > 1e-7 || Math.abs(last[1] - q[1]) > 1e-7) out.push(q);
+      }
+      if (out.length > 1 && Math.abs(out[0][0] - out[out.length - 1][0]) < 1e-7 && Math.abs(out[0][1] - out[out.length - 1][1]) < 1e-7) out.pop();
+      return out;
+    });
+    if (clean[0].length < 3) return;
+    walls++;
+    const outer = clean[0].map(([x, y]) => new Vector2(x, y));
+    const holes = clean.slice(1).filter((h) => h.length >= 3).map((h) => h.map(([x, y]) => new Vector2(x, y)));
+    const all = [outer, ...holes].flat();
+    for (const [a, b, c] of ShapeUtils.triangulateShape(outer, holes))
+      for (const k of [a, b, c]) surf.push(...at(all[k].x, all[k].y));
   };
+  /** A hatching wall: s along the line, at the other grid coordinate `at`, turned by the grid angle. */
+  const place = (contours: [number, number][][], dir: 0 | 1, atc: number) =>
+    addSurface(contours, (sv, z) => {
+      const u = dir === 0 ? sv : atc, v = dir === 0 ? atc : sv;
+      return [u * g.cos - v * g.sin, u * g.sin + v * g.cos, z];
+    });
   const lerp = (xs: number[], ys: number[]) => (s: number) => {
     if (s <= xs[0]) return ys[0];
     for (let i = 1; i < xs.length; i++) if (s <= xs[i]) return ys[i - 1] + ((ys[i] - ys[i - 1]) * (s - xs[i - 1])) / (xs[i] - xs[i - 1] || 1);
@@ -984,14 +1024,8 @@ function blockSupports(
           const bot = lerp([0, d], [q0.onPart ? q0.bottom - pen : 0, q1.onPart ? q1.bottom - pen : 0]);
           const c = piece(0, d + t / 2, bot, top, () => q0.onPart, []);
           if (!c) continue;
-          const cs = new w.CrossSection(c, 'EvenOdd');
-          if (cs.isEmpty()) {
-            cs.delete();
-            continue;
-          }
-          const ang = (Math.atan2(q1.y - q0.y, q1.x - q0.x) * 180) / Math.PI;
-          solids.push(cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]).rotate([0, 0, ang]).translate([q0.x, q0.y, 0]));
-          cs.delete();
+          const cx = (q1.x - q0.x) / d, cy = (q1.y - q0.y) / d;
+          addSurface(c, (sv, z) => [q0.x + cx * sv, q0.y + cy * sv, z]);
         }
       }
     });
@@ -1004,18 +1038,13 @@ function blockSupports(
     for (const dir of [0, 1] as const) {
       const contour = piece(-half, half, bot, top, () => c.onPart, []);
       if (!contour) continue;
-      const cs = new w.CrossSection(contour, 'EvenOdd');
-      if (cs.isEmpty()) {
-        cs.delete();
-        continue;
-      }
-      let sol = cs.extrude(t).translate([0, 0, -t / 2]).rotate([90, 0, 0]);
-      if (dir === 1) sol = sol.rotate([0, 0, 90]);
-      solids.push(sol.rotate([0, 0, turn]).translate([c.x, c.y, 0]));
-      cs.delete();
+      // along the grid's first or second direction
+      const ex = dir === 0 ? g.cos : -g.sin, ey = dir === 0 ? g.sin : g.cos;
+      addSurface(contour, (sv, z) => [c.x + ex * sv, c.y + ey * sv, z]);
     }
     made.push(c);
   }
+  return walls;
 }
 
 /** Support solids below the areas of the lifted part (and under the points added by hand, minus the ones removed). */
@@ -1024,7 +1053,7 @@ async function buildSupports(
   areas: OverhangArea[],
   p: SupportParams,
   edits: { add: Vec3[]; remove: [number, number, number, number][] } = { add: [], remove: [] },
-): Promise<{ mesh: MeshData; raft: MeshData; count: number; volume: number; contacts: Float32Array; manual: Int32Array }> {
+): Promise<{ mesh: MeshData; raft: MeshData; count: number; volume: number; contacts: Float32Array; manual: Int32Array; area: number }> {
   const w = await getManifold();
   const M = w.Manifold;
   const pen = p.penetration;
@@ -1049,6 +1078,9 @@ async function buildSupports(
   const solids: Manifold[] = [];
   /** the raft, kept apart from the supports (shown / hidden on its own) */
   const raftParts: Manifold[] = [];
+  /** zero-thickness support walls (block supports): triangles, 9 numbers each, and how many wall pieces */
+  const surfaces: number[] = [];
+  let blockWalls = 0;
   const made: Column[] = [];
   const feet: [number, number][] = [];
   try {
@@ -1085,7 +1117,7 @@ async function buildSupports(
       }
     } else if (p.style === 'block') {
       // block: walls one laser spot thick along the hatching, with teeth, fragmentation, perforations and a border
-      blockSupports(w, mesh, bvh, areas, cols, p, g, solids, made);
+      blockWalls = blockSupports(w, mesh, bvh, areas, cols, p, g, made, surfaces);
     } else {
       // volume: thin walls along the grid lines in both directions, following the surface above and below
       const t = Math.max(0.05, p.wall);
@@ -1191,13 +1223,18 @@ async function buildSupports(
       raft = fromManifold(r);
       r.delete();
     }
-    if (!solids.length) return { mesh: empty(), raft, count: 0, volume: raftVolume, contacts, manual };
+    // block supports: surfaces (no volume), joined with any solid parts (branches) as they are
+    const sheet: MeshData | null = surfaces.length
+      ? { positions: Float32Array.from(surfaces), indices: Uint32Array.from({ length: surfaces.length / 3 }, (_, i) => i) }
+      : null;
+    if (!solids.length) return { mesh: sheet ?? empty(), raft, count: blockWalls, volume: raftVolume, contacts, manual, area: sheet ? sheetArea(surfaces) : 0 };
     const all = M.union(solids);
     const volume = all.volume() + raftVolume;
-    const mesh2 = fromManifold(all);
+    let mesh2 = fromManifold(all);
+    if (sheet) mesh2 = mergeSheets(mesh2, sheet);
     all.delete();
-    const walls = p.style === 'volume' || p.style === 'block' ? solids.length : new Set(made).size;
-    return { mesh: mesh2, raft, count: walls, volume, contacts, manual };
+    const walls = p.style === 'block' ? blockWalls : p.style === 'volume' ? solids.length : new Set(made).size;
+    return { mesh: mesh2, raft, count: walls, volume, contacts, manual, area: sheet ? sheetArea(surfaces) : 0 };
   } finally {
     solids.forEach((s) => s.delete());
     raftParts.forEach((s) => s.delete());
@@ -1233,6 +1270,7 @@ export async function generateSupports(input: MeshData, p: SupportParams, skip: 
     raft: s.raft,
     count: s.count,
     supportVolume: s.volume,
+    supportArea: s.area,
     contacts: s.contacts,
     manual: s.manual,
   };

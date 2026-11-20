@@ -25,9 +25,11 @@ export type Contour = Float32Array; // x0, y0, x1, y1, … closed (last point = 
 /**
  * Slice a mesh at the given heights. Each loop is oriented so the material is
  * on its left: counter-clockwise outer boundaries, clockwise holes. Works on
- * unwelded meshes too (segment ends are matched by position).
+ * unwelded meshes too (segment ends are matched by position). Open chains
+ * (zero-thickness walls such as block supports) become single line paths,
+ * written there and back (`openPaths`); otherwise they are closed straight.
  */
-export function sliceMesh(mesh: MeshData, zs: number[]): Contour[][] {
+export function sliceMesh(mesh: MeshData, zs: number[], openPaths = true): Contour[][] {
   const p = mesh.positions, idx = mesh.indices;
   const nt = idx.length / 3;
   // triangles sorted by their lowest point, swept upwards through the layers
@@ -74,22 +76,47 @@ export function sliceMesh(mesh: MeshData, zs: number[]): Contour[][] {
       if (ks === ke) continue;
       starts.set(ks, { x0: s[0], y0: s[1], x1: e[0], y1: e[1], end: ke, used: false });
     }
-    // chain the segments into loops
+    // chain the segments into loops (ends: segments by their end point, to extend open chains backwards)
+    const ends = new Map<string, { x0: number; y0: number; x1: number; y1: number; end: string; used: boolean }>();
+    for (const seg of starts.values()) ends.set(seg.end, seg);
     const loops: Contour[] = [];
     for (const [k0, seg0] of starts) {
       if (seg0.used) continue;
       const xy: number[] = [seg0.x0, seg0.y0];
       let seg = seg0;
       let guard = starts.size + 1;
+      let closed = false;
       while (seg && !seg.used && guard-- > 0) {
         seg.used = true;
         xy.push(seg.x1, seg.y1);
-        if (seg.end === k0) break;
+        if (seg.end === k0) {
+          closed = true;
+          break;
+        }
         seg = starts.get(seg.end)!;
       }
-      if (xy.length < 8) continue; // fewer than three corners
-      // close it (an open chain from a broken mesh is closed straight)
-      if (xy[xy.length - 2] !== xy[0] || xy[xy.length - 1] !== xy[1]) xy.push(xy[0], xy[1]);
+      if (closed) {
+        if (xy.length < 8) continue; // fewer than three corners
+        loops.push(Float32Array.from(xy));
+        continue;
+      }
+      // an open chain: a zero-thickness wall (block support), or a broken mesh; it may have started midway: grow it backwards too
+      let head = k0;
+      for (let g2 = starts.size + 1; g2-- > 0; ) {
+        const prev = ends.get(head);
+        if (!prev || prev.used) break;
+        prev.used = true;
+        xy.unshift(prev.x0, prev.y0);
+        head = keyOf(prev.x0, prev.y0);
+      }
+      if (xy.length < 4) continue;
+      if (openPaths) {
+        // a line for the laser to trace: there and back as one contour (no area, so nothing is filled)
+        for (let i = xy.length - 4; i >= 0; i -= 2) xy.push(xy[i], xy[i + 1]);
+      } else {
+        if (xy.length < 6) continue;
+        xy.push(xy[0], xy[1]);
+      }
       loops.push(Float32Array.from(xy));
     }
     out.push(loops);

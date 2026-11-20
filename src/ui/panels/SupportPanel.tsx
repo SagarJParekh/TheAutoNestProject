@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { printerById, spotSizeOf } from '../../state/printers';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { Check, Hint, NumberField, Row, Section, Segmented } from '../controls';
 import { getState, setState, useStore } from '../../state/store';
 import { clearSupportEdits, deleteSelectedSupports, removeBuildSupports, selectTouchPoints, selectedBuildPartIds, supportBuildParts, supportEditCounts, supportTouchPoints } from '../../state/buildActions';
@@ -42,8 +41,6 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
     </Row>
   );
   const resin = tech !== 'dmls';
-  const printerSpot = spotSizeOf(printerById(g.printerId));
-  const spotText = `${st.spot > 0 ? st.spot : printerSpot} mm`;
   const targets = mode === 'selected' ? sel : undefined;
   const apply = () => {
     if (mode === 'selected' && !sel.length) return;
@@ -72,7 +69,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               options={[
                 { value: 'tip', label: 'Cone tip', title: 'A cone tip touching the part on a rod, a foot on the platform / raft' },
                 { value: 'bar', label: 'Plain bar', title: 'Plain pins' },
-                { value: 'block', label: 'Block', title: 'Thin walls along a hatching, one laser spot thick (traced as single paths), with teeth, fragmentation and perforations' },
+                { value: 'block', label: 'Block', title: 'Zero-thickness walls along a hatching (traced as single laser paths), with a cross grid, teeth and fragmentation' },
               ]}
             />
           </Row>
@@ -85,7 +82,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
               options={[
                 { value: 'volume', label: 'Volume', title: 'A grid of thin walls under each area (block support)' },
                 { value: 'bar', label: 'Bar', title: 'Pins at every grid point' },
-                { value: 'block', label: 'Block', title: 'Thin walls along a hatching, one laser spot thick (traced as single paths), with teeth, fragmentation and perforations' },
+                { value: 'block', label: 'Block', title: 'Zero-thickness walls along a hatching (traced as single laser paths), with a cross grid, teeth and fragmentation' },
               ]}
             />
           </Row>
@@ -96,8 +93,8 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           </>
         ) : st.style === 'block' ? (
           <Hint>
-            Block supports: walls along a hatching under every overhang area, each one laser spot ({spotText}) thick, so the printer traces it as a
-            single path. Set them up in the Block walls, Teeth, Fragmentation and Perforations tabs.
+            Block supports: walls of zero thickness along a hatching under every overhang area: the printer traces each wall as a single laser path.
+            Set them up under Block walls (with the cross grid inside them), Teeth and Fragmentation.
           </Hint>
         ) : (
           <>
@@ -109,7 +106,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
           </>
         )}
       </Section>
-      {st.style === 'block' && <BlockSections st={st} printerSpot={printerSpot} />}
+      {st.style === 'block' && <BlockSections st={st} />}
       <Section title="Placement">
         <Check checked={st.auto} onChange={(auto) => setSup({ auto })}>
           Automatic supports (from the overhang analysis)
@@ -215,7 +212,11 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
         {supported.length > 0 && (
           <p className="muted small">
             {supported.length} part{supported.length > 1 ? 's' : ''} with supports
-            {pending ? ` · updating ${pending}…` : totals.copies ? ` · this build: ${totals.count} ${st.style === 'volume' ? 'walls' : 'supports'}, ${(totals.volume / 1000).toFixed(2)} cm³` : ''}
+            {pending ? ` · updating ${pending}…` : totals.copies
+                ? st.style === 'block'
+                  ? ` · this build: ${totals.count} block walls (zero thickness), ${(totals.area / 100).toFixed(1)} cm² of wall`
+                  : ` · this build: ${totals.count} ${st.style === 'volume' ? 'walls' : 'supports'}, ${(totals.volume / 1000).toFixed(2)} cm³`
+                : ''}
           </p>
         )}
         <Hint>
@@ -232,7 +233,7 @@ export function BuildSupports({ tech }: { tech: SupportTech }) {
  * hatching, offsets, border), the teeth on them, fragmentation and
  * perforations.
  */
-function BlockSections({ st, printerSpot }: { st: SupportParams; printerSpot: number }) {
+function BlockSections({ st }: { st: SupportParams }) {
   const f = (label: string, key: keyof SupportParams, title: string, opts: { step?: number; min?: number; max?: number; suffix?: string } = {}) => (
     <Row label={label}>
       <NumberField
@@ -255,24 +256,6 @@ function BlockSections({ st, printerSpot }: { st: SupportParams; printerSpot: nu
   return (
     <>
       <Section title="Block walls">
-        <Row label="Wall thickness">
-          <NumberField
-            value={st.spot > 0 ? st.spot : printerSpot}
-            min={0.01}
-            step={0.01}
-            precision={3}
-            suffix="mm"
-            title="The laser spot (or pixel) size of the printer: each wall is one path of the laser"
-            onChange={(v) => setSup({ spot: Math.abs(v - printerSpot) < 1e-6 ? 0 : Math.max(0.01, v) })}
-          />
-          {st.spot > 0 ? (
-            <button className="mini" onClick={() => setSup({ spot: 0 })} title={`Back to the printer's spot size (${printerSpot} mm)`}>
-              Printer
-            </button>
-          ) : (
-            <span className="muted small">laser spot</span>
-          )}
-        </Row>
         {f('X hatching', 'spacing', 'Distance between the walls in the first direction', { step: 0.1, min: 0.2 })}
         <Row label="Y hatching">
           <NumberField
@@ -290,6 +273,17 @@ function BlockSections({ st, printerSpot }: { st: SupportParams; printerSpot: nu
           <NumberField value={st.penetration} step={0.05} suffix="mm" title="How far the walls reach into the part above (and below) them" onChange={(penetration) => setSup({ penetration })} />
         </Row>
         {check('Border wall', 'blockBorder', 'A wall along the outline of each area')}
+        {check('Cross grid in the walls', 'perforate', 'The walls are a cross grid of diagonal bars with diamond openings between them, instead of solid sheets: less material')}
+        {st.perforate && (
+          <>
+            <CrossGridDrawing />
+            {f('Bar width (a)', 'perfBeam', 'Width of the diagonal bars of the cross grid', { step: 0.05, min: 0.1 })}
+            {f('Bar angle (b)', 'perfAngle', 'Angle of the bars from horizontal (steeper: taller, narrower openings)', { step: 1, min: 15, max: 80, suffix: '°' })}
+            {f('Cell height (c)', 'perfHeight', 'Height of each opening between the bars (larger: more open, less material)', { step: 0.1, min: 0.2 })}
+            {f('Solid band (d)', 'perfSolid', 'Solid strip without openings at the top and bottom of each wall (where the teeth and the foot are)')}
+            {f('Solid ends', 'perfZone', 'Solid strip at both ends of each wall piece')}
+          </>
+        )}
       </Section>
       <Section title="Teeth">
         {check('Upper teeth', 'teeth', 'Teeth on top of the walls: small contacts that break off easily and leave little marks')}
@@ -314,19 +308,34 @@ function BlockSections({ st, printerSpot }: { st: SupportParams; printerSpot: nu
           </>
         )}
       </Section>
-      <Section title="Perforations">
-        {check('Perforate the walls', 'perforate', 'Diamond holes through the walls: less material, faster to print, powder / resin drains out')}
-        {st.perforate && (
-          <>
-            {f('Beam (a)', 'perfBeam', 'Width of the material between the holes', { step: 0.05 })}
-            {f('Angle (b)', 'perfAngle', 'Angle of the diamond sides (from horizontal)', { step: 1, min: 15, max: 80, suffix: '°' })}
-            {f('Height (c)', 'perfHeight', 'Height of each hole', { step: 0.05 })}
-            {f('Solid height (d)', 'perfSolid', 'Solid band without holes at the top and bottom of the walls')}
-            {f('Non-perforated zone', 'perfZone', 'Solid zone at the ends of each wall piece')}
-          </>
-        )}
-      </Section>
+
     </>
+  );
+}
+
+/** A wall with its cross grid and the sizes a–d. */
+function CrossGridDrawing() {
+  const fill = '#c8cdd4';
+  const cells: ReactElement[] = [];
+  for (let r = 0; r < 3; r++)
+    for (let c = 0; c < 9; c++) {
+      const x = 30 + c * 26 + (r % 2 ? 13 : 0), y = 34 + r * 15;
+      if (x > 250) continue;
+      cells.push(<polygon key={`${r}-${c}`} points={`${x},${y - 12} ${x + 9},${y} ${x},${y + 12} ${x - 9},${y}`} fill="var(--bg-2)" />);
+    }
+  return (
+    <svg className="raft-preview" viewBox="0 0 280 92" width="280" height="92" aria-hidden>
+      <rect x="12" y="10" width="256" height="72" fill={fill} />
+      {cells}
+      <g stroke="var(--muted)" strokeWidth="1" fontSize="11" fill="var(--muted)">
+        <text x="70" y="8" stroke="none">a</text>
+        <text x="140" y="8" stroke="none">b</text>
+        <line x1="262" y1="22" x2="262" y2="46" />
+        <text x="250" y="38" stroke="none">c</text>
+        <line x1="6" y1="10" x2="6" y2="20" />
+        <text x="0" y="92" stroke="none">d</text>
+      </g>
+    </svg>
   );
 }
 

@@ -47,4 +47,26 @@ describe('SLC export', () => {
     const r = readSLC(exportSLC([flipMesh(boxMesh([0, 0, 0], [10, 10, 1]))], { layer: 0.5 }));
     expect(area(r.layers[0].contours[0])).toBeCloseTo(100, 3);
   });
+
+  it('a zero-thickness wall (block support) becomes a single line path in each layer', () => {
+    // a vertical sheet from (0,0) to (10,0), 0..5 high, split in a few triangles
+    const pos: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const x0 = i * 2.5, x1 = x0 + 2.5;
+      pos.push(x0, 0, 0, x1, 0, 0, x1, 0, 5, x0, 0, 0, x1, 0, 5, x0, 0, 5);
+    }
+    const sheet = { positions: Float32Array.from(pos), indices: Uint32Array.from({ length: pos.length / 3 }, (_, i) => i) };
+    const [loops] = sliceMesh(sheet, [2.5]);
+    expect(loops.length).toBe(1);
+    const c = loops[0];
+    // from one end of the wall to the other and back: no area, spans the whole wall
+    const xs = Array.from(c).filter((_, i) => i % 2 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(0, 4);
+    expect(Math.max(...xs)).toBeCloseTo(10, 4);
+    expect(c[0]).toBeCloseTo(c[c.length - 2], 6);
+    let area = 0;
+    for (let i = 0; i + 3 < c.length; i += 2) area += c[i] * c[i + 3] - c[i + 2] * c[i + 1];
+    expect(Math.abs(area)).toBeLessThan(1e-6);
+  });
 });
+

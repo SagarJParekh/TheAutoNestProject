@@ -23,7 +23,8 @@ describe('support generation', () => {
       const r = await generateSupports(await tShape(), p);
       expect(computeBounds(r.part.positions).min[2]).toBeCloseTo(p.lift, 5);
       expect(r.count).toBeGreaterThan(20);
-      expect(isWatertight(r.supports)).toBe(true);
+      // block supports (the DMLS default) are zero-thickness surfaces; the others closed solids
+      if (p.style !== 'block') expect(isWatertight(r.supports)).toBe(true);
       // supports and raft together reach down to the platform
       const b = computeBounds(Float32Array.from([...r.supports.positions, ...r.raft.positions]));
       expect(b.min[2]).toBeCloseTo(0, 3);
@@ -31,7 +32,7 @@ describe('support generation', () => {
       expect(b.max[2]).toBeGreaterThan(p.lift + 20 - 0.01);
       expect(b.max[2]).toBeLessThan(p.lift + 20 + p.penetration + 0.01);
       // nothing under the pillar's middle sticks up into it (pillar bottom is supported, but only to its bottom)
-      expect(r.supportVolume).toBeGreaterThan(0);
+      expect(p.style === 'block' ? r.supportArea : r.supportVolume).toBeGreaterThan(0);
     });
   }
 
@@ -80,7 +81,7 @@ describe('a lifted part always stands on supports', () => {
     expect(br.supportVolume).toBeGreaterThan(a.supportVolume * 1.1);
     expect(isWatertight(br.supports)).toBe(true);
     // DMLS volume walls on a turned grid
-    const vol = await generateSupports(t, { ...SUPPORT_PRESETS.dmls, gridAngle: 45, spacing: 2, spacingY: 3 });
+    const vol = await generateSupports(t, { ...SUPPORT_PRESETS.dmls, style: 'volume', gridAngle: 45, spacing: 2, spacingY: 3 });
     expect(vol.count).toBeGreaterThan(10);
     expect(isWatertight(vol.supports)).toBe(true);
     // a cube standing on an edge (45°) has nothing at the critical angle: only "lowest" holds it up
@@ -115,7 +116,7 @@ describe('a lifted part always stands on supports', () => {
     // block style: the same hand-made patch as one-spot walls (closed, one touch point)
     const blk = await generateSupports(t, { ...p, style: 'block' }, [], { add: [[6, 6, 20]], remove: [] });
     expect(blk.contacts.length).toBe(3);
-    expect(isWatertight(blk.supports)).toBe(true);
+    expect(blk.supportArea).toBeGreaterThan(0);
     const r = await generateSupports(t, p, [], { add: [[6, 6, 20]], remove: [] });
     expect(r.contacts.length).toBe(3);
     expect(r.manual[0]).toBe(0);
@@ -193,36 +194,43 @@ describe('a lifted part always stands on supports', () => {
     expect(await raftVol({ raftType: 'solid', raftThickness: 2 })).toBeGreaterThan(await raftVol({ raftType: 'solid', raftThickness: 1 }));
   }, 120000);
 
-  it('block supports: walls one spot thick along the hatching, teeth, fragmentation, perforations, border', async () => {
+  it('block supports: zero-thickness walls along the hatching, cross grid, teeth, fragmentation, border', async () => {
     const t = await tShape();
-    const base = { ...SUPPORT_PRESETS.dmls, style: 'block' as const, spot: 0.1, spacing: 1.5, spacingY: 1.5, raft: false };
-    const vol = async (patch: Partial<typeof base>) => {
+    const base = { ...SUPPORT_PRESETS.dmls, style: 'block' as const, spacing: 1.5, spacingY: 1.5, raft: false };
+    const gen = async (patch: Partial<typeof base>) => {
       const r = await generateSupports(t, { ...base, ...patch });
-      expect(isWatertight(r.supports)).toBe(true);
-      // standing on the platform, reaching the underside of the plate (lifted) plus the penetration
+      // surfaces, no volume: every triangle stands upright (normal horizontal)
+      expect(r.supportVolume).toBe(0);
+      const P = r.supports.positions, I = r.supports.indices;
+      for (let k = 0; k < I.length; k += 3 * 50) {
+        const a = I[k] * 3, b = I[k + 1] * 3, c = I[k + 2] * 3;
+        const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2], vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+        const nz = ux * vy - uy * vx, l = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, nz);
+        if (l > 1e-9) expect(Math.abs(nz / l)).toBeLessThan(1e-3);
+      }
       const b = computeBounds(r.supports.positions);
       expect(b.min[2]).toBeCloseTo(0, 3);
       expect(b.max[2]).toBeLessThan(base.lift + 20 + base.penetration + 0.01);
       return r;
     };
-    const plain = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: false });
-    // walls only: their volume is about spot × total wall area (thin)
+    const plain = await gen({ teeth: false, fragment: false, perforate: false, blockBorder: false });
     expect(plain.count).toBeGreaterThan(20);
-    const thick = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: false, spot: 0.2 });
-    expect(thick.supportVolume / plain.supportVolume).toBeGreaterThan(1.9);
-    expect(thick.supportVolume / plain.supportVolume).toBeLessThan(2.1);
-    // teeth: less material at the top (gaps between the teeth, narrow tips)
-    const teeth = await vol({ teeth: true, fragment: false, perforate: false, blockBorder: false });
-    expect(teeth.supportVolume).toBeLessThan(plain.supportVolume);
-    // fragmentation: gaps across the walls, so more pieces and less material
-    const frag = await vol({ teeth: false, fragment: true, fragX: 4, fragY: 4, fragWidth: 1, perforate: false, blockBorder: false });
+    expect(plain.supportArea).toBeGreaterThan(100);
+    // the cross grid: openings between diagonal bars, much less wall
+    const grid = await gen({ teeth: false, fragment: false, perforate: true, blockBorder: false });
+    expect(grid.supportArea).toBeLessThan(plain.supportArea * 0.85);
+    // wider openings (taller cells, thinner bars): less again
+    const open = await gen({ teeth: false, fragment: false, perforate: true, perfHeight: 2, perfBeam: 0.3, blockBorder: false });
+    expect(open.supportArea).toBeLessThan(grid.supportArea);
+    // teeth: less wall at the top
+    const teeth = await gen({ teeth: true, fragment: false, perforate: false, blockBorder: false });
+    expect(teeth.supportArea).toBeLessThan(plain.supportArea);
+    // fragmentation: gaps, so more pieces and less wall
+    const frag = await gen({ teeth: false, fragment: true, fragX: 4, fragY: 4, fragWidth: 1, perforate: false, blockBorder: false });
     expect(frag.count).toBeGreaterThan(plain.count);
-    expect(frag.supportVolume).toBeLessThan(plain.supportVolume);
-    // perforations: holes, less material
-    const perf = await vol({ teeth: false, fragment: false, perforate: true, blockBorder: false });
-    expect(perf.supportVolume).toBeLessThan(plain.supportVolume * 0.85);
+    expect(frag.supportArea).toBeLessThan(plain.supportArea);
     // border: one more wall round each area
-    const border = await vol({ teeth: false, fragment: false, perforate: false, blockBorder: true });
-    expect(border.supportVolume).toBeGreaterThan(plain.supportVolume);
+    const border = await gen({ teeth: false, fragment: false, perforate: false, blockBorder: true });
+    expect(border.supportArea).toBeGreaterThan(plain.supportArea);
   }, 240000);
 });

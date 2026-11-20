@@ -22,6 +22,8 @@ export interface SupportEntry {
   dz: number;
   count: number;
   volume: number;
+  /** block supports: area of the zero-thickness walls, mm² */
+  area: number;
   /** where each support touches the part (x, y, z), same frame as the mesh */
   contacts: Float32Array;
   /** for each touch point: index of the support added by hand it is, −1 for generated ones */
@@ -79,18 +81,18 @@ export function supportFor(p: BuildPart, q: readonly number[], g: BuildGenState 
 }
 
 /** Totals over the copies of the active build that have supports. */
-export function supportTotals(g: BuildGenState): { copies: number; ready: number; count: number; volume: number } {
+export function supportTotals(g: BuildGenState): { copies: number; ready: number; count: number; volume: number; area: number } {
   const b = g.builds[g.active];
   const byId = new Map(g.parts.map((p) => [p.id, p]));
-  let copies = 0, ready = 0, count = 0, volume = 0;
+  let copies = 0, ready = 0, count = 0, volume = 0, area = 0;
   for (const pl of b?.placements ?? []) {
     const p = byId.get(pl.partId);
     if (!p?.supportsOn) continue;
     copies++;
     const e = supportFor(p, pl.quaternion, g);
-    if (e) (ready++, (count += e.count), (volume += e.volume));
+    if (e) (ready++, (count += e.count), (volume += e.volume), (area += e.area ?? 0));
   }
-  return { copies, ready, count, volume };
+  return { copies, ready, count, volume, area };
 }
 
 let running = false;
@@ -132,7 +134,7 @@ export async function updateSupports() {
           };
           const skip = (ed?.skip ?? []).map((v) => turnPoint(v, q));
           const r = await pool.run('supports', { mesh: turned, params, skip, edits }).promise;
-          cache.set(k, { mesh: r.supports, raft: r.raft, dz: r.dz, count: r.count, volume: r.supportVolume, contacts: r.contacts, manual: r.manual });
+          cache.set(k, { mesh: r.supports, raft: r.raft, dz: r.dz, count: r.count, volume: r.supportVolume, area: r.supportArea ?? 0, contacts: r.contacts, manual: r.manual });
         } catch (e) {
           if (e instanceof CancelledError) return;
           failed.add(k);

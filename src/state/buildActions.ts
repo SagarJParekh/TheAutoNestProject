@@ -906,6 +906,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
         color: supportColors(p.color).supports,
         visible: true,
         locked: true,
+        sheet: true,
         mesh: sup.mesh,
         transform: { position: [pl.position[0], pl.position[1], s.zOffset], rotation: [0, 0, 0], scale: [1, 1, 1] },
       });
@@ -916,6 +917,7 @@ export function buildDisplayParts(s: BuildGenState, buildIndex = s.active, forVi
         color: supportColors(p.color).raft,
         visible: true,
         locked: true,
+        sheet: true,
         mesh: sup.raft,
         transform: { position: [pl.position[0], pl.position[1], s.zOffset], rotation: [0, 0, 0], scale: [1, 1, 1] },
       });

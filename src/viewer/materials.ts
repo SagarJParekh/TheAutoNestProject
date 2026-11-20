@@ -14,9 +14,10 @@ export const orientationUniforms = {
 /**
  * Part material: flat shaded (normals from screen-space derivatives, so no
  * normal buffer is needed for multi-million triangle meshes). Back faces are
- * tinted red, which makes inside-out regions obvious.
+ * tinted red, which makes inside-out regions obvious (not on `sheet`s:
+ * surfaces without an inside, such as zero-thickness support walls).
  */
-export function createPartMaterial(color: string): MeshStandardMaterial {
+export function createPartMaterial(color: string, sheet = false): MeshStandardMaterial {
   const m = new MeshStandardMaterial({
     color: new Color(color),
     flatShading: true,
@@ -35,7 +36,7 @@ export function createPartMaterial(color: string): MeshStandardMaterial {
         '#include <color_fragment>',
         `#include <color_fragment>
        if (uOrient > 0.5) diffuseColor.rgb = gl_FrontFacing ? uFrontColor : uBackColor;
-       else if (!gl_FrontFacing) diffuseColor.rgb = mix(diffuseColor.rgb, uBackColor, 0.8);`,
+       ${sheet ? '' : 'else if (!gl_FrontFacing) diffuseColor.rgb = mix(diffuseColor.rgb, uBackColor, 0.8);'}`,
       )
       .replace(
         '#include <emissivemap_fragment>',
@@ -44,6 +45,7 @@ export function createPartMaterial(color: string): MeshStandardMaterial {
        if (uOrient > 0.5) totalEmissiveRadiance = diffuseColor.rgb * 0.3;`,
       );
   };
-  m.customProgramCacheKey = () => 'part-orientation-v3';
+  // sheets (zero-thickness support walls) show both sides alike: no red back faces
+  m.customProgramCacheKey = () => (sheet ? 'part-sheet-v1' : 'part-orientation-v3');
   return m;
 }

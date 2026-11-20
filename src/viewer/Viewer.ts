@@ -536,7 +536,7 @@ export class Viewer {
     const group = new Group();
     group.name = part.id;
     const geometry = this.acquireGeometry(part.mesh);
-    const material = createPartMaterial(part.color);
+    const material = createPartMaterial(part.color, !!part.sheet);
     const mesh = new Mesh(geometry, material);
     mesh.userData.partId = part.id;
     const overlay = new Group();
